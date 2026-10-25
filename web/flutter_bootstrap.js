@@ -43,10 +43,6 @@
 
   try {
     await _flutter.loader.load({
-      config: {
-        // Keep CanvasKit assets on the same GitHub Pages origin as the app.
-        canvasKitBaseUrl: './canvaskit/',
-      },
       onEntrypointLoaded: async (engineInitializer) => {
         const appRunner = await engineInitializer.initializeEngine();
         await appRunner.runApp();
