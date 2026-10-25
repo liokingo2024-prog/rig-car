@@ -36,7 +36,8 @@ jobs:
             > /tmp/rig-car-dom.html
 
           grep -q '<flt-glass-pane' /tmp/rig-car-dom.html
-          grep -q 'RIG-CAR' /tmp/rig-car-dom.html
+          grep -q '<canvas' /tmp/rig-car-dom.html
+          ! grep -q 'Loading your fleet dashboard' /tmp/rig-car-dom.html
 
       - name: Upload live screenshot
         uses: actions/upload-artifact@v6

@@ -1,46 +1,55 @@
 # RIG-CAR
 
-A responsive Flutter web dashboard for managing a vehicle fleet. The starter
-experience includes a fleet overview, vehicle search, category filters, and
-responsive layouts for desktop and mobile screens.
+RIG-CAR is a responsive Flutter web workbench for turning a car model into a
+configurable Godot 4 vehicle rig. The first slice provides a complete rigging
+flow: import a `.glb` / `.gltf` model, choose a geometry preset, map steering
+and traction across four wheels, tune physics values, and export a Godot scene,
+controller script, and editable JSON configuration.
+
+The viewport is a procedural preview in this first slice. The imported model
+filename and rig settings are carried into the export files; the next slice can
+replace the preview with a live GLB renderer and inspect the model's node tree.
 
 ## Stack
 
 - Flutter `3.47.5`
 - Dart `3.13.4`
 - Material 3
-- Web-first deployment with Nginx
+- GitHub Pages deployment
 
 ## Local setup
-
-Install Flutter `3.47.5`, then run:
 
 ```bash
 flutter pub get
 flutter run -d chrome
 ```
 
-The project name is `rig_car` because Dart package names use underscores. The
-repository and product name remain `rig-car` / `RIG-CAR`.
+The package is named `rig_car` because Dart package names use underscores. The
+product and repository name are `RIG-CAR` / `rig-car`.
 
 ## Checks
 
-The single offline test command is:
-
 ```bash
 make test
-```
-
-Additional local checks:
-
-```bash
 make analyze
 make build-web
 ```
 
-## Docker
+## Export flow
 
-Build and run the production web image without installing Flutter locally:
+1. Open **Import model** and choose a `.glb` or `.gltf` asset.
+2. Select a starting geometry preset.
+3. Open **Rig wheels** and set steering, traction, and drivetrain behavior.
+4. Open **Tune physics** and adjust mass, engine force, tire grip, suspension,
+   and center of mass.
+5. Open **Export to Godot** and download `rig_car.tscn`, `rig_car.gd`, and
+   `rig_car_config.json`.
+
+The generated scene uses a `VehicleBody3D` root with four `VehicleWheel3D`
+nodes. Replace the placeholder collision shape and add the imported mesh under
+the generated root in Godot.
+
+## Docker
 
 ```bash
 docker build -t rig-car .
@@ -49,8 +58,8 @@ docker run --rm -p 8080:80 rig-car
 
 Open `http://localhost:8080`.
 
-## Deploy
+## Live deployment
 
-The deployable artifact is `build/web`. It can be served by any static web
-host. For a container deployment, publish the image built by the Docker
-command above to your registry and deploy it on port `80`.
+The GitHub Pages workflow deploys every push to `main`:
+
+https://liokingo2024-prog.github.io/rig-car/
