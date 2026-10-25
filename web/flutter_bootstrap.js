@@ -2,6 +2,17 @@
 {{flutter_build_config}}
 
 (async () => {
+  const fallback = document.getElementById('app-fallback');
+  const fallbackMessage = document.getElementById('fallback-message');
+
+  const showFallbackError = () => {
+    if (fallbackMessage) {
+      fallbackMessage.textContent =
+          'The dashboard could not start. Refresh this page to try again.';
+    }
+    document.querySelector('.fallback-spinner')?.remove();
+  };
+
   // Remove service workers left by older deployments so stale Flutter assets
   // cannot keep the app on a blank screen after a GitHub Pages update.
   const hadController = Boolean(navigator.serviceWorker?.controller);
@@ -30,10 +41,19 @@
     return;
   }
 
-  _flutter.loader.load({
-    config: {
-      // Keep CanvasKit assets on the same GitHub Pages origin as the app.
-      canvasKitBaseUrl: './canvaskit/',
-    },
-  });
+  try {
+    await _flutter.loader.load({
+      config: {
+        // Keep CanvasKit assets on the same GitHub Pages origin as the app.
+        canvasKitBaseUrl: './canvaskit/',
+      },
+      onEntrypointLoaded: async (engineInitializer) => {
+        const appRunner = await engineInitializer.initializeEngine();
+        await appRunner.runApp();
+        fallback?.remove();
+      },
+    });
+  } catch (_) {
+    showFallbackError();
+  }
 })();
