@@ -29,9 +29,17 @@ jobs:
             --disable-gpu \
             --disable-dev-shm-usage \
             --virtual-time-budget=15000 \
+            --window-size=1280,900 \
+            --screenshot=/tmp/rig-car-live.png \
             --dump-dom \
             "https://liokingo2024-prog.github.io/rig-car/" \
             > /tmp/rig-car-dom.html
 
           grep -q '<flt-glass-pane' /tmp/rig-car-dom.html
           grep -q 'RIG-CAR' /tmp/rig-car-dom.html
+
+      - name: Upload live screenshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: rig-car-live-screenshot
+          path: /tmp/rig-car-live.png
