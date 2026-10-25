@@ -39,6 +39,7 @@ jobs:
             -o "${archive}"
 
           sudo tar -xJf "${archive}" -C /opt
+          sudo chown -R "$(id -u):$(id -g)" /opt/flutter
           echo "/opt/flutter/bin" >> "${GITHUB_PATH}"
           echo "/opt/flutter/bin/cache/dart-sdk/bin" >> "${GITHUB_PATH}"
 
