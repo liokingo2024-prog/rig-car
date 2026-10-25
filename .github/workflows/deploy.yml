@@ -1,0 +1,71 @@
+name: Deploy Flutter Web to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '\n' < .flutter-version)"
+          archive="/tmp/flutter.tar.xz"
+
+          curl -fsSL \
+            "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${version}-stable.tar.xz" \
+            -o "${archive}"
+
+          sudo tar -xJf "${archive}" -C /opt
+          echo "/opt/flutter/bin" >> "${GITHUB_PATH}"
+          echo "/opt/flutter/bin/cache/dart-sdk/bin" >> "${GITHUB_PATH}"
+
+          git config --global --add safe.directory /opt/flutter
+          /opt/flutter/bin/flutter config --enable-web
+          /opt/flutter/bin/flutter precache --web
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter web app
+        run: flutter build web --release --base-href "/rig-car/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
