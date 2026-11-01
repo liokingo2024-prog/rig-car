@@ -430,6 +430,11 @@ class _HeroBanner extends StatelessWidget {
                     color: const Color(0xFFFF713D),
                   ),
                   _HeroPill(
+                    icon: Icons.sports_motorsports_rounded,
+                    label: 'REAL-TIME GODOT 4 PHYSICS SIMULATOR',
+                    color: const Color(0xFFFFB15C),
+                  ),
+                  _HeroPill(
                     icon: Icons.gps_fixed_rounded,
                     label: 'REAL WHEEL 3D COORDINATES',
                     color: const Color(0xFF00E5FF),
@@ -485,6 +490,33 @@ class _HeroBanner extends StatelessWidget {
                       shadowColor: const Color(0x60FF713D),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 24,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => RigWorkbenchPage(
+                            initialCar: preRiggedCars.first,
+                            startInTestDrive: true,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.sports_motorsports_rounded, size: 19),
+                    label: const Text('Test Drive Simulator (Godot 4)'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF00E5FF),
+                      foregroundColor: const Color(0xFF0A1016),
+                      elevation: 6,
+                      shadowColor: const Color(0x6000E5FF),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
                         vertical: 16,
                       ),
                       shape: RoundedRectangleBorder(
@@ -800,28 +832,80 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                     ),
                   ),
 
-                  // Drive tag
+                  // Drive & Test Drive tags
                   Positioned(
                     top: 10,
                     right: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E2F3A),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Text(
-                        car.drive,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.5,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => RigWorkbenchPage(
+                                  initialCar: car,
+                                  startInTestDrive: true,
+                                ),
+                              ),
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(5),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xE0101820),
+                              borderRadius: BorderRadius.circular(5),
+                              border: Border.all(
+                                color: const Color(0xFFFF713D),
+                              ),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.sports_motorsports_rounded,
+                                  size: 11,
+                                  color: Color(0xFFFF713D),
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'TEST DRIVE',
+                                  style: TextStyle(
+                                    color: Color(0xFFFF713D),
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E2F3A),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            car.drive,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],

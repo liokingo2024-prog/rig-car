@@ -9,6 +9,7 @@ import 'glb_parser.dart';
 import 'home_screen.dart';
 import 'model_data.dart';
 import 'pre_rigged_cars.dart';
+import 'test_drive_viewport.dart';
 import 'wireframe_viewer.dart';
 
 void main() {
@@ -83,9 +84,14 @@ class RigCarApp extends StatelessWidget {
 }
 
 class RigWorkbenchPage extends StatefulWidget {
-  const RigWorkbenchPage({super.key, this.initialCar});
+  const RigWorkbenchPage({
+    super.key,
+    this.initialCar,
+    this.startInTestDrive = false,
+  });
 
   final PreRiggedCar? initialCar;
+  final bool startInTestDrive;
 
   @override
   State<RigWorkbenchPage> createState() => _RigWorkbenchPageState();
@@ -93,6 +99,7 @@ class RigWorkbenchPage extends StatefulWidget {
 
 class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
+  bool _isTestDriveMode = false;
   RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
@@ -122,6 +129,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   @override
   void initState() {
     super.initState();
+    _isTestDriveMode = widget.startInTestDrive;
+    if (_isTestDriveMode) _activeStep = 5;
     final car = widget.initialCar;
     if (car != null) {
       _modelName = '${car.name} (Pre-rigged)';
@@ -325,8 +334,83 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     if (mounted) _showMessage('Exported Godot 4 rig files');
   }
 
+  void _enterTestDrive() {
+    setState(() {
+      _isTestDriveMode = true;
+      _activeStep = 5;
+    });
+  }
+
+  void _exitTestDrive() {
+    setState(() {
+      _isTestDriveMode = false;
+      if (_activeStep == 5) {
+        _activeStep = 3;
+      }
+    });
+  }
+
   void _selectStep(int step) {
-    setState(() => _activeStep = step);
+    setState(() {
+      _activeStep = step;
+      if (step == 5) {
+        _isTestDriveMode = true;
+      } else {
+        _isTestDriveMode = false;
+      }
+    });
+  }
+
+  List<Vec3> _getEffectiveWheelPositions() {
+    final wheels = <Vec3>[];
+    for (final key in ['FL', 'FR', 'RL', 'RR']) {
+      final w = _assignedWheels[key];
+      if (w != null) {
+        wheels.add(w.worldPosition);
+      }
+    }
+    if (wheels.length == 4) return wheels;
+    if (_detection != null && _detection!.wheels.length >= 4) {
+      return _detection!.wheels.take(4).map((w) => w.worldPosition).toList();
+    }
+    final car = widget.initialCar;
+    if (car != null && car.wheelPositions.length >= 4) {
+      return car.wheelPositions;
+    }
+    return const [
+      Vec3(-0.95, 0.35, -1.25),
+      Vec3(0.95, 0.35, -1.25),
+      Vec3(-0.95, 0.35, 1.25),
+      Vec3(0.95, 0.35, 1.25),
+    ];
+  }
+
+  Widget _buildTestDriveViewport() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A1016),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF253440)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: TestDriveViewport(
+        mass: _mass,
+        engineForce: _engineForce,
+        grip: _grip,
+        suspension: _suspension,
+        centerOfMass: _centerOfMass,
+        drive: _drive,
+        frontSteering: _frontSteering,
+        rearSteering: _rearSteering,
+        frontTraction: _frontTraction,
+        rearTraction: _rearTraction,
+        wheelPositions: _getEffectiveWheelPositions(),
+        model: _parsedModel,
+        detection: _detection,
+        accentColor: _preset.accent,
+        onExit: _exitTestDrive,
+      ),
+    );
   }
 
   @override
@@ -338,7 +422,18 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           final tablet = constraints.maxWidth >= 760;
           return Column(
             children: [
-              if (!desktop) _MobileHeader(onExport: _exportGodotFiles),
+              if (!desktop)
+                _MobileHeader(
+                  onExport: _exportGodotFiles,
+                  isTestDrive: _isTestDriveMode,
+                  onToggleTestDrive: () {
+                    if (_isTestDriveMode) {
+                      _exitTestDrive();
+                    } else {
+                      _enterTestDrive();
+                    }
+                  },
+                ),
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -348,6 +443,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                         activeStep: _activeStep,
                         onStepSelected: _selectStep,
                         hasModel: _parsedModel != null,
+                        isTestDrive: _isTestDriveMode,
                       ),
                     Expanded(
                       child: Column(
@@ -357,6 +453,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
                               wheelsCount: _detection?.wheels.length ?? 0,
+                              isTestDrive: _isTestDriveMode,
+                              onToggleTestDrive: () {
+                                if (_isTestDriveMode) {
+                                  _exitTestDrive();
+                                } else {
+                                  _enterTestDrive();
+                                }
+                              },
                             ),
                           if (!desktop)
                             _StepStrip(
@@ -364,80 +468,93 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               onStepSelected: _selectStep,
                             ),
                           Expanded(
-                            child: tablet && desktop
+                            child: _isTestDriveMode
                                 ? Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      24,
-                                      20,
-                                      24,
-                                      20,
+                                    padding: EdgeInsets.fromLTRB(
+                                      desktop ? 24 : 16,
+                                      desktop ? 20 : 16,
+                                      desktop ? 24 : 16,
+                                      desktop ? 20 : 24,
                                     ),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        // 3D Viewport stays anchored and fills available height
-                                        Expanded(
-                                          child: WireframeViewer(
-                                            model: _parsedModel,
-                                            detection: _detection,
-                                            selectedNodeIndex:
-                                                _selectedNodeIndex,
-                                            onNodeSelected: (idx) {
-                                              setState(() =>
-                                                  _selectedNodeIndex = idx);
-                                            },
-                                            accentColor: _preset.accent,
-                                            centerOfMassY: _centerOfMass,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 18),
-                                        // Right side inspector panel with independent scroll
-                                        SizedBox(
-                                          width: 380,
-                                          child: Scrollbar(
-                                            thumbVisibility: true,
-                                            child: SingleChildScrollView(
-                                              padding: const EdgeInsets.only(
-                                                right: 8,
-                                                bottom: 24,
-                                              ),
-                                              child: _buildInspector(),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                    child: _buildTestDriveViewport(),
                                   )
-                                : SingleChildScrollView(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      16,
-                                      16,
-                                      28,
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        SizedBox(
-                                          height: 380,
-                                          child: WireframeViewer(
-                                            model: _parsedModel,
-                                            detection: _detection,
-                                            selectedNodeIndex:
-                                                _selectedNodeIndex,
-                                            onNodeSelected: (idx) {
-                                              setState(() =>
-                                                  _selectedNodeIndex = idx);
-                                            },
-                                            accentColor: _preset.accent,
-                                            centerOfMassY: _centerOfMass,
-                                          ),
+                                : (tablet && desktop
+                                    ? Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          24,
+                                          20,
+                                          24,
+                                          20,
                                         ),
-                                        const SizedBox(height: 16),
-                                        _buildInspector(),
-                                      ],
-                                    ),
-                                  ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            // 3D Viewport stays anchored and fills available height
+                                            Expanded(
+                                              child: WireframeViewer(
+                                                model: _parsedModel,
+                                                detection: _detection,
+                                                selectedNodeIndex:
+                                                    _selectedNodeIndex,
+                                                onNodeSelected: (idx) {
+                                                  setState(() =>
+                                                      _selectedNodeIndex = idx);
+                                                },
+                                                accentColor: _preset.accent,
+                                                centerOfMassY: _centerOfMass,
+                                                onTestDrive: _enterTestDrive,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 18),
+                                            // Right side inspector panel with independent scroll
+                                            SizedBox(
+                                              width: 380,
+                                              child: Scrollbar(
+                                                thumbVisibility: true,
+                                                child: SingleChildScrollView(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                    right: 8,
+                                                    bottom: 24,
+                                                  ),
+                                                  child: _buildInspector(),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    : SingleChildScrollView(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          16,
+                                          16,
+                                          28,
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            SizedBox(
+                                              height: 380,
+                                              child: WireframeViewer(
+                                                model: _parsedModel,
+                                                detection: _detection,
+                                                selectedNodeIndex:
+                                                    _selectedNodeIndex,
+                                                onNodeSelected: (idx) {
+                                                  setState(() =>
+                                                      _selectedNodeIndex = idx);
+                                                },
+                                                accentColor: _preset.accent,
+                                                centerOfMassY: _centerOfMass,
+                                                onTestDrive: _enterTestDrive,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            _buildInspector(),
+                                          ],
+                                        ),
+                                      )),
                           ),
                         ],
                       ),
@@ -507,6 +624,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       },
       onExport: _exportGodotFiles,
       onStepSelected: _selectStep,
+      onTestDrive: _enterTestDrive,
     );
   }
 }
@@ -518,11 +636,13 @@ class _DesktopSidebar extends StatelessWidget {
     required this.activeStep,
     required this.onStepSelected,
     required this.hasModel,
+    required this.isTestDrive,
   });
 
   final int activeStep;
   final ValueChanged<int> onStepSelected;
   final bool hasModel;
+  final bool isTestDrive;
 
   @override
   Widget build(BuildContext context) {
@@ -603,9 +723,17 @@ class _DesktopSidebar extends StatelessWidget {
             number: 4,
             title: 'Export to Godot',
             subtitle: 'Real wheel positions',
-            active: activeStep == 4,
+            active: activeStep == 4 && !isTestDrive,
             complete: false,
             onTap: () => onStepSelected(4),
+          ),
+          _SidebarStep(
+            number: 5,
+            title: 'Test Drive',
+            subtitle: 'Godot 4 simulator',
+            active: isTestDrive || activeStep == 5,
+            complete: false,
+            onTap: () => onStepSelected(5),
           ),
           const Spacer(),
           Container(
@@ -662,11 +790,15 @@ class _DesktopTopbar extends StatelessWidget {
     required this.modelName,
     required this.onExport,
     required this.wheelsCount,
+    required this.isTestDrive,
+    required this.onToggleTestDrive,
   });
 
   final String modelName;
   final VoidCallback onExport;
   final int wheelsCount;
+  final bool isTestDrive;
+  final VoidCallback onToggleTestDrive;
 
   @override
   Widget build(BuildContext context) {
@@ -731,7 +863,36 @@ class _DesktopTopbar extends StatelessWidget {
               style: const TextStyle(color: Color(0xFF82919B), fontSize: 12),
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
+          FilledButton.icon(
+            onPressed: onToggleTestDrive,
+            icon: Icon(
+              isTestDrive
+                  ? Icons.tune_rounded
+                  : Icons.sports_motorsports_rounded,
+              size: 16,
+            ),
+            label: Text(
+              isTestDrive ? 'WORKBENCH' : 'TEST DRIVE',
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8,
+              ),
+            ),
+            style: FilledButton.styleFrom(
+              backgroundColor: isTestDrive
+                  ? const Color(0xFF00E5FF)
+                  : const Color(0xFFFF713D),
+              foregroundColor:
+                  isTestDrive ? const Color(0xFF0A1016) : Colors.white,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
           OutlinedButton.icon(
             onPressed: onExport,
             icon: const Icon(Icons.file_download_outlined, size: 17),
@@ -751,8 +912,14 @@ class _DesktopTopbar extends StatelessWidget {
 // ── Mobile Header & Strip ───────────────────────────────────────────────────
 
 class _MobileHeader extends StatelessWidget {
-  const _MobileHeader({required this.onExport});
+  const _MobileHeader({
+    required this.onExport,
+    required this.isTestDrive,
+    required this.onToggleTestDrive,
+  });
   final VoidCallback onExport;
+  final bool isTestDrive;
+  final VoidCallback onToggleTestDrive;
 
   @override
   Widget build(BuildContext context) {
@@ -780,6 +947,18 @@ class _MobileHeader extends StatelessWidget {
           const SizedBox(width: 6),
           const _Brand(),
           const Spacer(),
+          IconButton(
+            onPressed: onToggleTestDrive,
+            tooltip: isTestDrive ? 'Return to Workbench' : 'Test Drive Mode',
+            icon: Icon(
+              isTestDrive
+                  ? Icons.tune_rounded
+                  : Icons.sports_motorsports_rounded,
+              color: isTestDrive
+                  ? const Color(0xFF00E5FF)
+                  : const Color(0xFFFF713D),
+            ),
+          ),
           IconButton(
             onPressed: onExport,
             tooltip: 'Export Godot rig',
@@ -863,6 +1042,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.onRearTractionChanged,
     required this.onExport,
     required this.onStepSelected,
+    required this.onTestDrive,
   });
 
   final int activeStep;
@@ -896,19 +1076,21 @@ class _InspectorPanel extends StatelessWidget {
   final ValueChanged<bool> onRearTractionChanged;
   final VoidCallback onExport;
   final ValueChanged<int> onStepSelected;
+  final VoidCallback onTestDrive;
 
   @override
   Widget build(BuildContext context) {
+    final stepIndex = (activeStep - 1).clamp(0, workflowSteps.length - 1);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          workflowSteps[activeStep - 1].title,
+          workflowSteps[stepIndex].title,
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 3),
         Text(
-          workflowSteps[activeStep - 1].subtitle,
+          workflowSteps[stepIndex].subtitle,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: 14),
@@ -951,8 +1133,10 @@ class _InspectorPanel extends StatelessWidget {
               onSuspensionChanged: onSuspensionChanged,
               onCenterOfMassChanged: onCenterOfMassChanged,
               onNextStep: () => onStepSelected(4),
+              onTestDrive: onTestDrive,
             ),
-          _ => _ExportInspector(onExport: onExport),
+          4 => _ExportInspector(onExport: onExport),
+          _ => _TestDriveLauncherInspector(onLaunch: onTestDrive),
         },
       ],
     );
@@ -1402,6 +1586,7 @@ class _PhysicsInspector extends StatelessWidget {
     required this.onSuspensionChanged,
     required this.onCenterOfMassChanged,
     required this.onNextStep,
+    required this.onTestDrive,
   });
 
   final double mass;
@@ -1415,6 +1600,7 @@ class _PhysicsInspector extends StatelessWidget {
   final ValueChanged<double> onSuspensionChanged;
   final ValueChanged<double> onCenterOfMassChanged;
   final VoidCallback onNextStep;
+  final VoidCallback onTestDrive;
 
   @override
   Widget build(BuildContext context) {
@@ -1473,7 +1659,21 @@ class _PhysicsInspector extends StatelessWidget {
             divisions: 18,
             onChanged: onCenterOfMassChanged,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onTestDrive,
+              icon: const Icon(Icons.sports_motorsports_rounded, size: 16),
+              label: const Text('Test Drive in Simulator'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF00E5FF),
+                side: const BorderSide(color: Color(0x7000E5FF)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -1482,6 +1682,51 @@ class _PhysicsInspector extends StatelessWidget {
               label: const Text('Proceed to Export'),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFFF713D),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Step 5: Test Drive Launcher Inspector ───────────────────────────────────
+
+class _TestDriveLauncherInspector extends StatelessWidget {
+  const _TestDriveLauncherInspector({required this.onLaunch});
+  final VoidCallback onLaunch;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _PanelTitle(
+            icon: Icons.sports_motorsports_rounded,
+            title: 'Godot 4 Simulator',
+            subtitle: 'Real-time vehicle physics & track test',
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Test driving physics with live 60 FPS simulation: throttle, brake/reverse, Ackermann steering, independent suspension roll/pitch, tire slip (Pacejka model), handbrake drift, and dynamic tire marks on asphalt.',
+            style: TextStyle(
+              color: Color(0xFF90A4AE),
+              fontSize: 12,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onLaunch,
+              icon: const Icon(Icons.sports_motorsports_rounded, size: 18),
+              label: const Text('LAUNCH SIMULATOR'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFF713D),
+                padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
           ),
@@ -2079,6 +2324,11 @@ const workflowSteps = [
     number: 4,
     title: 'Export to Godot',
     subtitle: 'Scene + script + config',
+  ),
+  WorkflowStep(
+    number: 5,
+    title: 'Test Drive',
+    subtitle: 'Godot 4 simulator',
   ),
 ];
 

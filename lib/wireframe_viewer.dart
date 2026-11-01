@@ -24,6 +24,7 @@ class WireframeViewer extends StatefulWidget {
     this.wheelColor = const Color(0xFFFFB15C),
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
+    this.onTestDrive,
   });
 
   final ParsedModel? model;
@@ -35,6 +36,7 @@ class WireframeViewer extends StatefulWidget {
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
+  final VoidCallback? onTestDrive;
 
   @override
   State<WireframeViewer> createState() => _WireframeViewerState();
@@ -194,61 +196,118 @@ class _WireframeViewerState extends State<WireframeViewer>
             top: 12,
             left: 12,
             right: 12,
-            child: Row(
-              children: [
-                _Badge(
-                  icon: Icons.view_in_ar_rounded,
-                  label: widget.model != null
-                      ? widget.model!.fileName
-                      : 'Procedural 3D Rig',
-                  color: widget.model != null
-                      ? const Color(0xFF6BD2A0)
-                      : const Color(0xFFFFB15C),
-                ),
-                const SizedBox(width: 8),
-                if (widget.detection != null &&
-                    widget.detection!.wheels.isNotEmpty)
-                  _Badge(
-                    icon: Icons.check_circle_outline,
-                    label: '${widget.detection!.wheels.length}/4 Wheels Rigged',
-                    color: widget.detection!.wheels.length >= 4
-                        ? const Color(0xFF6BD2A0)
-                        : const Color(0xFFFFB15C),
+            child: LayoutBuilder(
+              builder: (context, box) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: box.maxWidth),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _Badge(
+                              icon: Icons.view_in_ar_rounded,
+                              label: widget.model != null
+                                  ? widget.model!.fileName
+                                  : 'Procedural 3D Rig',
+                              color: widget.model != null
+                                  ? const Color(0xFF6BD2A0)
+                                  : const Color(0xFFFFB15C),
+                            ),
+                            const SizedBox(width: 8),
+                            if (widget.detection != null &&
+                                widget.detection!.wheels.isNotEmpty)
+                              _Badge(
+                                icon: Icons.check_circle_outline,
+                                label:
+                                    '${widget.detection!.wheels.length}/4 Wheels Rigged',
+                                color: widget.detection!.wheels.length >= 4
+                                    ? const Color(0xFF6BD2A0)
+                                    : const Color(0xFFFFB15C),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.onTestDrive != null) ...[
+                              FilledButton.icon(
+                                onPressed: widget.onTestDrive,
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF713D),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 6),
+                                  visualDensity: VisualDensity.compact,
+                                  elevation: 3,
+                                  shadowColor: const Color(0x60FF713D),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                ),
+                                icon: const Icon(
+                                    Icons.sports_motorsports_rounded,
+                                    size: 14),
+                                label: const Text(
+                                  'TEST DRIVE',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.6,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            // View presets
+                            _PresetButton(
+                                'ISO', () => _setPreset(CameraPreset.iso)),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                                'TOP', () => _setPreset(CameraPreset.top)),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                                'SIDE', () => _setPreset(CameraPreset.side)),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                                'FRONT', () => _setPreset(CameraPreset.front)),
+                            const SizedBox(width: 8),
+                            IconButton.filledTonal(
+                              iconSize: 16,
+                              visualDensity: VisualDensity.compact,
+                              tooltip: _autoTurntable
+                                  ? 'Pause Turntable'
+                                  : 'Auto 360° Turntable',
+                              icon: Icon(
+                                _autoTurntable
+                                    ? Icons.pause_circle_filled_rounded
+                                    : Icons.rotate_right_rounded,
+                                color: _autoTurntable
+                                    ? const Color(0xFFFF713D)
+                                    : const Color(0xFFBAC7CE),
+                              ),
+                              onPressed: () => setState(
+                                  () => _autoTurntable = !_autoTurntable),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton.filledTonal(
+                              iconSize: 16,
+                              visualDensity: VisualDensity.compact,
+                              tooltip: 'Reset View',
+                              icon: const Icon(Icons.refresh_rounded),
+                              onPressed: () => setState(_resetCameraToModel),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                const Spacer(),
-                // View presets
-                _PresetButton('ISO', () => _setPreset(CameraPreset.iso)),
-                const SizedBox(width: 4),
-                _PresetButton('TOP', () => _setPreset(CameraPreset.top)),
-                const SizedBox(width: 4),
-                _PresetButton('SIDE', () => _setPreset(CameraPreset.side)),
-                const SizedBox(width: 4),
-                _PresetButton('FRONT', () => _setPreset(CameraPreset.front)),
-                const SizedBox(width: 8),
-                IconButton.filledTonal(
-                  iconSize: 16,
-                  visualDensity: VisualDensity.compact,
-                  tooltip: _autoTurntable ? 'Pause Turntable' : 'Auto 360° Turntable',
-                  icon: Icon(
-                    _autoTurntable
-                        ? Icons.pause_circle_filled_rounded
-                        : Icons.rotate_right_rounded,
-                    color: _autoTurntable
-                        ? const Color(0xFFFF713D)
-                        : const Color(0xFFBAC7CE),
-                  ),
-                  onPressed: () =>
-                      setState(() => _autoTurntable = !_autoTurntable),
-                ),
-                const SizedBox(width: 4),
-                IconButton.filledTonal(
-                  iconSize: 16,
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Reset View',
-                  icon: const Icon(Icons.refresh_rounded),
-                  onPressed: () => setState(_resetCameraToModel),
-                ),
-              ],
+                );
+              },
             ),
           ),
 

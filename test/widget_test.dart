@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
+import 'package:rig_car/physics_sim.dart';
 import 'package:rig_car/pre_rigged_cars.dart';
 
 void main() {
@@ -266,6 +267,179 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Godot 4 Rig Package'), findsOneWidget);
       expect(find.text('rig_car.tscn'), findsOneWidget);
+    });
+  });
+
+  group('VehiclePhysicsSimulation Godot 4 Physics', () {
+    test('Initializes with default resting state', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 450,
+        grip: 1.0,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+
+      expect(sim.speedKmh, 0.0);
+      expect(sim.currentGear, 1);
+      expect(sim.engineRpm, 950.0);
+      expect(sim.position.z, 24.0);
+      expect(sim.cones.isNotEmpty, isTrue);
+    });
+
+    test('Throttle accelerates vehicle and shifts gears', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 600,
+        grip: 1.0,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+
+      for (var i = 0; i < 100; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      }
+
+      expect(sim.speedKmh > 20.0, isTrue);
+      expect(sim.position.z < 24.0, isTrue);
+      expect(sim.engineRpm > 1200.0, isTrue);
+    });
+
+    test('Steering input induces yaw angular velocity', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 500,
+        grip: 1.0,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+
+      for (var i = 0; i < 80; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.8, handbrake: false);
+      }
+
+      expect(sim.steerAngle != 0.0, isTrue);
+      expect(sim.yaw != 0.0, isTrue);
+    });
+
+    test('Handbrake triggers drift and generates tire skid marks', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 800,
+        grip: 0.9,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'RWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: false,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+
+      for (var i = 0; i < 70; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      }
+      expect(sim.speedKmh > 18.0, isTrue);
+
+      for (var i = 0; i < 30; i++) {
+        sim.step(0.02, throttleInput: 0.5, steerInput: 1.0, handbrake: true);
+      }
+
+      expect(sim.isDrifting, isTrue);
+      expect(sim.leftSkidMarks.isNotEmpty, isTrue);
+      expect(sim.rightSkidMarks.isNotEmpty, isTrue);
+    });
+  });
+
+  group('Interactive Test Drive Simulation Mode', () {
+    testWidgets('renders TestDriveViewport with Godot racing HUD',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: true),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('GODOT 4 VEHICLE SIMULATOR'), findsOneWidget);
+      expect(find.text('KM/H'), findsOneWidget);
+      expect(find.text('G-METER'), findsOneWidget);
+      expect(find.text('TIRE SLIP & SUSPENSION'), findsOneWidget);
+      expect(find.text('EXIT TEST DRIVE'), findsOneWidget);
+
+      await tester.tap(find.text('EXIT TEST DRIVE'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('CAR RIGGER'), findsOneWidget);
+      expect(find.text('TEST DRIVE'), findsWidgets);
+    });
+
+    testWidgets('toggles Test Drive mode from workbench topbar button',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: false),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('CAR RIGGER'), findsOneWidget);
+
+      await tester.tap(find.text('TEST DRIVE').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('GODOT 4 VEHICLE SIMULATOR'), findsOneWidget);
     });
   });
 }
