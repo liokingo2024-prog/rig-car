@@ -1,14 +1,22 @@
-# RIG-CAR
+# RIG-CAR Auto-Rigger
 
-RIG-CAR is a responsive Flutter web workbench for turning a car model into a
-configurable Godot 4 vehicle rig. The first slice provides a complete rigging
-flow: import a `.glb` / `.gltf` model, choose a geometry preset, map steering
-and traction across four wheels, tune physics values, and export a Godot scene,
-controller script, and editable JSON configuration.
+RIG-CAR is an automated, Mixamo-style 3D car rigging workbench for Godot 4.
+Drop any `.glb` or `.gltf` vehicle asset into the browser, and RIG-CAR parses the
+binary scene graph, auto-detects wheels, axles, car body, and drivetrain topology,
+renders an interactive 3D wireframe preview with part markers, allows human-assist
+review/reassignment, and exports a production-ready Godot 4 vehicle rig with
+**actual model wheel coordinates**.
 
-The viewport is a procedural preview in this first slice. The imported model
-filename and rig settings are carried into the export files; the next slice can
-replace the preview with a live GLB renderer and inspect the model's node tree.
+## Features
+
+- **Binary GLB/glTF parser**: decodes nodes, transforms, meshes, primitives, and accessors directly in the browser.
+- **Auto-detection heuristics**: detects 4 wheels by name, position, and symmetry; isolates the car body mesh; estimates vehicle mass and archetype.
+- **Interactive 3D wireframe viewport**: orbit, zoom, pan, camera presets (ISO, Front, Side, Top), 3D ground grid, and 3D wheel/CoM markers.
+- **Mixamo-style human assist**: review auto-detected wheel slots (FL, FR, RL, RR) and reassign any misidentified nodes via dropdown selector.
+- **Real-coordinate Godot 4 export**:
+  - `rig_car.tscn`: `VehicleBody3D` with exact world positions for all 4 `VehicleWheel3D` nodes.
+  - `rig_car.gd`: Input and engine controller script.
+  - `rig_car_config.json`: Rig parameters and telemetry.
 
 ## Stack
 
@@ -24,9 +32,6 @@ flutter pub get
 flutter run -d chrome
 ```
 
-The package is named `rig_car` because Dart package names use underscores. The
-product and repository name are `RIG-CAR` / `rig-car`.
-
 ## Checks
 
 ```bash
@@ -35,19 +40,12 @@ make analyze
 make build-web
 ```
 
-## Export flow
+## Workflow
 
-1. Open **Import model** and choose a `.glb` or `.gltf` asset.
-2. Select a starting geometry preset.
-3. Open **Rig wheels** and set steering, traction, and drivetrain behavior.
-4. Open **Tune physics** and adjust mass, engine force, tire grip, suspension,
-   and center of mass.
-5. Open **Export to Godot** and download `rig_car.tscn`, `rig_car.gd`, and
-   `rig_car_config.json`.
-
-The generated scene uses a `VehicleBody3D` root with four `VehicleWheel3D`
-nodes. Replace the placeholder collision shape and add the imported mesh under
-the generated root in Godot.
+1. **Upload & Scan**: Drop a `.glb` or `.gltf` model. RIG-CAR parses the scene graph and detects vehicle geometry.
+2. **Review Detections (Human Assist)**: Inspect the 3D wireframe and confirm or reassign FL, FR, RL, and RR wheel nodes.
+3. **Tune Physics**: Adjust vehicle mass, engine force, tire grip, suspension stiffness, and center of mass height.
+4. **Export to Godot**: Download `rig_car.tscn`, `rig_car.gd`, and `rig_car_config.json`.
 
 ## Docker
 

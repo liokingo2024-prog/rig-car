@@ -2,8 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'auto_detector.dart';
 import 'download_config.dart';
 import 'file_picker.dart';
+import 'glb_parser.dart';
+import 'model_data.dart';
+import 'wireframe_viewer.dart';
 
 void main() {
   runApp(const RigCarApp());
@@ -16,21 +20,20 @@ class RigCarApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const ink = Color(0xFFE9EEF2);
     return MaterialApp(
-      title: 'RIG-CAR',
+      title: 'RIG-CAR Auto-Rigger',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF0E151B),
-        colorScheme:
-            ColorScheme.fromSeed(
-              seedColor: const Color(0xFFFF713D),
-              brightness: Brightness.dark,
-            ).copyWith(
-              primary: const Color(0xFFFF713D),
-              onPrimary: Colors.white,
-              surface: const Color(0xFF172129),
-              onSurface: ink,
-            ),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFFF713D),
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: const Color(0xFFFF713D),
+          onPrimary: Colors.white,
+          surface: const Color(0xFF172129),
+          onSurface: ink,
+        ),
         fontFamily: 'Arial',
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -53,7 +56,7 @@ class RigCarApp extends StatelessWidget {
         textTheme: const TextTheme(
           headlineSmall: TextStyle(
             color: ink,
-            fontSize: 21,
+            fontSize: 20,
             fontWeight: FontWeight.w800,
           ),
           titleLarge: TextStyle(
@@ -88,6 +91,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
   RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
+  ParsedModel? _parsedModel;
+  DetectionResult? _detection;
+  int? _selectedNodeIndex;
+
+  // Drivetrain & physics
   String _drive = 'AWD';
   double _mass = 1200;
   double _engineForce = 420;
@@ -99,11 +107,106 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   bool _frontTraction = true;
   bool _rearTraction = true;
 
+  // Manual wheel assignments [FL, FR, RL, RR]
+  final Map<String, DetectedWheel?> _assignedWheels = {
+    'FL': null,
+    'FR': null,
+    'RL': null,
+    'RR': null,
+  };
+
   Future<void> _pickModel() async {
-    final pickedName = await pickModelFile();
-    if (!mounted || pickedName == null) return;
-    setState(() => _modelName = pickedName);
-    _showMessage('Loaded $pickedName');
+    try {
+      final picked = await pickModelFile();
+      if (!mounted || picked == null) return;
+
+      setState(() {
+        _modelName = picked.name;
+      });
+
+      if (picked.bytes.isNotEmpty) {
+        final parsed = GlbParser.parse(picked.name, picked.bytes);
+        final detection = AutoDetector.detect(parsed);
+
+        setState(() {
+          _parsedModel = parsed;
+          _detection = detection;
+          _drive = detection.suggestedDrive;
+
+          // Find preset matching suggestion
+          final matched = presets.firstWhere(
+            (p) => p.name == detection.suggestedPreset,
+            orElse: () => presets.first,
+          );
+          _preset = matched;
+
+          // Estimate mass from volume
+          final size = parsed.worldBBox.size;
+          final vol = (size.x.abs() * size.y.abs() * size.z.abs())
+              .clamp(2.0, 30.0);
+          _mass = (vol * 140.0).clamp(600.0, 2800.0).roundToDouble();
+
+          // Map detected wheels
+          _mapDetectedWheels(detection.wheels);
+
+          // Auto-advance to review step
+          _activeStep = 2;
+        });
+
+        _showMessage(
+          'Model parsed: ${parsed.nodes.length} nodes, '
+          '${detection.wheels.length}/4 wheels detected',
+        );
+      } else {
+        _showMessage('Loaded ${picked.name} (procedural fallback)');
+      }
+    } catch (e) {
+      _showMessage('Error parsing model: $e');
+    }
+  }
+
+  void _mapDetectedWheels(List<DetectedWheel> wheels) {
+    _assignedWheels['FL'] = null;
+    _assignedWheels['FR'] = null;
+    _assignedWheels['RL'] = null;
+    _assignedWheels['RR'] = null;
+
+    for (final w in wheels) {
+      final key = '${w.axle == 'front' ? 'F' : 'R'}${w.side == 'left' ? 'L' : 'R'}';
+      if (_assignedWheels.containsKey(key) && _assignedWheels[key] == null) {
+        _assignedWheels[key] = w;
+      }
+    }
+
+    // Fill remaining unassigned slots
+    final unassigned = wheels
+        .where((w) => !_assignedWheels.values.contains(w))
+        .toList();
+    for (final key in ['FL', 'FR', 'RL', 'RR']) {
+      if (_assignedWheels[key] == null && unassigned.isNotEmpty) {
+        _assignedWheels[key] = unassigned.removeAt(0);
+      }
+    }
+  }
+
+  void _reassignWheel(String slot, int? nodeIndex) {
+    if (nodeIndex == null || _parsedModel == null) return;
+    final node = _parsedModel!.nodes[nodeIndex];
+    final axle = slot.startsWith('F') ? 'front' : 'rear';
+    final side = slot.endsWith('L') ? 'left' : 'right';
+
+    setState(() {
+      _assignedWheels[slot] = DetectedWheel(
+        nodeIndex: node.index,
+        nodeName: node.name,
+        worldPosition: node.worldTransform.translation,
+        confidence: 1.0, // Human confirmed
+        meshIndex: node.meshIndex,
+        axle: axle,
+        side: side,
+      );
+      _selectedNodeIndex = node.index;
+    });
   }
 
   void _showMessage(String message) {
@@ -118,20 +221,38 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       );
   }
 
-  RigConfig get _config => RigConfig(
-    modelName: _modelName,
-    presetName: _preset.name,
-    drive: _drive,
-    mass: _mass,
-    engineForce: _engineForce,
-    grip: _grip,
-    suspension: _suspension,
-    centerOfMass: _centerOfMass,
-    frontSteering: _frontSteering,
-    rearSteering: _rearSteering,
-    frontTraction: _frontTraction,
-    rearTraction: _rearTraction,
-  );
+  RigConfig get _config {
+    List<Vec3>? wheelPositions;
+    final fl = _assignedWheels['FL'];
+    final fr = _assignedWheels['FR'];
+    final rl = _assignedWheels['RL'];
+    final rr = _assignedWheels['RR'];
+
+    if (fl != null && fr != null && rl != null && rr != null) {
+      wheelPositions = [
+        fl.worldPosition,
+        fr.worldPosition,
+        rl.worldPosition,
+        rr.worldPosition,
+      ];
+    }
+
+    return RigConfig(
+      modelName: _modelName,
+      presetName: _preset.name,
+      drive: _drive,
+      mass: _mass,
+      engineForce: _engineForce,
+      grip: _grip,
+      suspension: _suspension,
+      centerOfMass: _centerOfMass,
+      frontSteering: _frontSteering,
+      rearSteering: _rearSteering,
+      frontTraction: _frontTraction,
+      rearTraction: _rearTraction,
+      wheelPositions: wheelPositions,
+    );
+  }
 
   Future<void> _exportGodotFiles() async {
     final config = _config;
@@ -142,7 +263,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     );
     await downloadTextFile('rig_car.gd', config.toGdScript(), 'text/plain');
     await downloadTextFile('rig_car.tscn', config.toTscn(), 'text/plain');
-    if (mounted) _showMessage('Exported Godot rig files');
+    if (mounted) _showMessage('Exported Godot 4 rig files');
   }
 
   void _selectStep(int step) {
@@ -167,6 +288,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                       _DesktopSidebar(
                         activeStep: _activeStep,
                         onStepSelected: _selectStep,
+                        hasModel: _parsedModel != null,
                       ),
                     Expanded(
                       child: Column(
@@ -175,6 +297,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                             _DesktopTopbar(
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
+                              wheelsCount: _detection?.wheels.length ?? 0,
                             ),
                           if (!desktop)
                             _StepStrip(
@@ -184,9 +307,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                           Expanded(
                             child: SingleChildScrollView(
                               padding: EdgeInsets.fromLTRB(
-                                desktop ? 26 : 16,
-                                desktop ? 22 : 16,
-                                desktop ? 26 : 16,
+                                desktop ? 24 : 16,
+                                desktop ? 20 : 16,
+                                desktop ? 24 : 16,
                                 28,
                               ),
                               child: tablet && desktop
@@ -195,18 +318,32 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Expanded(
-                                          child: _PreviewPanel(
-                                            preset: _preset,
-                                            modelName: _modelName,
+                                          child: SizedBox(
+                                            height: 520,
+                                            child: WireframeViewer(
+                                              model: _parsedModel,
+                                              detection: _detection,
+                                              selectedNodeIndex:
+                                                  _selectedNodeIndex,
+                                              onNodeSelected: (idx) {
+                                                setState(() =>
+                                                    _selectedNodeIndex = idx);
+                                              },
+                                              accentColor: _preset.accent,
+                                              centerOfMassY: _centerOfMass,
+                                            ),
                                           ),
                                         ),
                                         const SizedBox(width: 18),
                                         SizedBox(
-                                          width: 348,
+                                          width: 360,
                                           child: _InspectorPanel(
                                             activeStep: _activeStep,
                                             preset: _preset,
                                             modelName: _modelName,
+                                            parsedModel: _parsedModel,
+                                            detection: _detection,
+                                            assignedWheels: _assignedWheels,
                                             drive: _drive,
                                             mass: _mass,
                                             engineForce: _engineForce,
@@ -218,6 +355,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             frontTraction: _frontTraction,
                                             rearTraction: _rearTraction,
                                             onPickModel: _pickModel,
+                                            onReassignWheel: _reassignWheel,
                                             onPresetChanged: (value) {
                                               setState(() => _preset = value);
                                             },
@@ -266,21 +404,36 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                               );
                                             },
                                             onExport: _exportGodotFiles,
+                                            onStepSelected: _selectStep,
                                           ),
                                         ),
                                       ],
                                     )
                                   : Column(
                                       children: [
-                                        _PreviewPanel(
-                                          preset: _preset,
-                                          modelName: _modelName,
+                                        SizedBox(
+                                          height: 380,
+                                          child: WireframeViewer(
+                                            model: _parsedModel,
+                                            detection: _detection,
+                                            selectedNodeIndex:
+                                                _selectedNodeIndex,
+                                            onNodeSelected: (idx) {
+                                              setState(() =>
+                                                  _selectedNodeIndex = idx);
+                                            },
+                                            accentColor: _preset.accent,
+                                            centerOfMassY: _centerOfMass,
+                                          ),
                                         ),
                                         const SizedBox(height: 16),
                                         _InspectorPanel(
                                           activeStep: _activeStep,
                                           preset: _preset,
                                           modelName: _modelName,
+                                          parsedModel: _parsedModel,
+                                          detection: _detection,
+                                          assignedWheels: _assignedWheels,
                                           drive: _drive,
                                           mass: _mass,
                                           engineForce: _engineForce,
@@ -292,6 +445,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                           frontTraction: _frontTraction,
                                           rearTraction: _rearTraction,
                                           onPickModel: _pickModel,
+                                          onReassignWheel: _reassignWheel,
                                           onPresetChanged: (value) {
                                             setState(() => _preset = value);
                                           },
@@ -310,7 +464,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             setState(() => _grip = value);
                                           },
                                           onSuspensionChanged: (value) {
-                                            setState(() => _suspension = value);
+                                            setState(
+                                              () => _suspension = value,
+                                            );
                                           },
                                           onCenterOfMassChanged: (value) {
                                             setState(
@@ -338,6 +494,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             );
                                           },
                                           onExport: _exportGodotFiles,
+                                          onStepSelected: _selectStep,
                                         ),
                                       ],
                                     ),
@@ -357,14 +514,18 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 }
 
+// ── Desktop Sidebar ─────────────────────────────────────────────────────────
+
 class _DesktopSidebar extends StatelessWidget {
   const _DesktopSidebar({
     required this.activeStep,
     required this.onStepSelected,
+    required this.hasModel,
   });
 
   final int activeStep;
   final ValueChanged<int> onStepSelected;
+  final bool hasModel;
 
   @override
   Widget build(BuildContext context) {
@@ -379,21 +540,21 @@ class _DesktopSidebar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _Brand(),
-          const SizedBox(height: 44),
-          const _SmallLabel('RIGGING WORKFLOW'),
+          const SizedBox(height: 36),
+          const _SmallLabel('MIXAMO AUTO-RIGGER'),
           const SizedBox(height: 10),
           _SidebarStep(
             number: 1,
-            title: 'Import model',
-            subtitle: 'GLB / glTF',
+            title: 'Upload & Scan',
+            subtitle: 'Auto-parse GLB/glTF',
             active: activeStep == 1,
             complete: activeStep > 1,
             onTap: () => onStepSelected(1),
           ),
           _SidebarStep(
             number: 2,
-            title: 'Rig wheels',
-            subtitle: 'Steering & traction',
+            title: 'Review Detections',
+            subtitle: 'Human-assist rigging',
             active: activeStep == 2,
             complete: activeStep > 2,
             onTap: () => onStepSelected(2),
@@ -409,32 +570,34 @@ class _DesktopSidebar extends StatelessWidget {
           _SidebarStep(
             number: 4,
             title: 'Export to Godot',
-            subtitle: 'Scene + script + config',
+            subtitle: 'Real wheel positions',
             active: activeStep == 4,
             complete: false,
             onTap: () => onStepSelected(4),
           ),
           const Spacer(),
           Container(
-            padding: const EdgeInsets.all(13),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFF1A2831),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(color: const Color(0xFF2A3B46)),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.info_outline_rounded,
+                const Icon(
+                  Icons.auto_awesome,
                   color: Color(0xFFFFB15C),
-                  size: 18,
+                  size: 17,
                 ),
-                SizedBox(width: 9),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Built for Godot 4 VehicleBody3D rigs.',
-                    style: TextStyle(
+                    hasModel
+                        ? 'Auto-scan complete. Review markers in 3D wireframe.'
+                        : 'Drop a GLB car model to auto-detect wheels and body.',
+                    style: const TextStyle(
                       color: Color(0xFFB5C0C7),
                       fontSize: 11,
                       height: 1.35,
@@ -446,7 +609,7 @@ class _DesktopSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           const Text(
-            'v0.1  •  RIG-CAR LAB',
+            'v2.0 AUTO-RIG  •  GODOT 4',
             style: TextStyle(
               color: Color(0xFF61707A),
               fontSize: 10,
@@ -460,17 +623,24 @@ class _DesktopSidebar extends StatelessWidget {
   }
 }
 
+// ── Topbar ──────────────────────────────────────────────────────────────────
+
 class _DesktopTopbar extends StatelessWidget {
-  const _DesktopTopbar({required this.modelName, required this.onExport});
+  const _DesktopTopbar({
+    required this.modelName,
+    required this.onExport,
+    required this.wheelsCount,
+  });
 
   final String modelName;
   final VoidCallback onExport;
+  final int wheelsCount;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 70,
-      padding: const EdgeInsets.symmetric(horizontal: 26),
+      height: 64,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: const BoxDecoration(
         color: Color(0xFF10181E),
         border: Border(bottom: BorderSide(color: Color(0xFF25323B))),
@@ -478,7 +648,7 @@ class _DesktopTopbar extends StatelessWidget {
       child: Row(
         children: [
           const Text(
-            'UNTITLED RIG',
+            'CAR RIGGER',
             style: TextStyle(
               color: Color(0xFFEEF2F4),
               fontSize: 13,
@@ -486,17 +656,21 @@ class _DesktopTopbar extends StatelessWidget {
               letterSpacing: 1.1,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: const Color(0xFF1E392F),
+              color: wheelsCount >= 4
+                  ? const Color(0xFF1E392F)
+                  : const Color(0xFF3B2E1E),
               borderRadius: BorderRadius.circular(5),
             ),
-            child: const Text(
-              'SAVED',
+            child: Text(
+              wheelsCount >= 4 ? 'AUTO-RIGGED' : 'MANUAL ASSIST',
               style: TextStyle(
-                color: Color(0xFF6BD2A0),
+                color: wheelsCount >= 4
+                    ? const Color(0xFF6BD2A0)
+                    : const Color(0xFFFFB15C),
                 fontSize: 9,
                 fontWeight: FontWeight.w800,
                 letterSpacing: .8,
@@ -519,14 +693,8 @@ class _DesktopTopbar extends StatelessWidget {
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFE8EEF1),
               side: const BorderSide(color: Color(0xFF3A4B56)),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
-          ),
-          const SizedBox(width: 10),
-          IconButton(
-            onPressed: () {},
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined, size: 19),
           ),
         ],
       ),
@@ -534,15 +702,16 @@ class _DesktopTopbar extends StatelessWidget {
   }
 }
 
+// ── Mobile Header & Strip ───────────────────────────────────────────────────
+
 class _MobileHeader extends StatelessWidget {
   const _MobileHeader({required this.onExport});
-
   final VoidCallback onExport;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 12, 14),
+      padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
       decoration: const BoxDecoration(
         color: Color(0xFF10181E),
         border: Border(bottom: BorderSide(color: Color(0xFF25323B))),
@@ -556,11 +725,6 @@ class _MobileHeader extends StatelessWidget {
             tooltip: 'Export Godot rig',
             icon: const Icon(Icons.file_download_outlined),
           ),
-          IconButton(
-            onPressed: () {},
-            tooltip: 'More options',
-            icon: const Icon(Icons.more_horiz_rounded),
-          ),
         ],
       ),
     );
@@ -569,7 +733,6 @@ class _MobileHeader extends StatelessWidget {
 
 class _StepStrip extends StatelessWidget {
   const _StepStrip({required this.activeStep, required this.onStepSelected});
-
   final int activeStep;
   final ValueChanged<int> onStepSelected;
 
@@ -577,7 +740,7 @@ class _StepStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Row(
         children: [
           for (final step in workflowSteps) ...[
@@ -605,114 +768,16 @@ class _StepStrip extends StatelessWidget {
   }
 }
 
-class _PreviewPanel extends StatelessWidget {
-  const _PreviewPanel({required this.preset, required this.modelName});
-
-  final RigPreset preset;
-  final String modelName;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Panel(
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-            child: Row(
-              children: [
-                const Text(
-                  '3D VIEWPORT',
-                  style: TextStyle(
-                    color: Color(0xFFEAF0F2),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                const _StatusDot(
-                  label: 'RIG PREVIEW',
-                  color: Color(0xFF6BD2A0),
-                ),
-                const Spacer(),
-                Text(
-                  'Orbit  •  Zoom  •  Pan',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(width: 12),
-                const Icon(
-                  Icons.fullscreen_rounded,
-                  size: 18,
-                  color: Color(0xFF87969F),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 418,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _CarViewportPainter(
-                      accent: preset.accent,
-                      secondary: preset.secondary,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 18,
-                  top: 16,
-                  child: _ViewportTag(
-                    icon: Icons.view_in_ar_outlined,
-                    label: preset.name,
-                  ),
-                ),
-                Positioned(
-                  right: 18,
-                  top: 16,
-                  child: _ViewportTag(
-                    icon: Icons.insert_drive_file_outlined,
-                    label: modelName == 'No model loaded'
-                        ? 'Procedural preview'
-                        : modelName,
-                  ),
-                ),
-                const Positioned(left: 18, bottom: 16, child: _AxisLegend()),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                const _Metric(label: 'MESH', value: 'READY'),
-                const SizedBox(width: 22),
-                const _Metric(label: 'WHEELS', value: '4 / 4'),
-                const SizedBox(width: 22),
-                const _Metric(label: 'PHYSICS', value: 'ATTACHED'),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.help_outline_rounded, size: 16),
-                  label: const Text('Viewport help'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// ── Inspector Panel Dispatcher ──────────────────────────────────────────────
 
 class _InspectorPanel extends StatelessWidget {
   const _InspectorPanel({
     required this.activeStep,
     required this.preset,
     required this.modelName,
+    required this.parsedModel,
+    required this.detection,
+    required this.assignedWheels,
     required this.drive,
     required this.mass,
     required this.engineForce,
@@ -724,6 +789,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.frontTraction,
     required this.rearTraction,
     required this.onPickModel,
+    required this.onReassignWheel,
     required this.onPresetChanged,
     required this.onDriveChanged,
     required this.onMassChanged,
@@ -736,11 +802,15 @@ class _InspectorPanel extends StatelessWidget {
     required this.onFrontTractionChanged,
     required this.onRearTractionChanged,
     required this.onExport,
+    required this.onStepSelected,
   });
 
   final int activeStep;
   final RigPreset preset;
   final String modelName;
+  final ParsedModel? parsedModel;
+  final DetectionResult? detection;
+  final Map<String, DetectedWheel?> assignedWheels;
   final String drive;
   final double mass;
   final double engineForce;
@@ -752,6 +822,7 @@ class _InspectorPanel extends StatelessWidget {
   final bool frontTraction;
   final bool rearTraction;
   final VoidCallback onPickModel;
+  final void Function(String slot, int? nodeIndex) onReassignWheel;
   final ValueChanged<RigPreset> onPresetChanged;
   final ValueChanged<String> onDriveChanged;
   final ValueChanged<double> onMassChanged;
@@ -764,6 +835,7 @@ class _InspectorPanel extends StatelessWidget {
   final ValueChanged<bool> onFrontTractionChanged;
   final ValueChanged<bool> onRearTractionChanged;
   final VoidCallback onExport;
+  final ValueChanged<int> onStepSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -774,43 +846,52 @@ class _InspectorPanel extends StatelessWidget {
           workflowSteps[activeStep - 1].title,
           style: Theme.of(context).textTheme.headlineSmall,
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 3),
         Text(
           workflowSteps[activeStep - 1].subtitle,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: 14),
         switch (activeStep) {
-          1 => _ImportInspector(
-            preset: preset,
-            modelName: modelName,
-            onPickModel: onPickModel,
-            onPresetChanged: onPresetChanged,
-          ),
-          2 => _WheelInspector(
-            drive: drive,
-            onDriveChanged: onDriveChanged,
-            frontSteering: frontSteering,
-            rearSteering: rearSteering,
-            frontTraction: frontTraction,
-            rearTraction: rearTraction,
-            onFrontSteeringChanged: onFrontSteeringChanged,
-            onRearSteeringChanged: onRearSteeringChanged,
-            onFrontTractionChanged: onFrontTractionChanged,
-            onRearTractionChanged: onRearTractionChanged,
-          ),
+          1 => _UploadScanInspector(
+              modelName: modelName,
+              parsedModel: parsedModel,
+              detection: detection,
+              preset: preset,
+              onPickModel: onPickModel,
+              onPresetChanged: onPresetChanged,
+              onNextStep: () => onStepSelected(2),
+            ),
+          2 => _ReviewRigInspector(
+              parsedModel: parsedModel,
+              detection: detection,
+              assignedWheels: assignedWheels,
+              onReassignWheel: onReassignWheel,
+              drive: drive,
+              onDriveChanged: onDriveChanged,
+              frontSteering: frontSteering,
+              rearSteering: rearSteering,
+              frontTraction: frontTraction,
+              rearTraction: rearTraction,
+              onFrontSteeringChanged: onFrontSteeringChanged,
+              onRearSteeringChanged: onRearSteeringChanged,
+              onFrontTractionChanged: onFrontTractionChanged,
+              onRearTractionChanged: onRearTractionChanged,
+              onNextStep: () => onStepSelected(3),
+            ),
           3 => _PhysicsInspector(
-            mass: mass,
-            engineForce: engineForce,
-            grip: grip,
-            suspension: suspension,
-            centerOfMass: centerOfMass,
-            onMassChanged: onMassChanged,
-            onEngineForceChanged: onEngineForceChanged,
-            onGripChanged: onGripChanged,
-            onSuspensionChanged: onSuspensionChanged,
-            onCenterOfMassChanged: onCenterOfMassChanged,
-          ),
+              mass: mass,
+              engineForce: engineForce,
+              grip: grip,
+              suspension: suspension,
+              centerOfMass: centerOfMass,
+              onMassChanged: onMassChanged,
+              onEngineForceChanged: onEngineForceChanged,
+              onGripChanged: onGripChanged,
+              onSuspensionChanged: onSuspensionChanged,
+              onCenterOfMassChanged: onCenterOfMassChanged,
+              onNextStep: () => onStepSelected(4),
+            ),
           _ => _ExportInspector(onExport: onExport),
         },
       ],
@@ -818,18 +899,26 @@ class _InspectorPanel extends StatelessWidget {
   }
 }
 
-class _ImportInspector extends StatelessWidget {
-  const _ImportInspector({
-    required this.preset,
+// ── Step 1: Upload & Scan Inspector ─────────────────────────────────────────
+
+class _UploadScanInspector extends StatelessWidget {
+  const _UploadScanInspector({
     required this.modelName,
+    required this.parsedModel,
+    required this.detection,
+    required this.preset,
     required this.onPickModel,
     required this.onPresetChanged,
+    required this.onNextStep,
   });
 
-  final RigPreset preset;
   final String modelName;
+  final ParsedModel? parsedModel;
+  final DetectionResult? detection;
+  final RigPreset preset;
   final VoidCallback onPickModel;
   final ValueChanged<RigPreset> onPresetChanged;
+  final VoidCallback onNextStep;
 
   @override
   Widget build(BuildContext context) {
@@ -840,9 +929,9 @@ class _ImportInspector extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const _PanelTitle(
-                icon: Icons.file_upload_outlined,
-                title: 'Vehicle model',
-                subtitle: 'Start with a GLB or glTF asset',
+                icon: Icons.auto_awesome,
+                title: 'Mixamo-Style Auto-Rig',
+                subtitle: 'Drop any 3D car model (.glb, .gltf)',
               ),
               const SizedBox(height: 14),
               InkWell(
@@ -850,26 +939,32 @@ class _ImportInspector extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: const Color(0xFF10191F),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: const Color(0xFF3A4A55),
-                      width: 1.2,
+                      color: parsedModel != null
+                          ? const Color(0xFF6BD2A0)
+                          : const Color(0xFF3A4A55),
+                      width: 1.3,
                     ),
                   ),
                   child: Column(
                     children: [
-                      const Icon(
-                        Icons.cloud_upload_outlined,
-                        color: Color(0xFFFFB15C),
-                        size: 28,
+                      Icon(
+                        parsedModel != null
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.cloud_upload_outlined,
+                        color: parsedModel != null
+                            ? const Color(0xFF6BD2A0)
+                            : const Color(0xFFFF713D),
+                        size: 32,
                       ),
-                      const SizedBox(height: 9),
+                      const SizedBox(height: 10),
                       Text(
                         modelName == 'No model loaded'
-                            ? 'Drop a model or browse files'
+                            ? 'Drop .glb / .gltf or click to browse'
                             : modelName,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
@@ -877,18 +972,26 @@ class _ImportInspector extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 5),
-                      const Text(
-                        'Supported: .glb, .gltf',
-                        style: TextStyle(
+                      const SizedBox(height: 4),
+                      Text(
+                        parsedModel != null
+                            ? '${parsedModel!.nodes.length} nodes • ${parsedModel!.meshes.length} meshes'
+                            : 'glTF 2.0 binary container with car geometry',
+                        style: const TextStyle(
                           color: Color(0xFF82919B),
                           fontSize: 11,
                         ),
                       ),
-                      const SizedBox(height: 13),
-                      OutlinedButton(
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
                         onPressed: onPickModel,
-                        child: const Text('Choose model'),
+                        icon: const Icon(Icons.file_open_rounded, size: 16),
+                        label: Text(parsedModel != null
+                            ? 'Choose another model'
+                            : 'Upload & Auto-Scan'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF713D),
+                        ),
                       ),
                     ],
                   ),
@@ -897,6 +1000,57 @@ class _ImportInspector extends StatelessWidget {
             ],
           ),
         ),
+        if (detection != null) ...[
+          const SizedBox(height: 12),
+          _Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _PanelTitle(
+                  icon: Icons.radar_rounded,
+                  title: 'Scan Results',
+                  subtitle: 'Auto-detected vehicle topology',
+                ),
+                const SizedBox(height: 12),
+                _DetectionMetric(
+                  label: 'Wheels detected',
+                  value: '${detection!.wheels.length} / 4',
+                  isGood: detection!.wheels.length >= 4,
+                ),
+                const SizedBox(height: 6),
+                _DetectionMetric(
+                  label: 'Car Body',
+                  value: detection!.body?.nodeName ?? 'Manual Selection Needed',
+                  isGood: detection!.body != null,
+                ),
+                const SizedBox(height: 6),
+                _DetectionMetric(
+                  label: 'Suggested Drive',
+                  value: detection!.suggestedDrive,
+                  isGood: true,
+                ),
+                const SizedBox(height: 6),
+                _DetectionMetric(
+                  label: 'Suggested Preset',
+                  value: detection!.suggestedPreset,
+                  isGood: true,
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onNextStep,
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+                    label: const Text('Review Detections (Human Assist)'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2E7D32),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         _Panel(
           child: Column(
@@ -904,8 +1058,8 @@ class _ImportInspector extends StatelessWidget {
             children: [
               const _PanelTitle(
                 icon: Icons.tune_rounded,
-                title: 'Quick setup',
-                subtitle: 'Use a starting geometry preset',
+                title: 'Geometry Preset',
+                subtitle: 'Vehicle archetype template',
               ),
               const SizedBox(height: 12),
               for (final item in presets)
@@ -925,8 +1079,14 @@ class _ImportInspector extends StatelessWidget {
   }
 }
 
-class _WheelInspector extends StatelessWidget {
-  const _WheelInspector({
+// ── Step 2: Review & Human Assist Inspector ─────────────────────────────────
+
+class _ReviewRigInspector extends StatelessWidget {
+  const _ReviewRigInspector({
+    required this.parsedModel,
+    required this.detection,
+    required this.assignedWheels,
+    required this.onReassignWheel,
     required this.drive,
     required this.onDriveChanged,
     required this.frontSteering,
@@ -937,8 +1097,13 @@ class _WheelInspector extends StatelessWidget {
     required this.onRearSteeringChanged,
     required this.onFrontTractionChanged,
     required this.onRearTractionChanged,
+    required this.onNextStep,
   });
 
+  final ParsedModel? parsedModel;
+  final DetectionResult? detection;
+  final Map<String, DetectedWheel?> assignedWheels;
+  final void Function(String slot, int? nodeIndex) onReassignWheel;
   final String drive;
   final ValueChanged<String> onDriveChanged;
   final bool frontSteering;
@@ -949,81 +1114,217 @@ class _WheelInspector extends StatelessWidget {
   final ValueChanged<bool> onRearSteeringChanged;
   final ValueChanged<bool> onFrontTractionChanged;
   final ValueChanged<bool> onRearTractionChanged;
+  final VoidCallback onNextStep;
 
   @override
   Widget build(BuildContext context) {
-    return _Panel(
+    final nodes = parsedModel?.nodes ?? [];
+    final meshNodes = nodes.where((n) => n.meshIndex != null).toList();
+
+    return Column(
+      children: [
+        _Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _PanelTitle(
+                icon: Icons.pan_tool_alt_rounded,
+                title: 'Human-Assist Wheel Assignment',
+                subtitle: 'Confirm or reassign auto-detected wheels',
+              ),
+              const SizedBox(height: 12),
+              for (final slot in ['FL', 'FR', 'RL', 'RR'])
+                _WheelAssignmentTile(
+                  slot: slot,
+                  wheel: assignedWheels[slot],
+                  availableNodes: meshNodes,
+                  onSelected: (nodeIdx) => onReassignWheel(slot, nodeIdx),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _PanelTitle(
+                icon: Icons.settings_ethernet_rounded,
+                title: 'Drivetrain & Axles',
+                subtitle: 'Configure steering and power distribution',
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'FWD', label: Text('FWD')),
+                  ButtonSegment(value: 'RWD', label: Text('RWD')),
+                  ButtonSegment(value: 'AWD', label: Text('AWD')),
+                ],
+                selected: {drive},
+                onSelectionChanged: (value) => onDriveChanged(value.first),
+              ),
+              const SizedBox(height: 14),
+              _WheelRow(
+                label: 'Front axle',
+                nodeName: 'FL + FR wheels',
+                steering: frontSteering,
+                traction: frontTraction,
+                onSteeringChanged: onFrontSteeringChanged,
+                onTractionChanged: onFrontTractionChanged,
+              ),
+              const SizedBox(height: 8),
+              _WheelRow(
+                label: 'Rear axle',
+                nodeName: 'RL + RR wheels',
+                steering: rearSteering,
+                traction: rearTraction,
+                onSteeringChanged: onRearSteeringChanged,
+                onTractionChanged: onRearTractionChanged,
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: onNextStep,
+                  icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+                  label: const Text('Proceed to Tune Physics'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF713D),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WheelAssignmentTile extends StatelessWidget {
+  const _WheelAssignmentTile({
+    required this.slot,
+    required this.wheel,
+    required this.availableNodes,
+    required this.onSelected,
+  });
+
+  final String slot;
+  final DetectedWheel? wheel;
+  final List<SceneNode> availableNodes;
+  final ValueChanged<int?> onSelected;
+
+  String get _title {
+    switch (slot) {
+      case 'FL':
+        return 'Front Left (FL)';
+      case 'FR':
+        return 'Front Right (FR)';
+      case 'RL':
+        return 'Rear Left (RL)';
+      case 'RR':
+        return 'Rear Right (RR)';
+      default:
+        return slot;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111A21),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: wheel != null
+              ? const Color(0xFF2C3E4C)
+              : const Color(0xFF5A3030),
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _PanelTitle(
-            icon: Icons.settings_ethernet_rounded,
-            title: 'Wheel nodes',
-            subtitle: 'Map the four VehicleWheel3D nodes',
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'DRIVETRAIN',
-            style: TextStyle(
-              color: Color(0xFF75838C),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'FWD', label: Text('FWD')),
-              ButtonSegment(value: 'RWD', label: Text('RWD')),
-              ButtonSegment(value: 'AWD', label: Text('AWD')),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF213642),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  slot,
+                  style: const TextStyle(
+                    color: Color(0xFFFFB15C),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _title,
+                style: const TextStyle(
+                  color: Color(0xFFE2E9EC),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              if (wheel != null)
+                Text(
+                  '${(wheel!.confidence * 100).toInt()}% conf.',
+                  style: TextStyle(
+                    color: wheel!.confidence >= 0.8
+                        ? const Color(0xFF6BD2A0)
+                        : const Color(0xFFFFB15C),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                )
+              else
+                const Text(
+                  'Unassigned',
+                  style: TextStyle(color: Color(0xFFE86F6F), fontSize: 10),
+                ),
             ],
-            selected: {drive},
-            onSelectionChanged: (value) => onDriveChanged(value.first),
-            style: ButtonStyle(
-              textStyle: const WidgetStatePropertyAll(
-                TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          if (availableNodes.isNotEmpty)
+            DropdownButtonFormField<int>(
+              initialValue: wheel?.nodeIndex,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               ),
-              side: const WidgetStatePropertyAll(
-                BorderSide(color: Color(0xFF344650)),
-              ),
-              backgroundColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? const Color(0xFFFF713D)
-                    : const Color(0xFF111A21),
-              ),
-              foregroundColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? Colors.white
-                    : const Color(0xFFAAB6BC),
-              ),
+              items: availableNodes.map((node) {
+                final pos = node.worldTransform.translation;
+                return DropdownMenuItem<int>(
+                  value: node.index,
+                  child: Text(
+                    '${node.name} (${pos.x.toStringAsFixed(2)}, ${pos.y.toStringAsFixed(2)}, ${pos.z.toStringAsFixed(2)})',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                );
+              }).toList(),
+              onChanged: onSelected,
+            )
+          else
+            Text(
+              wheel?.nodeName ?? 'No nodes found in model',
+              style: const TextStyle(color: Color(0xFF8FA0AA), fontSize: 11),
             ),
-          ),
-          const SizedBox(height: 18),
-          const _WheelHeader(),
-          const SizedBox(height: 8),
-          _WheelRow(
-            label: 'Front axle',
-            nodeName: 'Wheel_FL  /  Wheel_FR',
-            steering: frontSteering,
-            traction: frontTraction,
-            onSteeringChanged: onFrontSteeringChanged,
-            onTractionChanged: onFrontTractionChanged,
-          ),
-          const SizedBox(height: 8),
-          _WheelRow(
-            label: 'Rear axle',
-            nodeName: 'Wheel_RL  /  Wheel_RR',
-            steering: rearSteering,
-            traction: rearTraction,
-            onSteeringChanged: onRearSteeringChanged,
-            onTractionChanged: onRearTractionChanged,
-          ),
         ],
       ),
     );
   }
 }
+
+// ── Step 3: Physics Inspector ───────────────────────────────────────────────
 
 class _PhysicsInspector extends StatelessWidget {
   const _PhysicsInspector({
@@ -1037,6 +1338,7 @@ class _PhysicsInspector extends StatelessWidget {
     required this.onGripChanged,
     required this.onSuspensionChanged,
     required this.onCenterOfMassChanged,
+    required this.onNextStep,
   });
 
   final double mass;
@@ -1049,6 +1351,7 @@ class _PhysicsInspector extends StatelessWidget {
   final ValueChanged<double> onGripChanged;
   final ValueChanged<double> onSuspensionChanged;
   final ValueChanged<double> onCenterOfMassChanged;
+  final VoidCallback onNextStep;
 
   @override
   Widget build(BuildContext context) {
@@ -1058,17 +1361,17 @@ class _PhysicsInspector extends StatelessWidget {
         children: [
           const _PanelTitle(
             icon: Icons.speed_rounded,
-            title: 'Vehicle physics',
-            subtitle: 'Tune values exported to VehicleBody3D',
+            title: 'Vehicle Physics',
+            subtitle: 'Fine-tune values for Godot VehicleBody3D',
           ),
           const SizedBox(height: 14),
           _SliderField(
             label: 'Mass',
             value: mass,
             min: 400,
-            max: 2600,
+            max: 2800,
             suffix: ' kg',
-            divisions: 44,
+            divisions: 48,
             onChanged: onMassChanged,
           ),
           _SliderField(
@@ -1107,33 +1410,16 @@ class _PhysicsInspector extends StatelessWidget {
             divisions: 18,
             onChanged: onCenterOfMassChanged,
           ),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.all(11),
-            decoration: BoxDecoration(
-              color: const Color(0xFF182A23),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.check_circle_outline,
-                  color: Color(0xFF6BD2A0),
-                  size: 17,
-                ),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Balanced starting point. Test traction and braking in Godot before shipping.',
-                    style: TextStyle(
-                      color: Color(0xFFA2CBB5),
-                      fontSize: 11,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onNextStep,
+              icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+              label: const Text('Proceed to Export'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFF713D),
+              ),
             ),
           ),
         ],
@@ -1142,9 +1428,10 @@ class _PhysicsInspector extends StatelessWidget {
   }
 }
 
+// ── Step 4: Export Inspector ────────────────────────────────────────────────
+
 class _ExportInspector extends StatelessWidget {
   const _ExportInspector({required this.onExport});
-
   final VoidCallback onExport;
 
   @override
@@ -1155,45 +1442,36 @@ class _ExportInspector extends StatelessWidget {
         children: [
           const _PanelTitle(
             icon: Icons.rocket_launch_outlined,
-            title: 'Godot package',
-            subtitle: 'Ready to drop into a Godot 4 project',
+            title: 'Godot 4 Rig Package',
+            subtitle: 'Exported with real wheel positions',
           ),
           const SizedBox(height: 16),
           const _ExportFile(
             icon: Icons.account_tree_outlined,
             name: 'rig_car.tscn',
-            detail: 'VehicleBody3D scene',
+            detail: 'VehicleBody3D with real wheel 3D coordinates',
           ),
           const _ExportFile(
             icon: Icons.code_rounded,
             name: 'rig_car.gd',
-            detail: 'Input + engine controller',
+            detail: 'Input + engine controller script',
           ),
           const _ExportFile(
             icon: Icons.data_object_rounded,
             name: 'rig_car_config.json',
-            detail: 'Editable rig settings',
+            detail: 'Editable rig settings & telemetry',
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               onPressed: onExport,
               icon: const Icon(Icons.file_download_outlined, size: 18),
-              label: const Text('Download Godot files'),
+              label: const Text('Download Godot Rig Files'),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFFF713D),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Import the scene, then place your MeshInstance3D and collision shape under RigCar.',
-            style: TextStyle(
-              color: Color(0xFF8998A1),
-              fontSize: 11,
-              height: 1.4,
             ),
           ),
         ],
@@ -1202,17 +1480,56 @@ class _ExportInspector extends StatelessWidget {
   }
 }
 
-class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.padding = const EdgeInsets.all(16)});
+// ── Helpers & Reusable Widgets ──────────────────────────────────────────────
 
+class _DetectionMetric extends StatelessWidget {
+  const _DetectionMetric({
+    required this.label,
+    required this.value,
+    required this.isGood,
+  });
+
+  final String label;
+  final String value;
+  final bool isGood;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          isGood ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+          size: 14,
+          color: isGood ? const Color(0xFF6BD2A0) : const Color(0xFFFFB15C),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF8FA0AA), fontSize: 11),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: TextStyle(
+            color: isGood ? const Color(0xFFE2E9EC) : const Color(0xFFFFB15C),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Panel extends StatelessWidget {
+  const _Panel({required this.child});
   final Widget child;
-  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: padding,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF172129),
         borderRadius: BorderRadius.circular(14),
@@ -1229,7 +1546,6 @@ class _PanelTitle extends StatelessWidget {
     required this.title,
     required this.subtitle,
   });
-
   final IconData icon;
   final String title;
   final String subtitle;
@@ -1270,7 +1586,6 @@ class _PresetTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
   });
-
   final RigPreset preset;
   final bool selected;
   final VoidCallback onTap;
@@ -1292,8 +1607,8 @@ class _PresetTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 29,
-              height: 29,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
                 color: preset.accent,
                 shape: BoxShape.circle,
@@ -1312,7 +1627,7 @@ class _PresetTile extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     preset.description,
                     style: const TextStyle(
@@ -1336,55 +1651,6 @@ class _PresetTile extends StatelessWidget {
   }
 }
 
-class _WheelHeader extends StatelessWidget {
-  const _WheelHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        Expanded(
-          child: Text(
-            'AXLE',
-            style: TextStyle(
-              color: Color(0xFF75838C),
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .8,
-            ),
-          ),
-        ),
-        SizedBox(
-          width: 67,
-          child: Text(
-            'STEER',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF75838C),
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .8,
-            ),
-          ),
-        ),
-        SizedBox(
-          width: 67,
-          child: Text(
-            'DRIVE',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF75838C),
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .8,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _WheelRow extends StatelessWidget {
   const _WheelRow({
     required this.label,
@@ -1394,7 +1660,6 @@ class _WheelRow extends StatelessWidget {
     required this.onSteeringChanged,
     required this.onTractionChanged,
   });
-
   final String label;
   final String nodeName;
   final bool steering;
@@ -1424,7 +1689,7 @@ class _WheelRow extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   nodeName,
                   style: const TextStyle(color: Color(0xFF71818B), fontSize: 9),
@@ -1432,23 +1697,20 @@ class _WheelRow extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(
-            width: 67,
-            child: Switch(
-              value: steering,
-              onChanged: onSteeringChanged,
-              activeThumbColor: Colors.white,
-              activeTrackColor: const Color(0xFFFF713D),
-            ),
+          const Text('Steer', style: TextStyle(fontSize: 10)),
+          Switch(
+            value: steering,
+            onChanged: onSteeringChanged,
+            activeThumbColor: Colors.white,
+            activeTrackColor: const Color(0xFFFF713D),
           ),
-          SizedBox(
-            width: 67,
-            child: Switch(
-              value: traction,
-              onChanged: onTractionChanged,
-              activeThumbColor: Colors.white,
-              activeTrackColor: const Color(0xFFFF713D),
-            ),
+          const SizedBox(width: 4),
+          const Text('Drive', style: TextStyle(fontSize: 10)),
+          Switch(
+            value: traction,
+            onChanged: onTractionChanged,
+            activeThumbColor: Colors.white,
+            activeTrackColor: const Color(0xFFFF713D),
           ),
         ],
       ),
@@ -1466,7 +1728,6 @@ class _SliderField extends StatelessWidget {
     required this.divisions,
     required this.onChanged,
   });
-
   final String label;
   final double value;
   final double min;
@@ -1519,7 +1780,6 @@ class _ExportFile extends StatelessWidget {
     required this.name,
     required this.detail,
   });
-
   final IconData icon;
   final String name;
   final String detail;
@@ -1571,7 +1831,6 @@ class _SidebarStep extends StatelessWidget {
     required this.complete,
     required this.onTap,
   });
-
   final int number;
   final String title;
   final String subtitle;
@@ -1696,7 +1955,6 @@ class _Brand extends StatelessWidget {
 
 class _SmallLabel extends StatelessWidget {
   const _SmallLabel(this.text);
-
   final String text;
 
   @override
@@ -1713,290 +1971,7 @@ class _SmallLabel extends StatelessWidget {
   }
 }
 
-class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 5),
-        Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .6,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ViewportTag extends StatelessWidget {
-  const _ViewportTag({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 180),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xB8141E24),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: const Color(0xFFB8C3C8), size: 14),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFB8C3C8),
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AxisLegend extends StatelessWidget {
-  const _AxisLegend();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xB8141E24),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'X',
-            style: TextStyle(
-              color: Color(0xFFE86F6F),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          SizedBox(width: 7),
-          Text(
-            'Y',
-            style: TextStyle(
-              color: Color(0xFF6BD2A0),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          SizedBox(width: 7),
-          Text(
-            'Z',
-            style: TextStyle(
-              color: Color(0xFF79A9EE),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF65747D),
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .8,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Color(0xFFDDE6EA),
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CarViewportPainter extends CustomPainter {
-  const _CarViewportPainter({required this.accent, required this.secondary});
-
-  final Color accent;
-  final Color secondary;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFF1A2831), Color(0xFF0F171D)],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, background);
-
-    final grid = Paint()
-      ..color = const Color(0x26384A55)
-      ..strokeWidth = 1;
-    for (var x = -size.height; x < size.width + size.height; x += 34) {
-      canvas.drawLine(
-        Offset(x, size.height),
-        Offset(x + size.height * .5, 0),
-        grid,
-      );
-    }
-    for (var y = size.height * .58; y < size.height; y += 28) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-
-    final center = Offset(size.width * .52, size.height * .56);
-    final shadow = Paint()..color = const Color(0xB8000000);
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: center + const Offset(5, 48),
-        width: size.width * .55,
-        height: 50,
-      ),
-      shadow,
-    );
-
-    final body = Path()
-      ..moveTo(center.dx - 170, center.dy + 18)
-      ..quadraticBezierTo(
-        center.dx - 148,
-        center.dy - 40,
-        center.dx - 90,
-        center.dy - 52,
-      )
-      ..lineTo(center.dx - 36, center.dy - 114)
-      ..quadraticBezierTo(
-        center.dx + 16,
-        center.dy - 140,
-        center.dx + 86,
-        center.dy - 111,
-      )
-      ..lineTo(center.dx + 141, center.dy - 47)
-      ..quadraticBezierTo(
-        center.dx + 176,
-        center.dy - 25,
-        center.dx + 182,
-        center.dy + 17,
-      )
-      ..lineTo(center.dx + 159, center.dy + 40)
-      ..lineTo(center.dx - 146, center.dy + 40)
-      ..close();
-    final bodyPaint = Paint()
-      ..shader = LinearGradient(
-        colors: [accent, secondary],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ).createShader(body.getBounds());
-    canvas.drawPath(body, bodyPaint);
-
-    final windowPaint = Paint()..color = const Color(0xFF14222A);
-    final windows = Path()
-      ..moveTo(center.dx - 29, center.dy - 99)
-      ..lineTo(center.dx + 27, center.dy - 116)
-      ..lineTo(center.dx + 70, center.dy - 99)
-      ..lineTo(center.dx + 47, center.dy - 51)
-      ..lineTo(center.dx - 53, center.dy - 51)
-      ..close();
-    canvas.drawPath(windows, windowPaint);
-    final divider = Paint()
-      ..color = const Color(0xFF40515B)
-      ..strokeWidth = 2;
-    canvas.drawLine(
-      Offset(center.dx + 11, center.dy - 108),
-      Offset(center.dx + 1, center.dy - 52),
-      divider,
-    );
-
-    final wheelPaint = Paint()..color = const Color(0xFF0A1014);
-    final hubPaint = Paint()..color = const Color(0xFF9BAAB1);
-    for (final wheel in [
-      Offset(center.dx - 122, center.dy + 36),
-      Offset(center.dx + 117, center.dy + 36),
-    ]) {
-      canvas.drawOval(
-        Rect.fromCenter(center: wheel, width: 44, height: 73),
-        wheelPaint,
-      );
-      canvas.drawCircle(wheel, 9, hubPaint);
-      canvas.drawCircle(wheel, 4, Paint()..color = const Color(0xFF24323A));
-    }
-
-    final headlight = Paint()..color = const Color(0xFFFFE7A4);
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(center.dx - 152, center.dy + 6),
-        width: 20,
-        height: 11,
-      ),
-      headlight,
-    );
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(center.dx + 163, center.dy + 6),
-        width: 20,
-        height: 11,
-      ),
-      headlight,
-    );
-
-    final marker = Paint()
-      ..color = const Color(0xFFFF713D)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    canvas.drawCircle(Offset(center.dx - 123, center.dy + 36), 32, marker);
-    canvas.drawCircle(Offset(center.dx + 118, center.dy + 36), 32, marker);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CarViewportPainter oldDelegate) =>
-      oldDelegate.accent != accent || oldDelegate.secondary != secondary;
-}
+// ── Workflow Steps & Presets ────────────────────────────────────────────────
 
 class RigPreset {
   const RigPreset({
@@ -2016,121 +1991,6 @@ class RigPreset {
   final double trackWidth;
 }
 
-class RigConfig {
-  const RigConfig({
-    required this.modelName,
-    required this.presetName,
-    required this.drive,
-    required this.mass,
-    required this.engineForce,
-    required this.grip,
-    required this.suspension,
-    required this.centerOfMass,
-    required this.frontSteering,
-    required this.rearSteering,
-    required this.frontTraction,
-    required this.rearTraction,
-  });
-
-  final String modelName;
-  final String presetName;
-  final String drive;
-  final double mass;
-  final double engineForce;
-  final double grip;
-  final double suspension;
-  final double centerOfMass;
-  final bool frontSteering;
-  final bool rearSteering;
-  final bool frontTraction;
-  final bool rearTraction;
-
-  Map<String, Object> toJson() => {
-    'format': 'rig-car.godot.vehicle-body-3d/v1',
-    'model': modelName,
-    'preset': presetName,
-    'godot': {'root_node': 'VehicleBody3D', 'wheel_node': 'VehicleWheel3D'},
-    'vehicle_body': {
-      'mass': mass,
-      'engine_force': engineForce,
-      'center_of_mass_y': centerOfMass,
-      'drive': drive,
-    },
-    'wheels': {
-      'front': {
-        'use_as_steering': frontSteering,
-        'use_as_traction': frontTraction,
-      },
-      'rear': {
-        'use_as_steering': rearSteering,
-        'use_as_traction': rearTraction,
-        'wheel_friction_slip': grip,
-        'suspension_stiffness': suspension,
-      },
-    },
-  };
-
-  String toGdScript() =>
-      '''extends VehicleBody3D
-
-@export var max_engine_force: float = ${engineForce.toStringAsFixed(1)}
-@export var max_brake_force: float = 30.0
-@export var max_steering_angle: float = 0.45
-
-func _physics_process(_delta: float) -> void:
-    var throttle := Input.get_axis("brake", "accelerate")
-    var steer := Input.get_axis("steer_right", "steer_left")
-    engine_force = throttle * max_engine_force
-    steering = steer * max_steering_angle
-    brake = max_brake_force if Input.is_action_pressed("brake") else 0.0
-''';
-
-  String toTscn() =>
-      '''[gd_scene load_steps=3 format=3]
-
-[ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_body"]
-size = Vector3(1.8, 0.6, 4.2)
-
-[node name="RigCar" type="VehicleBody3D"]
-mass = ${mass.toStringAsFixed(1)}
-script = ExtResource("1_rig")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-position = Vector3(0, 0.35, 0)
-shape = SubResource("BoxShape3D_body")
-
-[node name="Wheel_FL" type="VehicleWheel3D" parent="."]
-position = Vector3(-0.85, 0.0, -1.35)
-use_as_steering = $frontSteering
-use_as_traction = $frontTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
-
-[node name="Wheel_FR" type="VehicleWheel3D" parent="."]
-position = Vector3(0.85, 0.0, -1.35)
-use_as_steering = $frontSteering
-use_as_traction = $frontTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
-
-[node name="Wheel_RL" type="VehicleWheel3D" parent="."]
-position = Vector3(-0.85, 0.0, 1.35)
-use_as_steering = $rearSteering
-use_as_traction = $rearTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
-
-[node name="Wheel_RR" type="VehicleWheel3D" parent="."]
-position = Vector3(0.85, 0.0, 1.35)
-use_as_steering = $rearSteering
-use_as_traction = $rearTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
-''';
-}
-
 class WorkflowStep {
   const WorkflowStep({
     required this.number,
@@ -2144,9 +2004,11 @@ class WorkflowStep {
 }
 
 const workflowSteps = [
-  WorkflowStep(number: 1, title: 'Import model', subtitle: 'GLB / glTF'),
-  WorkflowStep(number: 2, title: 'Rig wheels', subtitle: 'Steering & traction'),
-  WorkflowStep(number: 3, title: 'Tune physics', subtitle: 'Mass & suspension'),
+  WorkflowStep(number: 1, title: 'Upload & Scan', subtitle: 'Auto-detect GLB'),
+  WorkflowStep(
+      number: 2, title: 'Review Rig', subtitle: 'Human-assist markers'),
+  WorkflowStep(
+      number: 3, title: 'Tune physics', subtitle: 'Mass & suspension'),
   WorkflowStep(
     number: 4,
     title: 'Export to Godot',

@@ -1,0 +1,711 @@
+import 'dart:math';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+
+import 'model_data.dart';
+
+// ── 3D Wireframe Viewer ─────────────────────────────────────────────────────
+//
+// Interactive 3D viewport that renders the parsed model mesh as a wireframe,
+// highlights detected wheels and body parts, and renders 3D markers for wheels
+// and center of mass. Supports orbit, zoom, pan, and view presets.
+
+enum CameraPreset { iso, front, side, top }
+
+class WireframeViewer extends StatefulWidget {
+  const WireframeViewer({
+    super.key,
+    required this.model,
+    required this.detection,
+    this.selectedNodeIndex,
+    this.onNodeSelected,
+    this.accentColor = const Color(0xFFFF713D),
+    this.bodyColor = const Color(0xFF64B5F6),
+    this.wheelColor = const Color(0xFFFFB15C),
+    this.wireColor = const Color(0xFF455A64),
+    this.centerOfMassY = -0.18,
+  });
+
+  final ParsedModel? model;
+  final DetectionResult? detection;
+  final int? selectedNodeIndex;
+  final ValueChanged<int>? onNodeSelected;
+  final Color accentColor;
+  final Color bodyColor;
+  final Color wheelColor;
+  final Color wireColor;
+  final double centerOfMassY;
+
+  @override
+  State<WireframeViewer> createState() => _WireframeViewerState();
+}
+
+class _WireframeViewerState extends State<WireframeViewer> {
+  // Camera spherical coordinates
+  double _azimuth = 0.785; // 45 degrees
+  double _elevation = 0.45; // ~26 degrees
+  double _distance = 6.0;
+  Vec3 _target = Vec3.zero;
+  double _panX = 0;
+  double _panY = 0;
+
+  bool _showMarkers = true;
+  bool _showGrid = true;
+  final bool _denseWireframe = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetCameraToModel();
+  }
+
+  @override
+  void didUpdateWidget(covariant WireframeViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.model != oldWidget.model && widget.model != null) {
+      _resetCameraToModel();
+    }
+  }
+
+  void _resetCameraToModel() {
+    final model = widget.model;
+    if (model != null && model.instances.isNotEmpty) {
+      _target = model.worldBBox.center;
+      final diag = model.worldBBox.diagonal;
+      _distance = (diag > 0.1 ? diag : 4.0) * 1.6;
+    } else {
+      _target = Vec3.zero;
+      _distance = 6.0;
+    }
+    _azimuth = 0.785;
+    _elevation = 0.38;
+    _panX = 0;
+    _panY = 0;
+  }
+
+  void _setPreset(CameraPreset preset) {
+    setState(() {
+      switch (preset) {
+        case CameraPreset.iso:
+          _azimuth = 0.785;
+          _elevation = 0.45;
+        case CameraPreset.front:
+          _azimuth = 3.14159; // facing -Z
+          _elevation = 0.05;
+        case CameraPreset.side:
+          _azimuth = 1.5708; // facing +X
+          _elevation = 0.05;
+        case CameraPreset.top:
+          _azimuth = 0.0;
+          _elevation = 1.56; // near 90 deg up
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C1318),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF233038)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          // ── Interactive Gesture Area ──────────────────────────────────────
+          Positioned.fill(
+            child: Listener(
+              onPointerSignal: (event) {
+                if (event is PointerScrollEvent) {
+                  setState(() {
+                    _distance = (_distance * (1 + event.scrollDelta.dy * 0.001))
+                        .clamp(1.0, 50.0);
+                  });
+                }
+              },
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: (details) {
+                  setState(() {
+                    // Left click / touch drag rotates camera
+                    _azimuth += details.delta.dx * 0.01;
+                    _elevation = (_elevation + details.delta.dy * 0.01)
+                        .clamp(-1.5, 1.5);
+                  });
+                },
+                child: CustomPaint(
+                  painter: _WireframeScenePainter(
+                    model: widget.model,
+                    detection: widget.detection,
+                    selectedNodeIndex: widget.selectedNodeIndex,
+                    azimuth: _azimuth,
+                    elevation: _elevation,
+                    distance: _distance,
+                    target: _target,
+                    panX: _panX,
+                    panY: _panY,
+                    showGrid: _showGrid,
+                    showMarkers: _showMarkers,
+                    denseWireframe: _denseWireframe,
+                    accentColor: widget.accentColor,
+                    bodyColor: widget.bodyColor,
+                    wheelColor: widget.wheelColor,
+                    wireColor: widget.wireColor,
+                    centerOfMassY: widget.centerOfMassY,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Top Bar Controls ──────────────────────────────────────────────
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: Row(
+              children: [
+                _Badge(
+                  icon: Icons.view_in_ar_rounded,
+                  label: widget.model != null
+                      ? widget.model!.fileName
+                      : 'Procedural 3D Rig',
+                  color: widget.model != null
+                      ? const Color(0xFF6BD2A0)
+                      : const Color(0xFFFFB15C),
+                ),
+                const SizedBox(width: 8),
+                if (widget.detection != null &&
+                    widget.detection!.wheels.isNotEmpty)
+                  _Badge(
+                    icon: Icons.check_circle_outline,
+                    label: '${widget.detection!.wheels.length}/4 Wheels Rigged',
+                    color: widget.detection!.wheels.length >= 4
+                        ? const Color(0xFF6BD2A0)
+                        : const Color(0xFFFFB15C),
+                  ),
+                const Spacer(),
+                // View presets
+                _PresetButton('ISO', () => _setPreset(CameraPreset.iso)),
+                const SizedBox(width: 4),
+                _PresetButton('TOP', () => _setPreset(CameraPreset.top)),
+                const SizedBox(width: 4),
+                _PresetButton('SIDE', () => _setPreset(CameraPreset.side)),
+                const SizedBox(width: 4),
+                _PresetButton('FRONT', () => _setPreset(CameraPreset.front)),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Reset View',
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: () => setState(_resetCameraToModel),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Bottom Legend & Toggles ───────────────────────────────────────
+          Positioned(
+            bottom: 12,
+            left: 12,
+            right: 12,
+            child: Row(
+              children: [
+                _LegendItem(
+                  color: widget.wheelColor,
+                  label: 'Wheels',
+                ),
+                const SizedBox(width: 12),
+                _LegendItem(
+                  color: widget.bodyColor,
+                  label: 'Body',
+                ),
+                const SizedBox(width: 12),
+                _LegendItem(
+                  color: widget.wireColor,
+                  label: 'Chassis / Misc',
+                ),
+                const Spacer(),
+                // Toggle markers
+                IconButton(
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: _showMarkers ? 'Hide Markers' : 'Show Markers',
+                  icon: Icon(
+                    _showMarkers
+                        ? Icons.pin_drop_rounded
+                        : Icons.pin_drop_outlined,
+                    color: _showMarkers
+                        ? const Color(0xFFFFB15C)
+                        : const Color(0xFF71818B),
+                  ),
+                  onPressed: () =>
+                      setState(() => _showMarkers = !_showMarkers),
+                ),
+                IconButton(
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: _showGrid ? 'Hide Grid' : 'Show Grid',
+                  icon: Icon(
+                    _showGrid ? Icons.grid_4x4_rounded : Icons.grid_off_rounded,
+                    color: _showGrid
+                        ? const Color(0xFF8BA2B0)
+                        : const Color(0xFF71818B),
+                  ),
+                  onPressed: () => setState(() => _showGrid = !_showGrid),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Small UI Widgets ────────────────────────────────────────────────────────
+
+class _Badge extends StatelessWidget {
+  const _Badge({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xD8141E24),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PresetButton extends StatelessWidget {
+  const _PresetButton(this.label, this.onTap);
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xC017232B),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: const Color(0xFF2A3A44)),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFFB0BCC3),
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF8FA0AA),
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Custom Painter ──────────────────────────────────────────────────────────
+
+class _WireframeScenePainter extends CustomPainter {
+  const _WireframeScenePainter({
+    required this.model,
+    required this.detection,
+    required this.selectedNodeIndex,
+    required this.azimuth,
+    required this.elevation,
+    required this.distance,
+    required this.target,
+    required this.panX,
+    required this.panY,
+    required this.showGrid,
+    required this.showMarkers,
+    required this.denseWireframe,
+    required this.accentColor,
+    required this.bodyColor,
+    required this.wheelColor,
+    required this.wireColor,
+    required this.centerOfMassY,
+  });
+
+  final ParsedModel? model;
+  final DetectionResult? detection;
+  final int? selectedNodeIndex;
+  final double azimuth;
+  final double elevation;
+  final double distance;
+  final Vec3 target;
+  final double panX;
+  final double panY;
+  final bool showGrid;
+  final bool showMarkers;
+  final bool denseWireframe;
+  final Color accentColor;
+  final Color bodyColor;
+  final Color wheelColor;
+  final Color wireColor;
+  final double centerOfMassY;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+
+    // Background gradient
+    final bgPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF141F27), Color(0xFF0C1318)],
+      ).createShader(Offset.zero & size);
+    canvas.drawRect(Offset.zero & size, bgPaint);
+
+    // Compute camera matrices
+    final eye = Vec3(
+      target.x + distance * cos(elevation) * sin(azimuth),
+      target.y + distance * sin(elevation),
+      target.z + distance * cos(elevation) * cos(azimuth),
+    );
+
+    final view = Mat4.lookAt(eye, target, Vec3(0, 1, 0));
+    final aspect = size.width / size.height;
+    final proj = Mat4.perspective(60 * pi / 180, aspect, 0.1, 100.0);
+    final viewProj = proj * view;
+
+    // Screen projector helper
+    Offset? projectPoint(Vec3 p) {
+      final clip = viewProj.transformClip(p);
+      final w = clip[3];
+      if (w <= 0.05) return null; // Behind camera
+      final ndcX = clip[0] / w;
+      final ndcY = clip[1] / w;
+      final sx = (ndcX * 0.5 + 0.5) * size.width + panX;
+      final sy = (1.0 - (ndcY * 0.5 + 0.5)) * size.height + panY;
+      return Offset(sx, sy);
+    }
+
+    // ── 1. Draw 3D Ground Grid ──────────────────────────────────────────────
+    if (showGrid) {
+      final gridPaint = Paint()
+        ..color = const Color(0x1F455A64)
+        ..strokeWidth = 1.0;
+      final axisPaint = Paint()
+        ..color = const Color(0x35607D8B)
+        ..strokeWidth = 1.2;
+
+      final groundY = model?.worldBBox.lo.y ?? 0.0;
+      const extent = 4.0;
+      const step = 0.5;
+
+      for (var x = -extent; x <= extent; x += step) {
+        final p0 = projectPoint(Vec3(x, groundY, -extent));
+        final p1 = projectPoint(Vec3(x, groundY, extent));
+        if (p0 != null && p1 != null) {
+          canvas.drawLine(p0, p1, x == 0 ? axisPaint : gridPaint);
+        }
+      }
+      for (var z = -extent; z <= extent; z += step) {
+        final p0 = projectPoint(Vec3(-extent, groundY, z));
+        final p1 = projectPoint(Vec3(extent, groundY, z));
+        if (p0 != null && p1 != null) {
+          canvas.drawLine(p0, p1, z == 0 ? axisPaint : gridPaint);
+        }
+      }
+    }
+
+    // ── 2. Draw Model Wireframe OR Procedural Rig ────────────────────────────
+    if (model != null && model!.instances.isNotEmpty) {
+      _drawModelWireframe(canvas, size, projectPoint);
+    } else {
+      _drawProceduralWireframeCar(canvas, size, projectPoint);
+    }
+
+    // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
+    if (showMarkers) {
+      _drawMarkers(canvas, size, projectPoint);
+    }
+  }
+
+  void _drawModelWireframe(
+    Canvas canvas,
+    Size size,
+    Offset? Function(Vec3) project,
+  ) {
+    final wheelNodeSet =
+        detection?.wheels.map((w) => w.nodeIndex).toSet() ?? {};
+    final bodyNodeIndex = detection?.body?.nodeIndex;
+
+    for (final inst in model!.instances) {
+      Color edgeColor;
+      double strokeWidth = 1.0;
+
+      if (inst.nodeIndex == selectedNodeIndex) {
+        edgeColor = const Color(0xFF00E5FF);
+        strokeWidth = 1.8;
+      } else if (wheelNodeSet.contains(inst.nodeIndex)) {
+        edgeColor = wheelColor;
+        strokeWidth = 1.3;
+      } else if (inst.nodeIndex == bodyNodeIndex) {
+        edgeColor = bodyColor;
+        strokeWidth = 1.1;
+      } else {
+        edgeColor = wireColor;
+        strokeWidth = 0.9;
+      }
+
+      final paint = Paint()
+        ..color = edgeColor
+        ..strokeWidth = strokeWidth
+        ..isAntiAlias = true;
+
+      final verts = inst.worldVertices;
+      final edges = inst.edges;
+
+      final step = (!denseWireframe && edges.length > 2000)
+          ? (edges.length ~/ 2000)
+          : 1;
+
+      for (var i = 0; i < edges.length; i += step) {
+        final e = edges[i];
+        if (e.a < verts.length && e.b < verts.length) {
+          final p0 = project(verts[e.a]);
+          final p1 = project(verts[e.b]);
+          if (p0 != null && p1 != null) {
+            canvas.drawLine(p0, p1, paint);
+          }
+        }
+      }
+    }
+  }
+
+  void _drawProceduralWireframeCar(
+    Canvas canvas,
+    Size size,
+    Offset? Function(Vec3) project,
+  ) {
+    final bodyPaint = Paint()
+      ..color = bodyColor.withValues(alpha: 0.8)
+      ..strokeWidth = 1.2;
+    final wheelPaint = Paint()
+      ..color = wheelColor
+      ..strokeWidth = 1.4;
+
+    // Body chassis wireframe vertices
+    final bodyCorners = [
+      // Bottom frame: FL, FR, RR, RL
+      const Vec3(-0.9, 0.2, -1.8),
+      const Vec3(0.9, 0.2, -1.8),
+      const Vec3(0.9, 0.2, 1.8),
+      const Vec3(-0.9, 0.2, 1.8),
+      // Hood line
+      const Vec3(-0.85, 0.7, -1.6),
+      const Vec3(0.85, 0.7, -1.6),
+      // Windshield base
+      const Vec3(-0.8, 0.85, -0.6),
+      const Vec3(0.8, 0.85, -0.6),
+      // Roof top
+      const Vec3(-0.65, 1.35, -0.2),
+      const Vec3(0.65, 1.35, -0.2),
+      const Vec3(-0.65, 1.35, 0.8),
+      const Vec3(0.65, 1.35, 0.8),
+      // Rear window base
+      const Vec3(-0.8, 0.85, 1.3),
+      const Vec3(0.8, 0.85, 1.3),
+      // Trunk end
+      const Vec3(-0.85, 0.75, 1.75),
+      const Vec3(0.85, 0.75, 1.75),
+    ];
+
+    final bodyLines = [
+      // Bottom loop
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      // Hood
+      [0, 4], [1, 5], [4, 5],
+      // Windshield
+      [4, 6], [5, 7], [6, 7],
+      // A-pillars
+      [6, 8], [7, 9], [8, 9],
+      // Roof
+      [8, 10], [9, 11], [10, 11],
+      // C-pillars
+      [10, 12], [11, 13], [12, 13],
+      // Trunk
+      [12, 14], [13, 15], [14, 15],
+      // Trunk to bottom
+      [14, 3], [15, 2],
+    ];
+
+    for (final edge in bodyLines) {
+      final p0 = project(bodyCorners[edge[0]]);
+      final p1 = project(bodyCorners[edge[1]]);
+      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, bodyPaint);
+    }
+
+    // Four procedural wheels
+    final wheelCenters = [
+      const Vec3(-0.95, 0.35, -1.2), // FL
+      const Vec3(0.95, 0.35, -1.2),  // FR
+      const Vec3(-0.95, 0.35, 1.2),  // RL
+      const Vec3(0.95, 0.35, 1.2),   // RR
+    ];
+
+    for (final wc in wheelCenters) {
+      _drawWireWheel(canvas, project, wc, 0.35, wheelPaint);
+    }
+  }
+
+  void _drawWireWheel(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    Vec3 center,
+    double radius,
+    Paint paint,
+  ) {
+    const segments = 12;
+    for (var i = 0; i < segments; i++) {
+      final a0 = i * 2 * pi / segments;
+      final a1 = (i + 1) * 2 * pi / segments;
+      // Outer rim
+      final p0 = project(
+        center + Vec3(0, radius * sin(a0), radius * cos(a0)),
+      );
+      final p1 = project(
+        center + Vec3(0, radius * sin(a1), radius * cos(a1)),
+      );
+      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, paint);
+
+      // Spokes
+      final hub = project(center);
+      if (hub != null && p0 != null && i % 3 == 0) {
+        canvas.drawLine(hub, p0, paint);
+      }
+    }
+  }
+
+  void _drawMarkers(
+    Canvas canvas,
+    Size size,
+    Offset? Function(Vec3) project,
+  ) {
+    final wheels = detection?.wheels ?? [];
+
+    for (final w in wheels) {
+      final pos = project(w.worldPosition);
+      if (pos == null) continue;
+
+      // Marker circle
+      final markerPaint = Paint()
+        ..color = wheelColor
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(pos, 5, markerPaint);
+
+      final ringPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawCircle(pos, 8, ringPaint);
+
+      // Label
+      final span = TextSpan(
+        text: w.label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          backgroundColor: Color(0xD017232B),
+        ),
+      );
+      final tp = TextPainter(
+        text: span,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, pos + const Offset(10, -7));
+    }
+
+    // Center of mass marker
+    final comPos = project(Vec3(0, centerOfMassY, 0));
+    if (comPos != null) {
+      final comPaint = Paint()
+        ..color = const Color(0xFFFF5252)
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(comPos, 4, comPaint);
+
+      final span = TextSpan(
+        text: 'CoM (${centerOfMassY.toStringAsFixed(2)}m)',
+        style: const TextStyle(
+          color: Color(0xFFFF8A80),
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          backgroundColor: Color(0xD017232B),
+        ),
+      );
+      final tp = TextPainter(
+        text: span,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, comPos + const Offset(8, -6));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WireframeScenePainter oldDelegate) => true;
+}
