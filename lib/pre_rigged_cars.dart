@@ -87,8 +87,8 @@ const preRiggedCars = [
     rearTraction: true,
     wheelbase: 2.7,
     trackWidth: 1.55,
-    accentColor: Color(0xFFFF6E4D),
-    secondaryColor: Color(0xFFB92D3F),
+    accentColor: Color(0xFF10B981),
+    secondaryColor: Color(0xFF065F46),
     wheelPositions: [
       Vec3(-0.82, 0.32, -1.35),
       Vec3(0.82, 0.32, -1.35),

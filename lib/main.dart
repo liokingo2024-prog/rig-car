@@ -27,34 +27,34 @@ class RigCarApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF0E151B),
+        scaffoldBackgroundColor: const Color(0xFF090D0B),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFF713D),
+          seedColor: const Color(0xFF10B981),
           brightness: Brightness.dark,
         ).copyWith(
-          primary: const Color(0xFFFF713D),
+          primary: const Color(0xFF10B981),
           onPrimary: Colors.white,
-          surface: const Color(0xFF172129),
+          surface: const Color(0xFF111714),
           onSurface: ink,
         ),
         fontFamily: 'Arial',
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFF111A21),
+          fillColor: const Color(0xFF0D120F),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFF2C3A44)),
+            borderSide: const BorderSide(color: Color(0xFF223127)),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFF2C3A44)),
+            borderSide: const BorderSide(color: Color(0xFF223127)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFFF713D)),
+            borderSide: const BorderSide(color: Color(0xFF10B981)),
           ),
-          labelStyle: const TextStyle(color: Color(0xFF91A0AA), fontSize: 12),
-          suffixStyle: const TextStyle(color: Color(0xFF91A0AA), fontSize: 12),
+          labelStyle: const TextStyle(color: Color(0xFF86978C), fontSize: 12),
+          suffixStyle: const TextStyle(color: Color(0xFF86978C), fontSize: 12),
         ),
         textTheme: const TextTheme(
           headlineSmall: TextStyle(
@@ -650,8 +650,8 @@ class _DesktopSidebar extends StatelessWidget {
       width: 232,
       padding: const EdgeInsets.fromLTRB(18, 22, 16, 18),
       decoration: const BoxDecoration(
-        color: Color(0xFF161B22),
-        border: Border(right: BorderSide(color: Color(0xFF30363D))),
+        color: Color(0xFF111714),
+        border: Border(right: BorderSide(color: Color(0xFF223127))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,13 +672,13 @@ class _DesktopSidebar extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
-                color: const Color(0xFF21262D),
+                color: const Color(0xFF1A231E),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF30363D)),
+                border: Border.all(color: const Color(0xFF223127)),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.arrow_back_rounded, size: 14, color: Color(0xFFFF986D)),
+                  Icon(Icons.arrow_back_rounded, size: 14, color: Color(0xFF34D399)),
                   SizedBox(width: 8),
                   Text(
                     'Fleet Library',
@@ -739,16 +739,16 @@ class _DesktopSidebar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF161B22),
+              color: const Color(0xFF161F1A),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF30363D)),
+              border: Border.all(color: const Color(0xFF223127)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
                   Icons.info_outline_rounded,
-                  color: Color(0xFF8B949E),
+                  color: Color(0xFF86978C),
                   size: 16,
                 ),
                 const SizedBox(width: 8),
@@ -758,7 +758,7 @@ class _DesktopSidebar extends StatelessWidget {
                         ? 'Model parsed. Review hub alignment in 3D viewport.'
                         : 'Import a vehicle model to inspect wheels and body.',
                     style: const TextStyle(
-                      color: Color(0xFF8B949E),
+                      color: Color(0xFF86978C),
                       fontSize: 11,
                       height: 1.35,
                     ),
@@ -806,14 +806,14 @@ class _DesktopTopbar extends StatelessWidget {
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: const BoxDecoration(
-        color: Color(0xFF161B22),
-        border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
+        color: Color(0xFF111714),
+        border: Border(bottom: BorderSide(color: Color(0xFF223127))),
       ),
       child: Row(
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF8B949E)),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF86978C)),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -828,7 +828,7 @@ class _DesktopTopbar extends StatelessWidget {
           const Text(
             'CAR RIGGER',
             style: TextStyle(
-              color: Color(0xFFF0F6FC),
+              color: Color(0xFFF0FDF4),
               fontSize: 13,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.1,
@@ -838,9 +838,9 @@ class _DesktopTopbar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: const Color(0xFF21262D),
+              color: const Color(0xFF1A231E),
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(color: const Color(0xFF30363D)),
+              border: Border.all(color: const Color(0xFF223127)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -849,7 +849,7 @@ class _DesktopTopbar extends StatelessWidget {
                   Icons.circle,
                   size: 6,
                   color: wheelsCount >= 4
-                      ? const Color(0xFF3FB950)
+                      ? const Color(0xFF10B981)
                       : const Color(0xFFD29922),
                 ),
                 const SizedBox(width: 5),
@@ -857,7 +857,7 @@ class _DesktopTopbar extends StatelessWidget {
                   wheelsCount >= 4 ? 'AUTO-RIGGED' : 'MANUAL ASSIST',
                   style: TextStyle(
                     color: wheelsCount >= 4
-                        ? const Color(0xFF3FB950)
+                        ? const Color(0xFF10B981)
                         : const Color(0xFFD29922),
                     fontSize: 9,
                     fontWeight: FontWeight.w700,
@@ -872,7 +872,7 @@ class _DesktopTopbar extends StatelessWidget {
             child: Text(
               modelName,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+              style: const TextStyle(color: Color(0xFF86978C), fontSize: 12),
             ),
           ),
           const SizedBox(width: 14),
@@ -893,12 +893,12 @@ class _DesktopTopbar extends StatelessWidget {
             ),
             style: FilledButton.styleFrom(
               backgroundColor: isTestDrive
-                  ? const Color(0xFF21262D)
-                  : const Color(0xFFFF713D),
+                  ? const Color(0xFF1A231E)
+                  : const Color(0xFF10B981),
               foregroundColor:
-                  isTestDrive ? const Color(0xFFF0F6FC) : Colors.white,
+                  isTestDrive ? const Color(0xFFF0FDF4) : const Color(0xFF062319),
               side: isTestDrive
-                  ? const BorderSide(color: Color(0xFF30363D))
+                  ? const BorderSide(color: Color(0xFF223127))
                   : null,
               padding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -914,7 +914,7 @@ class _DesktopTopbar extends StatelessWidget {
             label: const Text('Export Godot rig'),
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFC9D1D9),
-              side: const BorderSide(color: Color(0xFF30363D)),
+              side: const BorderSide(color: Color(0xFF223127)),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
           ),
@@ -941,14 +941,14 @@ class _MobileHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
       decoration: const BoxDecoration(
-        color: Color(0xFF161B22),
-        border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
+        color: Color(0xFF111714),
+        border: Border(bottom: BorderSide(color: Color(0xFF223127))),
       ),
       child: Row(
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF8B949E)),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF86978C)),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -970,8 +970,8 @@ class _MobileHeader extends StatelessWidget {
                   ? Icons.tune_rounded
                   : Icons.sports_motorsports_rounded,
               color: isTestDrive
-                  ? const Color(0xFF58A6FF)
-                  : const Color(0xFFFF713D),
+                  ? const Color(0xFF34D399)
+                  : const Color(0xFF10B981),
             ),
           ),
           IconButton(
@@ -1003,12 +1003,12 @@ class _StepStrip extends StatelessWidget {
               selected: activeStep == step.number,
               onSelected: (_) => onStepSelected(step.number),
               showCheckmark: false,
-              backgroundColor: const Color(0xFF172129),
-              selectedColor: const Color(0xFFFF713D),
-              side: const BorderSide(color: Color(0xFF2C3A44)),
+              backgroundColor: const Color(0xFF111714),
+              selectedColor: const Color(0xFF10B981),
+              side: const BorderSide(color: Color(0xFF223127)),
               labelStyle: TextStyle(
                 color: activeStep == step.number
-                    ? Colors.white
+                    ? const Color(0xFF062319)
                     : const Color(0xFF9AA7AF),
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -1216,8 +1216,8 @@ class _UploadScanInspector extends StatelessWidget {
                             ? Icons.check_circle_outline_rounded
                             : Icons.cloud_upload_outlined,
                         color: parsedModel != null
-                            ? const Color(0xFF6BD2A0)
-                            : const Color(0xFFFF713D),
+                            ? const Color(0xFF10B981)
+                            : const Color(0xFF34D399),
                         size: 32,
                       ),
                       const SizedBox(height: 10),
@@ -1249,7 +1249,8 @@ class _UploadScanInspector extends StatelessWidget {
                             ? 'Choose another model'
                             : 'Upload & Auto-Scan'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF713D),
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: const Color(0xFF041D14),
                         ),
                       ),
                     ],
@@ -1448,7 +1449,8 @@ class _ReviewRigInspector extends StatelessWidget {
                   icon: const Icon(Icons.arrow_forward_rounded, size: 16),
                   label: const Text('Proceed to Tune Physics'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF713D),
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: const Color(0xFF041D14),
                   ),
                 ),
               ),
@@ -1510,13 +1512,13 @@ class _WheelAssignmentTile extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF213642),
+                  color: const Color(0xFF16201B),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   slot,
                   style: const TextStyle(
-                    color: Color(0xFFFFB15C),
+                    color: Color(0xFF34D399),
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1540,8 +1542,8 @@ class _WheelAssignmentTile extends StatelessWidget {
                   '${(wheel!.confidence * 100).toInt()}% conf.',
                   style: TextStyle(
                     color: wheel!.confidence >= 0.8
-                        ? const Color(0xFF6BD2A0)
-                        : const Color(0xFFFFB15C),
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFFFBBF24),
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1696,7 +1698,8 @@ class _PhysicsInspector extends StatelessWidget {
               icon: const Icon(Icons.arrow_forward_rounded, size: 16),
               label: const Text('Proceed to Export'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFF713D),
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: const Color(0xFF041D14),
               ),
             ),
           ),
@@ -1740,7 +1743,8 @@ class _TestDriveLauncherInspector extends StatelessWidget {
               icon: const Icon(Icons.sports_motorsports_rounded, size: 18),
               label: const Text('LAUNCH SIMULATOR'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFF713D),
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: const Color(0xFF041D14),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
@@ -1792,7 +1796,8 @@ class _ExportInspector extends StatelessWidget {
               icon: const Icon(Icons.file_download_outlined, size: 18),
               label: const Text('Download Godot Rig Files'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFF713D),
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: const Color(0xFF041D14),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
@@ -1823,7 +1828,7 @@ class _DetectionMetric extends StatelessWidget {
         Icon(
           isGood ? Icons.check_circle_rounded : Icons.info_outline_rounded,
           size: 14,
-          color: isGood ? const Color(0xFF6BD2A0) : const Color(0xFFFFB15C),
+          color: isGood ? const Color(0xFF10B981) : const Color(0xFFFBBF24),
         ),
         const SizedBox(width: 8),
         Text(
@@ -1834,7 +1839,7 @@ class _DetectionMetric extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            color: isGood ? const Color(0xFFE2E9EC) : const Color(0xFFFFB15C),
+            color: isGood ? const Color(0xFFE2E9EC) : const Color(0xFFFBBF24),
             fontSize: 11,
             fontWeight: FontWeight.w700,
           ),
@@ -1882,10 +1887,10 @@ class _PanelTitle extends StatelessWidget {
           width: 32,
           height: 32,
           decoration: BoxDecoration(
-            color: const Color(0xFF2A2524),
+            color: const Color(0xFF16201B),
             borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(icon, color: const Color(0xFFFF986D), size: 17),
+          child: Icon(icon, color: const Color(0xFF34D399), size: 17),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1921,10 +1926,10 @@ class _PresetTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF2B2422) : const Color(0xFF111A21),
+          color: selected ? const Color(0xFF14241B) : const Color(0xFF0F1512),
           borderRadius: BorderRadius.circular(9),
           border: Border.all(
-            color: selected ? const Color(0xFFFF713D) : const Color(0xFF2B3A44),
+            color: selected ? const Color(0xFF10B981) : const Color(0xFF223127),
           ),
         ),
         child: Row(
@@ -1964,7 +1969,7 @@ class _PresetTile extends StatelessWidget {
             if (selected)
               const Icon(
                 Icons.check_circle_rounded,
-                color: Color(0xFFFF713D),
+                color: Color(0xFF10B981),
                 size: 17,
               ),
           ],
@@ -1995,7 +2000,7 @@ class _WheelRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF111A21),
+        color: const Color(0xFF0F1512),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Row(
@@ -2025,7 +2030,7 @@ class _WheelRow extends StatelessWidget {
             value: steering,
             onChanged: onSteeringChanged,
             activeThumbColor: Colors.white,
-            activeTrackColor: const Color(0xFFFF713D),
+            activeTrackColor: const Color(0xFF10B981),
           ),
           const SizedBox(width: 4),
           const Text('Drive', style: TextStyle(fontSize: 10)),
@@ -2033,7 +2038,7 @@ class _WheelRow extends StatelessWidget {
             value: traction,
             onChanged: onTractionChanged,
             activeThumbColor: Colors.white,
-            activeTrackColor: const Color(0xFFFF713D),
+            activeTrackColor: const Color(0xFF10B981),
           ),
         ],
       ),
@@ -2079,7 +2084,7 @@ class _SliderField extends StatelessWidget {
             Text(
               '$valueText$suffix',
               style: const TextStyle(
-                color: Color(0xFFFF986D),
+                color: Color(0xFF34D399),
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),
@@ -2092,8 +2097,8 @@ class _SliderField extends StatelessWidget {
           max: max,
           divisions: divisions,
           onChanged: onChanged,
-          activeColor: const Color(0xFFFF713D),
-          inactiveColor: const Color(0xFF30414B),
+          activeColor: const Color(0xFF10B981),
+          inactiveColor: const Color(0xFF223127),
         ),
       ],
     );
@@ -2116,7 +2121,7 @@ class _ExportFile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 11),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFFFF986D), size: 18),
+          Icon(icon, color: const Color(0xFF34D399), size: 18),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -2141,7 +2146,7 @@ class _ExportFile extends StatelessWidget {
               ],
             ),
           ),
-          const Icon(Icons.check_rounded, color: Color(0xFF6BD2A0), size: 17),
+          const Icon(Icons.check_rounded, color: Color(0xFF10B981), size: 17),
         ],
       ),
     );
@@ -2174,10 +2179,10 @@ class _SidebarStep extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: active ? const Color(0xFF2A2422) : Colors.transparent,
+            color: active ? const Color(0xFF15261C) : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: active ? const Color(0xFFFF713D) : Colors.transparent,
+              color: active ? const Color(0xFF10B981) : Colors.transparent,
             ),
           ),
           child: Row(
@@ -2188,8 +2193,8 @@ class _SidebarStep extends StatelessWidget {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: active
-                      ? const Color(0xFFFF713D)
-                      : const Color(0xFF26343D),
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFF1C2720),
                   shape: BoxShape.circle,
                 ),
                 child: complete
@@ -2202,7 +2207,7 @@ class _SidebarStep extends StatelessWidget {
                         '$number',
                         style: TextStyle(
                           color: active
-                              ? Colors.white
+                              ? const Color(0xFF041D14)
                               : const Color(0xFF97A5AD),
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -2236,7 +2241,7 @@ class _SidebarStep extends StatelessWidget {
               if (active)
                 const Icon(
                   Icons.chevron_right_rounded,
-                  color: Color(0xFFFF986D),
+                  color: Color(0xFF34D399),
                   size: 17,
                 ),
             ],
@@ -2259,17 +2264,17 @@ class _Brand extends StatelessWidget {
           width: 28,
           height: 28,
           decoration: BoxDecoration(
-            color: const Color(0xFF21262D),
+            color: const Color(0xFF1A231E),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0xFF30363D)),
+            border: Border.all(color: const Color(0xFF223127)),
           ),
-          child: const Icon(Icons.tune_rounded, color: Color(0xFFFF713D), size: 16),
+          child: const Icon(Icons.tune_rounded, color: Color(0xFF10B981), size: 16),
         ),
         const SizedBox(width: 8),
         const Text(
           'RIG-CAR',
           style: TextStyle(
-            color: Color(0xFFF0F6FC),
+            color: Color(0xFFF0FDF4),
             fontSize: 16,
             fontWeight: FontWeight.w800,
             letterSpacing: 0.8,
@@ -2352,8 +2357,8 @@ const presets = [
   RigPreset(
     name: 'Sports coupe',
     description: 'Low, fast, rear-biased',
-    accent: Color(0xFFFF6E4D),
-    secondary: Color(0xFFB92D3F),
+    accent: Color(0xFF10B981),
+    secondary: Color(0xFF065F46),
     wheelbase: 2.7,
     trackWidth: 1.55,
   ),

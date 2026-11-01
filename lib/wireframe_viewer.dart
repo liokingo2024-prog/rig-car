@@ -19,9 +19,9 @@ class WireframeViewer extends StatefulWidget {
     required this.detection,
     this.selectedNodeIndex,
     this.onNodeSelected,
-    this.accentColor = const Color(0xFFFF713D),
+    this.accentColor = const Color(0xFF10B981),
     this.bodyColor = const Color(0xFF64B5F6),
-    this.wheelColor = const Color(0xFFFFB15C),
+    this.wheelColor = const Color(0xFF34D399),
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
     this.onTestDrive,
@@ -130,9 +130,9 @@ class _WireframeViewerState extends State<WireframeViewer>
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0C1318),
+        color: const Color(0xFF090D0B),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF233038)),
+        border: Border.all(color: const Color(0xFF223127)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -214,8 +214,8 @@ class _WireframeViewerState extends State<WireframeViewer>
                                   ? widget.model!.fileName
                                   : 'Procedural 3D Rig',
                               color: widget.model != null
-                                  ? const Color(0xFF6BD2A0)
-                                  : const Color(0xFFFFB15C),
+                                  ? const Color(0xFF10B981)
+                                  : const Color(0xFF34D399),
                             ),
                             const SizedBox(width: 8),
                             if (widget.detection != null &&
@@ -225,8 +225,8 @@ class _WireframeViewerState extends State<WireframeViewer>
                                 label:
                                     '${widget.detection!.wheels.length}/4 Wheels Rigged',
                                 color: widget.detection!.wheels.length >= 4
-                                    ? const Color(0xFF6BD2A0)
-                                    : const Color(0xFFFFB15C),
+                                    ? const Color(0xFF10B981)
+                                    : const Color(0xFF34D399),
                               ),
                           ],
                         ),
@@ -238,13 +238,13 @@ class _WireframeViewerState extends State<WireframeViewer>
                               FilledButton.icon(
                                 onPressed: widget.onTestDrive,
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFF713D),
-                                  foregroundColor: Colors.white,
+                                  backgroundColor: const Color(0xFF10B981),
+                                  foregroundColor: const Color(0xFF041D14),
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 10, vertical: 6),
                                   visualDensity: VisualDensity.compact,
                                   elevation: 3,
-                                  shadowColor: const Color(0x60FF713D),
+                                  shadowColor: const Color(0x6010B981),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
@@ -287,7 +287,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                     ? Icons.pause_circle_filled_rounded
                                     : Icons.rotate_right_rounded,
                                 color: _autoTurntable
-                                    ? const Color(0xFFFF713D)
+                                    ? const Color(0xFF10B981)
                                     : const Color(0xFFBAC7CE),
                               ),
                               onPressed: () => setState(
@@ -355,7 +355,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                         ? Icons.pin_drop_rounded
                         : Icons.pin_drop_outlined,
                     color: _showMarkers
-                        ? const Color(0xFFFFB15C)
+                        ? const Color(0xFF34D399)
                         : const Color(0xFF71818B),
                   ),
                   onPressed: () =>
@@ -382,7 +382,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                   icon: Icon(
                     _invertDrag ? Icons.swap_vertical_circle_rounded : Icons.swap_vertical_circle_outlined,
                     color: _invertDrag
-                        ? const Color(0xFFFF713D)
+                        ? const Color(0xFF10B981)
                         : const Color(0xFF8BA2B0),
                   ),
                   onPressed: () =>
@@ -415,9 +415,9 @@ class _Badge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
+        color: const Color(0xFF111714),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFF30363D)),
+        border: Border.all(color: const Color(0xFF223127)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -451,9 +451,9 @@ class _PresetButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xC017232B),
+          color: const Color(0xC0111714),
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: const Color(0xFF2A3A44)),
+          border: Border.all(color: const Color(0xFF223127)),
         ),
         child: Text(
           label,
@@ -519,9 +519,9 @@ class _TelemetryOverlay extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xC010181F),
+        color: const Color(0xC0090D0B),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0x3300F5FF)),
+        border: Border.all(color: const Color(0x4410B981)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -530,7 +530,7 @@ class _TelemetryOverlay extends StatelessWidget {
             width: 6,
             height: 6,
             decoration: const BoxDecoration(
-              color: Color(0xFF00F5FF),
+              color: Color(0xFF10B981),
               shape: BoxShape.circle,
             ),
           ),
@@ -547,12 +547,12 @@ class _TelemetryOverlay extends StatelessWidget {
           ),
           if (bbox != null) ...[
             const SizedBox(width: 8),
-            Container(width: 1, height: 10, color: const Color(0xFF334652)),
+            Container(width: 1, height: 10, color: const Color(0xFF223127)),
             const SizedBox(width: 8),
             Text(
               '${bbox.size.z.abs().toStringAsFixed(1)}L × ${bbox.size.x.abs().toStringAsFixed(1)}W × ${bbox.size.y.abs().toStringAsFixed(1)}H',
               style: const TextStyle(
-                color: Color(0xFFFFB15C),
+                color: Color(0xFF34D399),
                 fontSize: 9,
                 fontWeight: FontWeight.w700,
                 fontFamily: 'monospace',
