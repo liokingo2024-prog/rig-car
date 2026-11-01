@@ -14,6 +14,39 @@ import 'physics_sim.dart';
 
 enum CameraMode { chase, orbit, hood }
 
+enum TestDriveLighting {
+  day('Day Bright', 'Day', Icons.wb_sunny_rounded),
+  sunset('Golden Sunset', 'Sunset', Icons.wb_twilight_rounded),
+  night('Night Proving', 'Night', Icons.nightlight_round);
+
+  const TestDriveLighting(this.label, this.shortName, this.icon);
+  final String label;
+  final String shortName;
+  final IconData icon;
+
+  TestDriveLighting get next {
+    final idx = (index + 1) % TestDriveLighting.values.length;
+    return TestDriveLighting.values[idx];
+  }
+}
+
+enum TrackSurfaceStyle {
+  circuit('Circuit Asphalt', 'Circuit', Icons.sports_score_rounded),
+  skidpad('Proving Skidpad', 'Skidpad', Icons.motion_photos_on_rounded),
+  dragstrip('Runway Drag Strip', 'Runway', Icons.straighten_rounded),
+  cyberGrid('Cyber Matrix', 'Matrix', Icons.hive_rounded);
+
+  const TrackSurfaceStyle(this.label, this.shortName, this.icon);
+  final String label;
+  final String shortName;
+  final IconData icon;
+
+  TrackSurfaceStyle get next {
+    final idx = (index + 1) % TrackSurfaceStyle.values.length;
+    return TrackSurfaceStyle.values[idx];
+  }
+}
+
 class TestDriveViewport extends StatefulWidget {
   const TestDriveViewport({
     super.key,
@@ -61,6 +94,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   final FocusNode _focusNode = FocusNode();
 
   CameraMode _cameraMode = CameraMode.chase;
+  TestDriveLighting _lighting = TestDriveLighting.day;
+  TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
   double _orbitAzimuth = 0.785;
   double _orbitElevation = 0.35;
   final double _orbitDistance = 7.5;
@@ -253,6 +288,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 painter: _TestDriveScenePainter(
                   sim: _sim,
                   cameraMode: _cameraMode,
+                  lighting: _lighting,
+                  trackStyle: _trackStyle,
                   chaseCamPos: _chaseCamPos,
                   chaseCamTarget: _chaseCamTarget,
                   orbitAzimuth: _orbitAzimuth,
@@ -434,6 +471,173 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             ),
                           );
                         }).toList(),
+                      ),
+
+                      const SizedBox(width: 8),
+
+                      // Track Surface Selector (Circuit, Skidpad, Runway, Matrix)
+                      PopupMenuButton<TrackSurfaceStyle>(
+                        tooltip: 'Track Surface: ${_trackStyle.label}',
+                        initialValue: _trackStyle,
+                        onSelected: (style) =>
+                            setState(() => _trackStyle = style),
+                        color: const Color(0xFF111714),
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 8,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: const BorderSide(color: Color(0xFF223127)),
+                        ),
+                        itemBuilder: (context) =>
+                            TrackSurfaceStyle.values.map((style) {
+                          final isSel = style == _trackStyle;
+                          return PopupMenuItem<TrackSurfaceStyle>(
+                            value: style,
+                            height: 38,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  style.icon,
+                                  size: 16,
+                                  color: isSel
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF86978C),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  style.label,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isSel
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: isSel
+                                        ? const Color(0xFFF0FDF4)
+                                        : const Color(0xFFC9D1D9),
+                                  ),
+                                ),
+                                if (isSel) ...[
+                                  const Spacer(),
+                                  const Icon(Icons.check,
+                                      size: 14, color: Color(0xFF10B981)),
+                                ],
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(5),
+                            border:
+                                Border.all(color: const Color(0xFF223127)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(_trackStyle.icon,
+                                  size: 13, color: const Color(0xFF10B981)),
+                              const SizedBox(width: 5),
+                              Text(
+                                _trackStyle.shortName,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF34D399),
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(Icons.arrow_drop_down,
+                                  size: 13, color: Color(0xFF34D399)),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 8),
+
+                      // Time of Day / Lighting Selector (Day Bright, Sunset, Night)
+                      PopupMenuButton<TestDriveLighting>(
+                        tooltip: 'Environment Lighting: ${_lighting.label}',
+                        initialValue: _lighting,
+                        onSelected: (l) => setState(() => _lighting = l),
+                        color: const Color(0xFF111714),
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 8,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: const BorderSide(color: Color(0xFF223127)),
+                        ),
+                        itemBuilder: (context) =>
+                            TestDriveLighting.values.map((l) {
+                          final isSel = l == _lighting;
+                          return PopupMenuItem<TestDriveLighting>(
+                            value: l,
+                            height: 38,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  l.icon,
+                                  size: 16,
+                                  color: isSel
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF86978C),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  l.label,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isSel
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: isSel
+                                        ? const Color(0xFFF0FDF4)
+                                        : const Color(0xFFC9D1D9),
+                                  ),
+                                ),
+                                if (isSel) ...[
+                                  const Spacer(),
+                                  const Icon(Icons.check,
+                                      size: 14, color: Color(0xFF10B981)),
+                                ],
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(5),
+                            border:
+                                Border.all(color: const Color(0xFF223127)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(_lighting.icon,
+                                  size: 13, color: const Color(0xFF10B981)),
+                              const SizedBox(width: 5),
+                              Text(
+                                _lighting.shortName,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF34D399),
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(Icons.arrow_drop_down,
+                                  size: 13, color: Color(0xFF34D399)),
+                            ],
+                          ),
+                        ),
                       ),
 
                       const SizedBox(width: 12),
@@ -1024,6 +1228,8 @@ class _TestDriveScenePainter extends CustomPainter {
   const _TestDriveScenePainter({
     required this.sim,
     required this.cameraMode,
+    this.lighting = TestDriveLighting.day,
+    this.trackStyle = TrackSurfaceStyle.circuit,
     required this.chaseCamPos,
     required this.chaseCamTarget,
     required this.orbitAzimuth,
@@ -1036,6 +1242,8 @@ class _TestDriveScenePainter extends CustomPainter {
 
   final VehiclePhysicsSimulation sim;
   final CameraMode cameraMode;
+  final TestDriveLighting lighting;
+  final TrackSurfaceStyle trackStyle;
   final Vec3 chaseCamPos;
   final Vec3 chaseCamTarget;
   final double orbitAzimuth;
@@ -1049,14 +1257,8 @@ class _TestDriveScenePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
 
-    // Background sky gradient
-    final bgPaint = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF0A1016), Color(0xFF05080B)],
-      ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, bgPaint);
+    // 1. Draw Sky & Sun / Environment Atmosphere
+    _drawSky(canvas, size);
 
     // 1. Determine Camera Matrix
     Vec3 eye;
@@ -1111,63 +1313,588 @@ class _TestDriveScenePainter extends CustomPainter {
     _drawVehicle(canvas, size, projectPoint);
   }
 
+  void _drawSky(Canvas canvas, Size size) {
+    switch (lighting) {
+      case TestDriveLighting.day:
+        // Vibrant daytime sky gradient with bright horizon
+        final skyPaint = Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0284C7), // Deep azure
+              Color(0xFF38BDF8), // Bright sky blue
+              Color(0xFFBAE6FD), // Light horizon
+              Color(0xFFF1F5F9), // Horizon line
+            ],
+            stops: [0.0, 0.40, 0.78, 1.0],
+          ).createShader(Offset.zero & size);
+        canvas.drawRect(Offset.zero & size, skyPaint);
+
+        // Bright Daylight Sun
+        final sunCenter = Offset(size.width * 0.76, size.height * 0.20);
+        final sunGlow = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0xFFFFFBEB),
+              Color(0x60FEF08A),
+              Color(0x00FEF08A),
+            ],
+          ).createShader(Rect.fromCircle(center: sunCenter, radius: 95));
+        canvas.drawCircle(sunCenter, 95, sunGlow);
+        canvas.drawCircle(
+            sunCenter, 18, Paint()..color = const Color(0xFFFFFBEB));
+
+        // Subtle cumulus cloud wisps near horizon
+        final cloudPaint = Paint()
+          ..color = const Color(0x30FFFFFF)
+          ..style = PaintingStyle.fill;
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(size.width * 0.28, size.height * 0.44),
+            width: size.width * 0.35,
+            height: 18,
+          ),
+          cloudPaint,
+        );
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(size.width * 0.72, size.height * 0.48),
+            width: size.width * 0.42,
+            height: 22,
+          ),
+          cloudPaint,
+        );
+
+      case TestDriveLighting.sunset:
+        // Warm dusk automotive commercial lighting
+        final skyPaint = Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF1E1B4B), // Deep indigo dusk
+              Color(0xFF831843), // Rich magenta
+              Color(0xFFC2410C), // Amber orange
+              Color(0xFFFDE68A), // Golden horizon
+            ],
+            stops: [0.0, 0.38, 0.72, 1.0],
+          ).createShader(Offset.zero & size);
+        canvas.drawRect(Offset.zero & size, skyPaint);
+
+        // Low Golden Sunset
+        final sunCenter = Offset(size.width * 0.65, size.height * 0.46);
+        final sunGlow = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0xFFFFF7ED),
+              Color(0x80F97316),
+              Color(0x00F97316),
+            ],
+          ).createShader(Rect.fromCircle(center: sunCenter, radius: 120));
+        canvas.drawCircle(sunCenter, 120, sunGlow);
+        canvas.drawCircle(
+            sunCenter, 22, Paint()..color = const Color(0xFFFFF7ED));
+
+      case TestDriveLighting.night:
+        // Deep obsidian night with moon
+        final skyPaint = Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF090D0B), Color(0xFF040605)],
+          ).createShader(Offset.zero & size);
+        canvas.drawRect(Offset.zero & size, skyPaint);
+
+        // Moon
+        final moonCenter = Offset(size.width * 0.8, size.height * 0.18);
+        final moonGlow = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0x40E2E8F0),
+              Color(0x00E2E8F0),
+            ],
+          ).createShader(Rect.fromCircle(center: moonCenter, radius: 45));
+        canvas.drawCircle(moonCenter, 45, moonGlow);
+        canvas.drawCircle(
+            moonCenter, 12, Paint()..color = const Color(0xFFF1F5F9));
+    }
+  }
+
   void _drawTrack(
     Canvas canvas,
     Size size,
     Offset? Function(Vec3) project,
   ) {
-    const groundY = 0.0;
-    const trackZMin = -160.0;
-    const trackZMax = 40.0;
-    const trackWidth = 14.0;
+    switch (trackStyle) {
+      case TrackSurfaceStyle.circuit:
+        _drawCircuitAsphalt(canvas, project);
+      case TrackSurfaceStyle.skidpad:
+        _drawSkidpadAsphalt(canvas, project);
+      case TrackSurfaceStyle.dragstrip:
+        _drawDragstripAsphalt(canvas, project);
+      case TrackSurfaceStyle.cyberGrid:
+        _drawCyberGridAsphalt(canvas, project);
+    }
+  }
 
-    // Track boundary edges
-    final boundaryPaint = Paint()
-      ..color = const Color(0x5000E5FF)
+  void _drawQuad(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    Vec3 p0,
+    Vec3 p1,
+    Vec3 p2,
+    Vec3 p3,
+    Paint paint,
+  ) {
+    final s0 = project(p0);
+    final s1 = project(p1);
+    final s2 = project(p2);
+    final s3 = project(p3);
+    if (s0 != null && s1 != null && s2 != null && s3 != null) {
+      final path = Path()
+        ..moveTo(s0.dx, s0.dy)
+        ..lineTo(s1.dx, s1.dy)
+        ..lineTo(s2.dx, s2.dy)
+        ..lineTo(s3.dx, s3.dy)
+        ..close();
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  void _drawCheckeredLine(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+    double zPos,
+    double width,
+  ) {
+    const rows = 2;
+    const cols = 14;
+    const len = 1.6;
+    final cellW = (width * 2) / cols;
+
+    final whitePaint = Paint()
+      ..color = const Color(0xFFF8FAFC)
+      ..style = PaintingStyle.fill;
+    final blackPaint = Paint()
+      ..color = const Color(0xFF0F172A)
+      ..style = PaintingStyle.fill;
+
+    for (var r = 0; r < rows; r++) {
+      final z0 = zPos + r * (len / rows);
+      final z1 = z0 + (len / rows);
+      for (var c = 0; c < cols; c++) {
+        final x0 = -width + c * cellW;
+        final x1 = x0 + cellW;
+        final isWhite = (r + c) % 2 == 0;
+        _drawQuad(
+          canvas,
+          project,
+          Vec3(x0, groundY, z0),
+          Vec3(x1, groundY, z0),
+          Vec3(x1, groundY, z1),
+          Vec3(x0, groundY, z1),
+          isWhite ? whitePaint : blackPaint,
+        );
+      }
+    }
+  }
+
+  void _drawDistanceBoard(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+    double zPos,
+    double xPos,
+  ) {
+    final post0 = project(Vec3(xPos, groundY, zPos));
+    final post1 = project(Vec3(xPos, groundY + 1.8, zPos));
+    final board0 = project(Vec3(xPos - 0.7, groundY + 1.0, zPos));
+    final board1 = project(Vec3(xPos + 0.7, groundY + 2.2, zPos));
+
+    if (post0 != null && post1 != null) {
+      final postPaint = Paint()
+        ..color = const Color(0xFF64748B)
+        ..strokeWidth = 2.5;
+      canvas.drawLine(post0, post1, postPaint);
+    }
+    if (board0 != null && board1 != null) {
+      final boardRect = Rect.fromPoints(board0, board1);
+      final boardPaint = Paint()
+        ..color = const Color(0xFF0F172A)
+        ..style = PaintingStyle.fill;
+      final borderPaint = Paint()
+        ..color = const Color(0xFFFDE047)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawRect(boardRect, boardPaint);
+      canvas.drawRect(boardRect, borderPaint);
+
+      final label = '${(zPos.abs()).toInt()}m';
+      final span = TextSpan(
+        text: label,
+        style: const TextStyle(
+          color: Color(0xFFFDE047),
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+        ),
+      );
+      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
+        ..layout();
+      tp.paint(canvas, boardRect.center - Offset(tp.width / 2, tp.height / 2));
+    }
+  }
+
+  void _drawCircuitAsphalt(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+  ) {
+    const groundY = 0.0;
+    const trackWidth = 14.0;
+    const curbWidth = 1.4;
+    const shoulderWidth = 8.0;
+
+    final isDay = lighting == TestDriveLighting.day;
+    final isSunset = lighting == TestDriveLighting.sunset;
+
+    final asphaltColor = isDay
+        ? const Color(0xFF1E293B)
+        : (isSunset ? const Color(0xFF18181B) : const Color(0xFF0F1713));
+    final shoulderColor = isDay
+        ? const Color(0xFF334155)
+        : (isSunset ? const Color(0xFF27272A) : const Color(0xFF0A0F0C));
+
+    final asphaltPaint = Paint()
+      ..color = asphaltColor
+      ..style = PaintingStyle.fill;
+    final shoulderPaint = Paint()
+      ..color = shoulderColor
+      ..style = PaintingStyle.fill;
+    final edgeLinePaint = Paint()
+      ..color = isDay ? const Color(0xFFF8FAFC) : const Color(0xC0FFFFFF)
+      ..strokeWidth = 2.0;
+    final centerDashPaint = Paint()
+      ..color = isDay ? const Color(0xFFFDE047) : const Color(0x90FFFFFF)
+      ..strokeWidth = 2.2;
+    final redCurbPaint = Paint()
+      ..color = const Color(0xFFDC2626)
+      ..style = PaintingStyle.fill;
+    final whiteCurbPaint = Paint()
+      ..color = const Color(0xFFF8FAFC)
+      ..style = PaintingStyle.fill;
+
+    const zStart = -170.0;
+    const zEnd = 50.0;
+    const sliceLen = 8.0;
+
+    for (var z = zStart; z < zEnd; z += sliceLen) {
+      final z0 = z;
+      final z1 = z + sliceLen;
+
+      // 1. Asphalt Shoulder Runoff (Left & Right)
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, z0),
+        Vec3(-trackWidth - curbWidth, groundY, z0),
+        Vec3(-trackWidth - curbWidth, groundY, z1),
+        Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, z1),
+        shoulderPaint,
+      );
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(trackWidth + curbWidth, groundY, z0),
+        Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z0),
+        Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z1),
+        Vec3(trackWidth + curbWidth, groundY, z1),
+        shoulderPaint,
+      );
+
+      // 2. Main Asphalt Roadbed
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(-trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z1),
+        Vec3(-trackWidth, groundY, z1),
+        asphaltPaint,
+      );
+
+      // 3. FIA Curbs (Alternating Red & White every 2m)
+      const curbStep = 2.0;
+      for (var cz = z0; cz < z1; cz += curbStep) {
+        final cz1 = cz + curbStep;
+        final isRed = ((cz / curbStep).round() % 2 == 0);
+        final curbColor = isRed ? redCurbPaint : whiteCurbPaint;
+
+        _drawQuad(
+          canvas,
+          project,
+          Vec3(-trackWidth - curbWidth, groundY, cz),
+          Vec3(-trackWidth, groundY, cz),
+          Vec3(-trackWidth, groundY, cz1),
+          Vec3(-trackWidth - curbWidth, groundY, cz1),
+          curbColor,
+        );
+        _drawQuad(
+          canvas,
+          project,
+          Vec3(trackWidth, groundY, cz),
+          Vec3(trackWidth + curbWidth, groundY, cz),
+          Vec3(trackWidth + curbWidth, groundY, cz1),
+          Vec3(trackWidth, groundY, cz1),
+          curbColor,
+        );
+      }
+
+      // 4. White boundary lines
+      final eL0 = project(Vec3(-trackWidth, groundY, z0));
+      final eL1 = project(Vec3(-trackWidth, groundY, z1));
+      if (eL0 != null && eL1 != null) canvas.drawLine(eL0, eL1, edgeLinePaint);
+
+      final eR0 = project(Vec3(trackWidth, groundY, z0));
+      final eR1 = project(Vec3(trackWidth, groundY, z1));
+      if (eR0 != null && eR1 != null) canvas.drawLine(eR0, eR1, edgeLinePaint);
+
+      // 5. Center dashed line
+      final c0 = project(Vec3(0, groundY, z0));
+      final c1 = project(Vec3(0, groundY, z0 + sliceLen * 0.55));
+      if (c0 != null && c1 != null) canvas.drawLine(c0, c1, centerDashPaint);
+    }
+
+    // 6. Checkered Start Line at Z = 24
+    _drawCheckeredLine(canvas, project, groundY, 24.0, trackWidth);
+
+    // 7. Distance marker boards
+    final markerDistances = [0, -50, -100, -150];
+    for (final mz in markerDistances) {
+      _drawDistanceBoard(
+          canvas, project, groundY, mz.toDouble(), trackWidth + curbWidth + 2.5);
+    }
+  }
+
+  void _drawSkidpadAsphalt(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+  ) {
+    const groundY = 0.0;
+    const padWidth = 34.0;
+    const zStart = -170.0;
+    const zEnd = 50.0;
+    const sliceLen = 10.0;
+
+    final isDay = lighting == TestDriveLighting.day;
+    final asphaltColor = isDay
+        ? const Color(0xFF1E293B)
+        : (lighting == TestDriveLighting.sunset
+            ? const Color(0xFF18181B)
+            : const Color(0xFF0F1713));
+    final asphaltPaint = Paint()
+      ..color = asphaltColor
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = isDay ? const Color(0xFF64748B) : const Color(0xFF223127)
       ..strokeWidth = 2.0;
 
-    final bL0 = project(const Vec3(-trackWidth, groundY, trackZMin));
-    final bL1 = project(const Vec3(-trackWidth, groundY, trackZMax));
-    if (bL0 != null && bL1 != null) canvas.drawLine(bL0, bL1, boundaryPaint);
+    for (var z = zStart; z < zEnd; z += sliceLen) {
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(-padWidth, groundY, z),
+        Vec3(padWidth, groundY, z),
+        Vec3(padWidth, groundY, z + sliceLen),
+        Vec3(-padWidth, groundY, z + sliceLen),
+        asphaltPaint,
+      );
+      final bL0 = project(Vec3(-padWidth, groundY, z));
+      final bL1 = project(Vec3(-padWidth, groundY, z + sliceLen));
+      if (bL0 != null && bL1 != null) canvas.drawLine(bL0, bL1, borderPaint);
 
-    final bR0 = project(const Vec3(trackWidth, groundY, trackZMin));
-    final bR1 = project(const Vec3(trackWidth, groundY, trackZMax));
-    if (bR0 != null && bR1 != null) canvas.drawLine(bR0, bR1, boundaryPaint);
+      final bR0 = project(Vec3(padWidth, groundY, z));
+      final bR1 = project(Vec3(padWidth, groundY, z + sliceLen));
+      if (bR0 != null && bR1 != null) canvas.drawLine(bR0, bR1, borderPaint);
+    }
 
-    // Grid crosslines every 5 meters
+    // Concentric drift test circles centered at (0, 0, -25)
+    final circleCenter = const Vec3(0, groundY, -25);
+    final radii = [8.0, 16.0, 26.0, 38.0];
+    final circlePaintA = Paint()
+      ..color = const Color(0x90FBBF24)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    final circlePaintB = Paint()
+      ..color = const Color(0x80FFFFFF)
+      ..strokeWidth = 1.8
+      ..style = PaintingStyle.stroke;
+
+    const segments = 36;
+    for (var rIdx = 0; rIdx < radii.length; rIdx++) {
+      final r = radii[rIdx];
+      final paint = (rIdx % 2 == 0) ? circlePaintA : circlePaintB;
+      Offset? prev;
+      Offset? first;
+      for (var i = 0; i <= segments; i++) {
+        final angle = i * 2 * pi / segments;
+        final curr = project(Vec3(circleCenter.x + r * cos(angle), groundY,
+            circleCenter.z + r * sin(angle)));
+        if (curr != null) {
+          first ??= curr;
+          if (prev != null) canvas.drawLine(prev, curr, paint);
+          prev = curr;
+        }
+      }
+      if (prev != null && first != null) canvas.drawLine(prev, first, paint);
+    }
+
+    // Origin calibration crosshairs
+    final x0 = project(const Vec3(-padWidth, groundY, -25));
+    final x1 = project(const Vec3(padWidth, groundY, -25));
+    final z0 = project(const Vec3(0, groundY, -170));
+    final z1 = project(const Vec3(0, groundY, 40));
+    final crossPaint = Paint()
+      ..color = const Color(0x6034D399)
+      ..strokeWidth = 1.5;
+    if (x0 != null && x1 != null) canvas.drawLine(x0, x1, crossPaint);
+    if (z0 != null && z1 != null) canvas.drawLine(z0, z1, crossPaint);
+  }
+
+  void _drawDragstripAsphalt(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+  ) {
+    const groundY = 0.0;
+    const stripWidth = 11.0;
+    const shoulderWidth = 4.0;
+    const zStart = -190.0;
+    const zEnd = 50.0;
+    const sliceLen = 10.0;
+
+    final isDay = lighting == TestDriveLighting.day;
+    final asphaltColor = isDay
+        ? const Color(0xFF0F172A) // Heavy rubbered high-grip dark tarmac
+        : const Color(0xFF070B0E);
+    final shoulderColor = isDay
+        ? const Color(0xFF334155)
+        : const Color(0xFF161F26);
+
+    final asphaltPaint = Paint()
+      ..color = asphaltColor
+      ..style = PaintingStyle.fill;
+    final shoulderPaint = Paint()
+      ..color = shoulderColor
+      ..style = PaintingStyle.fill;
+    final yellowLinePaint = Paint()
+      ..color = const Color(0xFFFDE047)
+      ..strokeWidth = 2.4;
+    final whiteLinePaint = Paint()
+      ..color = const Color(0xFFF8FAFC)
+      ..strokeWidth = 2.0;
+
+    for (var z = zStart; z < zEnd; z += sliceLen) {
+      final z0 = z;
+      final z1 = z + sliceLen;
+
+      // Shoulder
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(-stripWidth - shoulderWidth, groundY, z0),
+        Vec3(-stripWidth, groundY, z0),
+        Vec3(-stripWidth, groundY, z1),
+        Vec3(-stripWidth - shoulderWidth, groundY, z1),
+        shoulderPaint,
+      );
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(stripWidth, groundY, z0),
+        Vec3(stripWidth + shoulderWidth, groundY, z0),
+        Vec3(stripWidth + shoulderWidth, groundY, z1),
+        Vec3(stripWidth, groundY, z1),
+        shoulderPaint,
+      );
+
+      // Main strip
+      _drawQuad(
+        canvas,
+        project,
+        Vec3(-stripWidth, groundY, z0),
+        Vec3(stripWidth, groundY, z0),
+        Vec3(stripWidth, groundY, z1),
+        Vec3(-stripWidth, groundY, z1),
+        asphaltPaint,
+      );
+
+      // Center divider solid line
+      final c0 = project(Vec3(0, groundY, z0));
+      final c1 = project(Vec3(0, groundY, z1));
+      if (c0 != null && c1 != null) canvas.drawLine(c0, c1, yellowLinePaint);
+
+      // Outer boundary white lines
+      final eL0 = project(Vec3(-stripWidth, groundY, z0));
+      final eL1 = project(Vec3(-stripWidth, groundY, z1));
+      if (eL0 != null && eL1 != null) canvas.drawLine(eL0, eL1, whiteLinePaint);
+
+      final eR0 = project(Vec3(stripWidth, groundY, z0));
+      final eR1 = project(Vec3(stripWidth, groundY, z1));
+      if (eR0 != null && eR1 != null) canvas.drawLine(eR0, eR1, whiteLinePaint);
+    }
+
+    // Staging launch box at Z = 24
+    _drawCheckeredLine(canvas, project, groundY, 24.0, stripWidth);
+
+    // Speed trap lines
+    final trapZ = [-50.0, -100.0, -150.0];
+    final trapPaint = Paint()
+      ..color = const Color(0xFFFDE047)
+      ..strokeWidth = 3.0;
+    for (final tz in trapZ) {
+      final p0 = project(Vec3(-stripWidth, groundY, tz));
+      final p1 = project(Vec3(stripWidth, groundY, tz));
+      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, trapPaint);
+    }
+  }
+
+  void _drawCyberGridAsphalt(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+  ) {
+    const groundY = 0.0;
+    const trackWidth = 14.0;
+    const zStart = -170.0;
+    const zEnd = 50.0;
+
+    final boundaryPaint = Paint()
+      ..color = const Color(0x9010B981)
+      ..strokeWidth = 2.4;
     final gridPaint = Paint()
-      ..color = const Color(0x18455A64)
+      ..color = const Color(0x2834D399)
       ..strokeWidth = 1.0;
 
-    for (var z = trackZMin; z <= trackZMax; z += 5.0) {
+    final bL0 = project(const Vec3(-trackWidth, groundY, zStart));
+    final bL1 = project(const Vec3(-trackWidth, groundY, zEnd));
+    if (bL0 != null && bL1 != null) canvas.drawLine(bL0, bL1, boundaryPaint);
+
+    final bR0 = project(const Vec3(trackWidth, groundY, zStart));
+    final bR1 = project(const Vec3(trackWidth, groundY, zEnd));
+    if (bR0 != null && bR1 != null) canvas.drawLine(bR0, bR1, boundaryPaint);
+
+    for (var z = zStart; z <= zEnd; z += 5.0) {
       final p0 = project(Vec3(-trackWidth, groundY, z));
       final p1 = project(Vec3(trackWidth, groundY, z));
-      if (p0 != null && p1 != null) {
-        canvas.drawLine(p0, p1, gridPaint);
-      }
+      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, gridPaint);
     }
 
-    // Center Dashed Strip
     final centerPaint = Paint()
-      ..color = const Color(0x60ECEFF1)
+      ..color = const Color(0x8010B981)
       ..strokeWidth = 2.0;
-
-    for (var z = trackZMin; z <= trackZMax; z += 6.0) {
+    for (var z = zStart; z <= zEnd; z += 6.0) {
       final p0 = project(Vec3(0, groundY, z));
       final p1 = project(Vec3(0, groundY, z + 3.0));
-      if (p0 != null && p1 != null) {
-        canvas.drawLine(p0, p1, centerPaint);
-      }
-    }
-
-    // Start / Finish Line Checkered Grid at Z = 24
-    final startP0 = project(const Vec3(-trackWidth, groundY, 24));
-    final startP1 = project(const Vec3(trackWidth, groundY, 24));
-    if (startP0 != null && startP1 != null) {
-      final startPaint = Paint()
-        ..color = const Color(0x90FFD600)
-        ..strokeWidth = 3.5;
-      canvas.drawLine(startP0, startP1, startPaint);
+      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, centerPaint);
     }
   }
 
@@ -1276,6 +2003,9 @@ class _TestDriveScenePainter extends CustomPainter {
 
     final vehicleMatrix = trans * rot;
 
+    // Contact shadow under vehicle chassis onto asphalt
+    _drawVehicleContactShadow(canvas, vehicleMatrix, project);
+
     if (model != null && model!.instances.isNotEmpty) {
       _drawModelGeometry(canvas, vehicleMatrix, project);
     } else {
@@ -1283,7 +2013,38 @@ class _TestDriveScenePainter extends CustomPainter {
     }
 
     // Draw headlight glow beams
-    _drawHeadlightBeams(canvas, vehicleMatrix, project);
+    if (lighting != TestDriveLighting.day) {
+      _drawHeadlightBeams(canvas, vehicleMatrix, project);
+    }
+  }
+
+  void _drawVehicleContactShadow(
+    Canvas canvas,
+    Mat4 vehicleMatrix,
+    Offset? Function(Vec3) project,
+  ) {
+    final p0 = project(
+        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, -2.1)));
+    final p1 = project(
+        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, -2.1)));
+    final p2 = project(
+        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, 2.1)));
+    final p3 = project(
+        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, 2.1)));
+
+    if (p0 != null && p1 != null && p2 != null && p3 != null) {
+      final shadowPath = Path()
+        ..moveTo(p0.dx, p0.dy)
+        ..lineTo(p1.dx, p1.dy)
+        ..lineTo(p2.dx, p2.dy)
+        ..lineTo(p3.dx, p3.dy)
+        ..close();
+      final shadowPaint = Paint()
+        ..color = Color.fromRGBO(
+            0, 0, 0, lighting == TestDriveLighting.day ? 0.40 : 0.65)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(shadowPath, shadowPaint);
+    }
   }
 
   void _drawModelGeometry(

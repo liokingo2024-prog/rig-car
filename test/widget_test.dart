@@ -492,5 +492,26 @@ void main() {
 
       expect(find.text('Radial'), findsOneWidget);
     });
+
+    testWidgets(
+        'renders TestDriveViewport with Day Bright lighting and asphalt track selector',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: true),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Day'), findsOneWidget);
+      expect(find.text('Circuit'), findsOneWidget);
+      expect(find.byTooltip('Environment Lighting: Day Bright'), findsOneWidget);
+      expect(find.byTooltip('Track Surface: Circuit Asphalt'), findsOneWidget);
+    });
   });
 }
