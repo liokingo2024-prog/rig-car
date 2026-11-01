@@ -15,26 +15,9 @@ class RigHomeScreen extends StatefulWidget {
   State<RigHomeScreen> createState() => _RigHomeScreenState();
 }
 
-class _RigHomeScreenState extends State<RigHomeScreen>
-    with SingleTickerProviderStateMixin {
+class _RigHomeScreenState extends State<RigHomeScreen> {
   String _selectedCategory = 'All';
   String _searchQuery = '';
-  late final AnimationController _ambientController;
-
-  @override
-  void initState() {
-    super.initState();
-    _ambientController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 16),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ambientController.dispose();
-    super.dispose();
-  }
 
   List<PreRiggedCar> get _filteredCars {
     return preRiggedCars.where((car) {
@@ -108,150 +91,126 @@ class _RigHomeScreenState extends State<RigHomeScreen>
                 isDesktop: isDesktop,
               ),
 
-              // ── Main Content Area with Ambient Animated Background ────────
+              // ── Main Content Area ─────────────────────────────────────────
               Expanded(
-                child: Stack(
-                  children: [
-                    // Ambient Cyber Glow
-                    Positioned.fill(
-                      child: AnimatedBuilder(
-                        animation: _ambientController,
-                        builder: (context, _) {
-                          final angle = _ambientController.value * 2 * pi;
-                          return CustomPaint(
-                            painter: _AmbientCyberGlowPainter(angle: angle),
-                          );
-                        },
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    isDesktop ? 42 : 18,
+                    28,
+                    isDesktop ? 42 : 18,
+                    60,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Hero Banner ───────────────────────────────────
+                      _HeroBanner(
+                        isDesktop: isDesktop,
+                        onRigYourCar: () => _openWorkbench(),
                       ),
-                    ),
+                      const SizedBox(height: 36),
 
-                    // Scrollable Cards & Hero
-                    SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(
-                        isDesktop ? 42 : 18,
-                        28,
-                        isDesktop ? 42 : 18,
-                        60,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      // ── Fleet Section Header & Search ─────────────────
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          // ── Hero Banner ───────────────────────────────────
-                          _HeroBanner(
-                            isDesktop: isDesktop,
-                            onRigYourCar: () => _openWorkbench(),
-                          ),
-                          const SizedBox(height: 36),
-
-                          // ── Fleet Section Header & Search ─────────────────
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
                                   children: [
-                                    Row(
-                                      children: [
-                                        Container(
-                                          width: 8,
-                                          height: 8,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFFFF713D),
-                                            shape: BoxShape.circle,
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Color(0x80FF713D),
-                                                blurRadius: 8,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Text(
-                                          'PRE-RIGGED VEHICLE FLEET',
-                                          style: TextStyle(
-                                            color: Color(0xFFEEF3F6),
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w900,
-                                            letterSpacing: 1.2,
-                                          ),
-                                        ),
-                                      ],
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFF713D),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
                                     ),
-                                    const SizedBox(height: 4),
+                                    const SizedBox(width: 8),
                                     const Text(
-                                      'Production-ready Godot 4 VehicleBody3D models with calibrated suspension, steering & traction',
+                                      'PRE-RIGGED VEHICLE FLEET',
                                       style: TextStyle(
-                                        color: Color(0xFF8697A2),
-                                        fontSize: 13,
+                                        color: Color(0xFFF0F6FC),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.8,
                                       ),
                                     ),
                                   ],
                                 ),
-                              ),
-                              if (isDesktop) ...[
-                                const SizedBox(width: 24),
-                                // Search Input
-                                SizedBox(
-                                  width: 260,
-                                  child: TextField(
-                                    onChanged: (val) {
-                                      setState(() => _searchQuery = val);
-                                    },
-                                    style: const TextStyle(fontSize: 12),
-                                    decoration: InputDecoration(
-                                      hintText: 'Search fleet...',
-                                      hintStyle: const TextStyle(
-                                        color: Color(0xFF647580),
-                                        fontSize: 12,
-                                      ),
-                                      prefixIcon: const Icon(
-                                        Icons.search_rounded,
-                                        size: 16,
-                                        color: Color(0xFF8294A0),
-                                      ),
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 10,
-                                      ),
-                                      border: OutlineInputBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(10),
-                                        borderSide: const BorderSide(
-                                          color: Color(0xFF263642),
-                                        ),
-                                      ),
-                                    ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Production-ready Godot 4 VehicleBody3D models with calibrated suspension, steering & traction',
+                                  style: TextStyle(
+                                    color: Color(0xFF8B949E),
+                                    fontSize: 13,
                                   ),
                                 ),
                               ],
-                            ],
+                            ),
                           ),
-                          const SizedBox(height: 20),
-
-                          // Category Filters Bar
-                          _CategoryFilters(
-                            selectedCategory: _selectedCategory,
-                            onCategorySelected: (cat) {
-                              setState(() => _selectedCategory = cat);
-                            },
-                          ),
-                          const SizedBox(height: 24),
-
-                          // ── Vehicle Cards Grid ────────────────────────────
-                          _VehicleGrid(
-                            cars: _filteredCars,
-                            isDesktop: isDesktop,
-                            isTablet: isTablet,
-                            onOpenWorkbench: _openWorkbench,
-                            onExport: _exportCar,
-                          ),
+                          if (isDesktop) ...[
+                            const SizedBox(width: 24),
+                            // Search Input
+                            SizedBox(
+                              width: 260,
+                              child: TextField(
+                                onChanged: (val) {
+                                  setState(() => _searchQuery = val);
+                                },
+                                style: const TextStyle(fontSize: 12),
+                                decoration: InputDecoration(
+                                  hintText: 'Search fleet...',
+                                  hintStyle: const TextStyle(
+                                    color: Color(0xFF6E7681),
+                                    fontSize: 12,
+                                  ),
+                                  prefixIcon: const Icon(
+                                    Icons.search_rounded,
+                                    size: 16,
+                                    color: Color(0xFF8B949E),
+                                  ),
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(8),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFF30363D),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 20),
+
+                      // Category Filters Bar
+                      _CategoryFilters(
+                        selectedCategory: _selectedCategory,
+                        onCategorySelected: (cat) {
+                          setState(() => _selectedCategory = cat);
+                        },
+                      ),
+                      const SizedBox(height: 24),
+
+                      // ── Vehicle Cards Grid ────────────────────────────
+                      _VehicleGrid(
+                        cars: _filteredCars,
+                        isDesktop: isDesktop,
+                        isTablet: isTablet,
+                        onOpenWorkbench: _openWorkbench,
+                        onExport: _exportCar,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -272,32 +231,24 @@ class _HomeNavbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 68,
+      height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: const BoxDecoration(
-        color: Color(0xFF0F161C),
-        border: Border(bottom: BorderSide(color: Color(0xFF22313B))),
+        color: Color(0xFF161B22),
+        border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
       ),
       child: Row(
         children: [
           // Logo & Title
           Container(
-            width: 36,
-            height: 36,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFFF713D), Color(0xFFFF416C)],
-              ),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x40FF713D),
-                  blurRadius: 10,
-                  offset: Offset(0, 3),
-                ),
-              ],
+              color: const Color(0xFF21262D),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF30363D)),
             ),
-            child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 22),
+            child: const Icon(Icons.tune_rounded, color: Color(0xFFFF713D), size: 19),
           ),
           const SizedBox(width: 12),
           const Column(
@@ -307,19 +258,19 @@ class _HomeNavbar extends StatelessWidget {
               Text(
                 'RIG-CAR',
                 style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
+                  color: Color(0xFFF0F6FC),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.0,
                 ),
               ),
               Text(
-                'GODOT 4 AUTO-RIGGER & FLEET',
+                'GODOT 4 VEHICLE TOOLKIT',
                 style: TextStyle(
-                  color: Color(0xFF00E5FF),
-                  fontSize: 8,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.1,
+                  color: Color(0xFF8B949E),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
@@ -331,22 +282,21 @@ class _HomeNavbar extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: const Color(0xFF141F27),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF253744)),
+                color: const Color(0xFF0D1117),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF30363D)),
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.circle, size: 7, color: Color(0xFF00E676)),
+                  Icon(Icons.circle, size: 7, color: Color(0xFF3FB950)),
                   SizedBox(width: 6),
                   Text(
-                    'ENGINE 4.x READY',
+                    'Godot 4.x Compatible',
                     style: TextStyle(
-                      color: Color(0xFF8BA2B0),
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
+                      color: Color(0xFF8B949E),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -358,15 +308,14 @@ class _HomeNavbar extends StatelessWidget {
           // Primary "Rig Your Car" CTA Button
           FilledButton.icon(
             onPressed: onRigYourCar,
-            icon: const Icon(Icons.auto_awesome, size: 16),
+            icon: const Icon(Icons.upload_file_rounded, size: 16),
             label: const Text('Rig Your Car'),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFFFF713D),
-              elevation: 4,
-              shadowColor: const Color(0x60FF713D),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
           ),
@@ -387,202 +336,133 @@ class _HeroBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(isDesktop ? 36 : 22),
+      padding: EdgeInsets.all(isDesktop ? 32 : 20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF241C1A),
-            Color(0xFF16222A),
-            Color(0xFF0E151A),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF384B56), width: 1.2),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x40000000),
-            blurRadius: 20,
-            offset: Offset(0, 8),
-          ),
-        ],
+        color: const Color(0xFF161B22),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Background Cyber Lines
-          Positioned.fill(
-            child: CustomPaint(painter: _HeroGridLinesPainter()),
-          ),
-
-          // Content
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Badge row
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  _HeroPill(
-                    icon: Icons.auto_fix_high_rounded,
-                    label: 'MIXAMO-STYLE CAR RIGGING',
-                    color: const Color(0xFFFF713D),
-                  ),
-                  _HeroPill(
-                    icon: Icons.sports_motorsports_rounded,
-                    label: 'REAL-TIME GODOT 4 PHYSICS SIMULATOR',
-                    color: const Color(0xFFFFB15C),
-                  ),
-                  _HeroPill(
-                    icon: Icons.gps_fixed_rounded,
-                    label: 'REAL WHEEL 3D COORDINATES',
-                    color: const Color(0xFF00E5FF),
-                  ),
-                  _HeroPill(
-                    icon: Icons.code_rounded,
-                    label: 'INSTANT .TSCN + .GD EMITTER',
-                    color: const Color(0xFF6BD2A0),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Title
-              Text(
-                'Godot 4 Car Auto-Rigger & Fleet Library',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: isDesktop ? 32 : 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -0.6,
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // Subtitle
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: const Text(
-                  'Drop any 3D car asset (.glb / .gltf) into the browser to auto-detect wheels, axles, and car body topology with interactive 3D review, or instantly export from our curated collection of calibrated Godot 4 vehicle rigs.',
+          // Professional Eyebrow Badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF21262D),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFF30363D)),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.tune_rounded, size: 12, color: Color(0xFFFF713D)),
+                SizedBox(width: 6),
+                Text(
+                  'Godot 4 Vehicle Rigging & Simulation Toolkit',
                   style: TextStyle(
-                    color: Color(0xFFB4C2C9),
-                    fontSize: 14,
-                    height: 1.5,
+                    color: Color(0xFFC9D1D9),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Title
+          Text(
+            'Godot 4 Car Auto-Rigger & Fleet Library',
+            style: TextStyle(
+              color: const Color(0xFFF0F6FC),
+              fontSize: isDesktop ? 30 : 22,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Subtitle
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: const Text(
+              'Drop any 3D car asset (.glb / .gltf) into the browser to auto-detect wheels, axles, and car body topology with interactive 3D review, or instantly export from our curated collection of calibrated Godot 4 vehicle rigs.',
+              style: TextStyle(
+                color: Color(0xFF8B949E),
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Action buttons
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: onRigYourCar,
+                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: const Text('Rig Your Custom 3D Car'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF713D),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
               ),
-              const SizedBox(height: 26),
-
-              // Action buttons
-              Wrap(
-                spacing: 14,
-                runSpacing: 10,
-                children: [
-                  FilledButton.icon(
-                    onPressed: onRigYourCar,
-                    icon: const Icon(Icons.cloud_upload_outlined, size: 19),
-                    label: const Text('Rig Your Custom 3D Car'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF713D),
-                      elevation: 6,
-                      shadowColor: const Color(0x60FF713D),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => RigWorkbenchPage(
+                        initialCar: preRiggedCars.first,
+                        startInTestDrive: true,
                       ),
                     ),
+                  );
+                },
+                icon: const Icon(Icons.sports_motorsports_rounded, size: 18),
+                label: const Text('Test Drive Simulator (Godot 4)'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF21262D),
+                  foregroundColor: const Color(0xFFF0F6FC),
+                  side: const BorderSide(color: Color(0xFF30363D)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
                   ),
-                  FilledButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => RigWorkbenchPage(
-                            initialCar: preRiggedCars.first,
-                            startInTestDrive: true,
-                          ),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.sports_motorsports_rounded, size: 19),
-                    label: const Text('Test Drive Simulator (Godot 4)'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF00E5FF),
-                      foregroundColor: const Color(0xFF0A1016),
-                      elevation: 6,
-                      shadowColor: const Color(0x6000E5FF),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 22,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-                    label: const Text('Browse 6 Pre-Rigged Rigs ↓'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFE2EBF0),
-                      side: const BorderSide(color: Color(0xFF3F5460)),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.view_in_ar_rounded, size: 18),
+                label: const Text('Browse 6 Pre-Rigged Rigs ↓'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFC9D1D9),
+                  side: const BorderSide(color: Color(0xFF30363D)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
                   ),
-                ],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HeroPill extends StatelessWidget {
-  const _HeroPill({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.6,
-            ),
           ),
         ],
       ),
@@ -626,23 +506,23 @@ class _CategoryFilters extends StatelessWidget {
               avatar: Icon(
                 icon,
                 size: 14,
-                color: isSelected ? Colors.white : const Color(0xFF7E929F),
+                color: isSelected ? Colors.white : const Color(0xFF8B949E),
               ),
               label: Text('$name ($count)'),
               selected: isSelected,
               showCheckmark: false,
               onSelected: (_) => onCategorySelected(name),
-              backgroundColor: const Color(0xFF131D24),
+              backgroundColor: const Color(0xFF161B22),
               selectedColor: const Color(0xFFFF713D),
               side: BorderSide(
                 color: isSelected
                     ? const Color(0xFFFF713D)
-                    : const Color(0xFF263742),
+                    : const Color(0xFF30363D),
               ),
               labelStyle: TextStyle(
-                color: isSelected ? Colors.white : const Color(0xFF8EA0AA),
+                color: isSelected ? Colors.white : const Color(0xFFC9D1D9),
                 fontSize: 12,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
               ),
             ),
           );
@@ -741,25 +621,23 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
+        duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
-        transform: Matrix4.translationValues(0, _isHovered ? -5 : 0, 0),
+        transform: Matrix4.translationValues(0, _isHovered ? -3 : 0, 0),
         decoration: BoxDecoration(
-          color: const Color(0xFF141F27),
-          borderRadius: BorderRadius.circular(16),
+          color: const Color(0xFF161B22),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: _isHovered
-                ? car.accentColor
-                : const Color(0xFF263742),
-            width: _isHovered ? 1.6 : 1.0,
+                ? const Color(0xFF58A6FF)
+                : const Color(0xFF30363D),
+            width: _isHovered ? 1.4 : 1.0,
           ),
           boxShadow: [
             BoxShadow(
-              color: _isHovered
-                  ? car.accentColor.withValues(alpha: 0.25)
-                  : const Color(0x30000000),
-              blurRadius: _isHovered ? 18 : 8,
-              offset: Offset(0, _isHovered ? 8 : 4),
+              color: Colors.black.withValues(alpha: _isHovered ? 0.35 : 0.15),
+              blurRadius: _isHovered ? 12 : 4,
+              offset: Offset(0, _isHovered ? 6 : 2),
             ),
           ],
         ),
@@ -771,17 +649,10 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
             Container(
               height: 145,
               width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    car.accentColor.withValues(alpha: 0.25),
-                    const Color(0xFF0F161C),
-                  ],
-                ),
-                border: const Border(
-                  bottom: BorderSide(color: Color(0xFF243440)),
+              decoration: const BoxDecoration(
+                color: Color(0xFF0D1117),
+                border: Border(
+                  bottom: BorderSide(color: Color(0xFF21262D)),
                 ),
               ),
               child: Stack(
@@ -814,18 +685,18 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xC0101820),
+                        color: const Color(0xFF161B22),
                         borderRadius: BorderRadius.circular(5),
                         border: Border.all(
-                          color: car.accentColor.withValues(alpha: 0.5),
+                          color: const Color(0xFF30363D),
                         ),
                       ),
                       child: Text(
                         car.category.toUpperCase(),
-                        style: TextStyle(
-                          color: car.accentColor,
+                        style: const TextStyle(
+                          color: Color(0xFF8B949E),
                           fontSize: 9,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: 0.8,
                         ),
                       ),
@@ -857,10 +728,10 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xE0101820),
+                              color: const Color(0xFF21262D),
                               borderRadius: BorderRadius.circular(5),
                               border: Border.all(
-                                color: const Color(0xFFFF713D),
+                                color: const Color(0xFF30363D),
                               ),
                             ),
                             child: const Row(
@@ -869,15 +740,15 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                                 Icon(
                                   Icons.sports_motorsports_rounded,
                                   size: 11,
-                                  color: Color(0xFFFF713D),
+                                  color: Color(0xFFFF986D),
                                 ),
                                 SizedBox(width: 4),
                                 Text(
                                   'TEST DRIVE',
                                   style: TextStyle(
-                                    color: Color(0xFFFF713D),
+                                    color: Color(0xFFC9D1D9),
                                     fontSize: 9,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                     letterSpacing: 0.5,
                                   ),
                                 ),
@@ -892,15 +763,16 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1E2F3A),
+                            color: const Color(0xFF21262D),
                             borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: const Color(0xFF30363D)),
                           ),
                           child: Text(
                             car.drive,
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: Color(0xFFC9D1D9),
                               fontSize: 10,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w700,
                               letterSpacing: 0.5,
                             ),
                           ),
@@ -923,7 +795,7 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                     Text(
                       car.name,
                       style: const TextStyle(
-                        color: Color(0xFFEEF3F6),
+                        color: Color(0xFFF0F6FC),
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                       ),
@@ -936,23 +808,23 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Color(0xFF8697A2),
+                        color: Color(0xFF8B949E),
                         fontSize: 11,
                         height: 1.35,
                       ),
                     ),
                     const Spacer(),
 
-                    // High-Tech Telemetry Stats Grid
+                    // Precision Telemetry Stats Grid
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0F171D),
+                        color: const Color(0xFF0D1117),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF22323D)),
+                        border: Border.all(color: const Color(0xFF21262D)),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -976,8 +848,8 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                                 size: 14),
                             label: const Text('Export Rig'),
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFBAC8CF),
-                              side: const BorderSide(color: Color(0xFF334652)),
+                              foregroundColor: const Color(0xFFC9D1D9),
+                              side: const BorderSide(color: Color(0xFF30363D)),
                               padding:
                                   const EdgeInsets.symmetric(vertical: 11),
                               shape: RoundedRectangleBorder(
@@ -993,7 +865,7 @@ class _InteractiveVehicleCardState extends State<_InteractiveVehicleCard>
                             icon: const Icon(Icons.tune_rounded, size: 14),
                             label: const Text('Rig & Tune'),
                             style: FilledButton.styleFrom(
-                              backgroundColor: car.accentColor,
+                              backgroundColor: const Color(0xFFFF713D),
                               foregroundColor: Colors.white,
                               padding:
                                   const EdgeInsets.symmetric(vertical: 11),
@@ -1028,9 +900,9 @@ class _StatCell extends StatelessWidget {
         Text(
           label,
           style: const TextStyle(
-            color: Color(0xFF5B6E7A),
+            color: Color(0xFF8B949E),
             fontSize: 8,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
             letterSpacing: 0.6,
           ),
         ),
@@ -1038,7 +910,7 @@ class _StatCell extends StatelessWidget {
         Text(
           value,
           style: const TextStyle(
-            color: Color(0xFFD4E0E6),
+            color: Color(0xFFF0F6FC),
             fontSize: 11,
             fontWeight: FontWeight.w700,
             fontFamily: 'monospace',
@@ -1140,68 +1012,5 @@ class _MiniCarTurntablePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MiniCarTurntablePainter oldDelegate) =>
-      oldDelegate.angle != angle;
-}
-
-// ── Background Cyber Grid Lines ─────────────────────────────────────────────
-
-class _HeroGridLinesPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x1200E5FF)
-      ..strokeWidth = 1.0;
-
-    for (var x = 0.0; x < size.width; x += 36.0) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (var y = 0.0; y < size.height; y += 36.0) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// ── Ambient Cyber Glow Background ───────────────────────────────────────────
-
-class _AmbientCyberGlowPainter extends CustomPainter {
-  _AmbientCyberGlowPainter({required this.angle});
-  final double angle;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Subtle animated orange orb
-    final orb1 = Offset(
-      size.width * 0.8 + 60 * cos(angle),
-      size.height * 0.2 + 40 * sin(angle),
-    );
-    final paint1 = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          const Color(0x18FF713D),
-          Colors.transparent,
-        ],
-      ).createShader(Rect.fromCircle(center: orb1, radius: 280));
-    canvas.drawCircle(orb1, 280, paint1);
-
-    // Subtle animated cyan orb
-    final orb2 = Offset(
-      size.width * 0.2 + 50 * sin(angle),
-      size.height * 0.7 + 35 * cos(angle),
-    );
-    final paint2 = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          const Color(0x1500F5FF),
-          Colors.transparent,
-        ],
-      ).createShader(Rect.fromCircle(center: orb2, radius: 300));
-    canvas.drawCircle(orb2, 300, paint2);
-  }
-
-  @override
-  bool shouldRepaint(covariant _AmbientCyberGlowPainter oldDelegate) =>
       oldDelegate.angle != angle;
 }

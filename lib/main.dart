@@ -650,8 +650,8 @@ class _DesktopSidebar extends StatelessWidget {
       width: 232,
       padding: const EdgeInsets.fromLTRB(18, 22, 16, 18),
       decoration: const BoxDecoration(
-        color: Color(0xFF121B22),
-        border: Border(right: BorderSide(color: Color(0xFF25323B))),
+        color: Color(0xFF161B22),
+        border: Border(right: BorderSide(color: Color(0xFF30363D))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,9 +672,9 @@ class _DesktopSidebar extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
-                color: const Color(0xFF19252E),
+                color: const Color(0xFF21262D),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF2B3A44)),
+                border: Border.all(color: const Color(0xFF30363D)),
               ),
               child: const Row(
                 children: [
@@ -683,9 +683,9 @@ class _DesktopSidebar extends StatelessWidget {
                   Text(
                     'Fleet Library',
                     style: TextStyle(
-                      color: Color(0xFFD4DFE5),
+                      color: Color(0xFFC9D1D9),
                       fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -693,7 +693,7 @@ class _DesktopSidebar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
-          const _SmallLabel('MIXAMO AUTO-RIGGER'),
+          const _SmallLabel('RIGGING PIPELINE'),
           const SizedBox(height: 10),
           _SidebarStep(
             number: 1,
@@ -739,26 +739,26 @@ class _DesktopSidebar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A2831),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF2A3B46)),
+              color: const Color(0xFF161B22),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF30363D)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
-                  Icons.auto_awesome,
-                  color: Color(0xFFFFB15C),
-                  size: 17,
+                  Icons.info_outline_rounded,
+                  color: Color(0xFF8B949E),
+                  size: 16,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     hasModel
-                        ? 'Auto-scan complete. Review markers in 3D wireframe.'
-                        : 'Drop a GLB car model to auto-detect wheels and body.',
+                        ? 'Model parsed. Review hub alignment in 3D viewport.'
+                        : 'Import a vehicle model to inspect wheels and body.',
                     style: const TextStyle(
-                      color: Color(0xFFB5C0C7),
+                      color: Color(0xFF8B949E),
                       fontSize: 11,
                       height: 1.35,
                     ),
@@ -769,11 +769,11 @@ class _DesktopSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           const Text(
-            'v2.0 AUTO-RIG  •  GODOT 4',
+            'GODOT 4 VEHICLE PIPELINE',
             style: TextStyle(
-              color: Color(0xFF61707A),
+              color: Color(0xFF6E7681),
               fontSize: 10,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w600,
               letterSpacing: .8,
             ),
           ),
@@ -806,14 +806,14 @@ class _DesktopTopbar extends StatelessWidget {
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: const BoxDecoration(
-        color: Color(0xFF10181E),
-        border: Border(bottom: BorderSide(color: Color(0xFF25323B))),
+        color: Color(0xFF161B22),
+        border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
       ),
       child: Row(
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFFBAC7CE)),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF8B949E)),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -828,7 +828,7 @@ class _DesktopTopbar extends StatelessWidget {
           const Text(
             'CAR RIGGER',
             style: TextStyle(
-              color: Color(0xFFEEF2F4),
+              color: Color(0xFFF0F6FC),
               fontSize: 13,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.1,
@@ -838,21 +838,33 @@ class _DesktopTopbar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: wheelsCount >= 4
-                  ? const Color(0xFF1E392F)
-                  : const Color(0xFF3B2E1E),
+              color: const Color(0xFF21262D),
               borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: const Color(0xFF30363D)),
             ),
-            child: Text(
-              wheelsCount >= 4 ? 'AUTO-RIGGED' : 'MANUAL ASSIST',
-              style: TextStyle(
-                color: wheelsCount >= 4
-                    ? const Color(0xFF6BD2A0)
-                    : const Color(0xFFFFB15C),
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
-                letterSpacing: .8,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.circle,
+                  size: 6,
+                  color: wheelsCount >= 4
+                      ? const Color(0xFF3FB950)
+                      : const Color(0xFFD29922),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  wheelsCount >= 4 ? 'AUTO-RIGGED' : 'MANUAL ASSIST',
+                  style: TextStyle(
+                    color: wheelsCount >= 4
+                        ? const Color(0xFF3FB950)
+                        : const Color(0xFFD29922),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .6,
+                  ),
+                ),
+              ],
             ),
           ),
           const Spacer(),
@@ -860,7 +872,7 @@ class _DesktopTopbar extends StatelessWidget {
             child: Text(
               modelName,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFF82919B), fontSize: 12),
+              style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12),
             ),
           ),
           const SizedBox(width: 14),
@@ -875,16 +887,19 @@ class _DesktopTopbar extends StatelessWidget {
             label: Text(
               isTestDrive ? 'WORKBENCH' : 'TEST DRIVE',
               style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
               ),
             ),
             style: FilledButton.styleFrom(
               backgroundColor: isTestDrive
-                  ? const Color(0xFF00E5FF)
+                  ? const Color(0xFF21262D)
                   : const Color(0xFFFF713D),
               foregroundColor:
-                  isTestDrive ? const Color(0xFF0A1016) : Colors.white,
+                  isTestDrive ? const Color(0xFFF0F6FC) : Colors.white,
+              side: isTestDrive
+                  ? const BorderSide(color: Color(0xFF30363D))
+                  : null,
               padding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               shape: RoundedRectangleBorder(
@@ -898,8 +913,8 @@ class _DesktopTopbar extends StatelessWidget {
             icon: const Icon(Icons.file_download_outlined, size: 17),
             label: const Text('Export Godot rig'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFE8EEF1),
-              side: const BorderSide(color: Color(0xFF3A4B56)),
+              foregroundColor: const Color(0xFFC9D1D9),
+              side: const BorderSide(color: Color(0xFF30363D)),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
           ),
@@ -926,14 +941,14 @@ class _MobileHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
       decoration: const BoxDecoration(
-        color: Color(0xFF10181E),
-        border: Border(bottom: BorderSide(color: Color(0xFF25323B))),
+        color: Color(0xFF161B22),
+        border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
       ),
       child: Row(
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFFBAC7CE)),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF8B949E)),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -955,7 +970,7 @@ class _MobileHeader extends StatelessWidget {
                   ? Icons.tune_rounded
                   : Icons.sports_motorsports_rounded,
               color: isTestDrive
-                  ? const Color(0xFF00E5FF)
+                  ? const Color(0xFF58A6FF)
                   : const Color(0xFFFF713D),
             ),
           ),
@@ -2241,22 +2256,23 @@ class _Brand extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 30,
-          height: 30,
+          width: 28,
+          height: 28,
           decoration: BoxDecoration(
-            color: const Color(0xFFFF713D),
-            borderRadius: BorderRadius.circular(9),
+            color: const Color(0xFF21262D),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFF30363D)),
           ),
-          child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 19),
+          child: const Icon(Icons.tune_rounded, color: Color(0xFFFF713D), size: 16),
         ),
-        const SizedBox(width: 9),
+        const SizedBox(width: 8),
         const Text(
           'RIG-CAR',
           style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1,
+            color: Color(0xFFF0F6FC),
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8,
           ),
         ),
       ],

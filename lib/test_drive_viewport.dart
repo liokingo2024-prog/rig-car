@@ -297,16 +297,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xE00C1318),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0x3500E5FF)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x3000E5FF),
-            blurRadius: 16,
-            spreadRadius: -2,
-          ),
-        ],
+        color: const Color(0xF0161B22),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -329,22 +322,22 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: const Color(0x25FF5252),
+                            color: const Color(0xFF21262D),
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0x60FF5252)),
+                            border: Border.all(color: const Color(0xFF30363D)),
                           ),
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.arrow_back,
-                                  size: 14, color: Color(0xFFFF8A80)),
+                                  size: 14, color: Color(0xFFC9D1D9)),
                               SizedBox(width: 6),
                               Text(
                                 'EXIT TEST DRIVE',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
-                                  color: Color(0xFFFF8A80),
+                                  color: Color(0xFFC9D1D9),
                                   letterSpacing: 0.6,
                                 ),
                               ),
@@ -356,18 +349,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
                       // Godot Engine title & status
                       Container(
-                        width: 8,
-                        height: 8,
+                        width: 7,
+                        height: 7,
                         decoration: const BoxDecoration(
-                          color: Color(0xFF00E676),
+                          color: Color(0xFF3FB950),
                           shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Color(0xFF00E676),
-                              blurRadius: 8,
-                              spreadRadius: 1,
-                            ),
-                          ],
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -376,7 +362,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFFECEFF1),
+                          color: Color(0xFFF0F6FC),
                           letterSpacing: 0.8,
                         ),
                       ),
@@ -385,15 +371,16 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0x2000E5FF),
+                          color: const Color(0xFF21262D),
                           borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFF30363D)),
                         ),
                         child: Text(
                           '${_sim.drive} • ${_sim.mass.toInt()}KG • ${_sim.engineForce.toInt()}HP',
                           style: const TextStyle(
                             fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF00E5FF),
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF8B949E),
                             letterSpacing: 0.4,
                           ),
                         ),
@@ -422,13 +409,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                                     horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: isSel
-                                      ? const Color(0x4000E5FF)
-                                      : const Color(0x15FFFFFF),
+                                      ? const Color(0xFF30363D)
+                                      : const Color(0xFF21262D),
                                   borderRadius: BorderRadius.circular(5),
                                   border: Border.all(
                                     color: isSel
-                                        ? const Color(0xFF00E5FF)
-                                        : const Color(0x25FFFFFF),
+                                        ? const Color(0xFF58A6FF)
+                                        : const Color(0xFF30363D),
                                   ),
                                 ),
                                 child: Text(
@@ -436,11 +423,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: isSel
-                                        ? FontWeight.w800
-                                        : FontWeight.w600,
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
                                     color: isSel
-                                        ? const Color(0xFF00E5FF)
-                                        : const Color(0xFFB0BEC5),
+                                        ? const Color(0xFFF0F6FC)
+                                        : const Color(0xFF8B949E),
                                   ),
                                 ),
                               ),
@@ -459,22 +446,22 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: const Color(0x20FF9800),
+                            color: const Color(0xFF21262D),
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0x60FF9800)),
+                            border: Border.all(color: const Color(0xFF30363D)),
                           ),
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.refresh,
-                                  size: 14, color: Color(0xFFFFB74D)),
+                                  size: 14, color: Color(0xFFC9D1D9)),
                               SizedBox(width: 5),
                               Text(
                                 'RESET (R)',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFFFFB74D),
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFC9D1D9),
                                 ),
                               ),
                             ],
@@ -496,21 +483,21 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xB50C1318),
+        color: const Color(0xE0161B22),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0x25FFFFFF)),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.keyboard, size: 13, color: Color(0xFF90A4AE)),
+          Icon(Icons.keyboard, size: 13, color: Color(0xFF8B949E)),
           SizedBox(width: 6),
           Text(
             'WASD / ARROWS: Drive  •  SPACE: Handbrake  •  C: Camera  •  R: Reset  •  ESC: Exit',
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF90A4AE),
+              color: Color(0xFF8B949E),
               letterSpacing: 0.3,
             ),
           ),
@@ -601,9 +588,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xB50C1318),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x25FFFFFF)),
+        color: const Color(0xE6161B22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -630,7 +617,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           _buildHoldButton(
             icon: Icons.handyman,
             label: 'HANDBRAKE',
-            color: const Color(0xFFFF7043),
+            color: const Color(0xFFFF713D),
             active: _touchHandbrake,
             width: 140,
             onHold: (v) => setState(() => _touchHandbrake = v),
@@ -644,9 +631,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xB50C1318),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x25FFFFFF)),
+        color: const Color(0xE6161B22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -654,7 +641,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           _buildHoldButton(
             icon: Icons.arrow_downward,
             label: 'BRAKE/REV',
-            color: const Color(0xFFFF5252),
+            color: const Color(0xFFF85149),
             active: _touchBrake,
             width: 72,
             height: 70,
@@ -664,7 +651,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           _buildHoldButton(
             icon: Icons.arrow_upward,
             label: 'GAS',
-            color: const Color(0xFF00E676),
+            color: const Color(0xFF3FB950),
             active: _touchGas,
             width: 72,
             height: 70,
@@ -680,7 +667,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     required String label,
     required bool active,
     required ValueChanged<bool> onHold,
-    Color color = const Color(0xFF00E5FF),
+    Color color = const Color(0xFF58A6FF),
     double width = 66,
     double height = 48,
   }) {
@@ -693,33 +680,24 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         width: width,
         height: height,
         decoration: BoxDecoration(
-          color: active ? color.withValues(alpha: 0.35) : const Color(0x221E2A38),
-          borderRadius: BorderRadius.circular(8),
+          color: active ? color.withValues(alpha: 0.2) : const Color(0xFF21262D),
+          borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: active ? color : const Color(0x4037474F),
-            width: active ? 1.6 : 1.0,
+            color: active ? color : const Color(0xFF30363D),
+            width: active ? 1.4 : 1.0,
           ),
-          boxShadow: active
-              ? [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.4),
-                    blurRadius: 10,
-                    spreadRadius: 1,
-                  )
-                ]
-              : null,
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: active ? color : Colors.white70),
+            Icon(icon, size: 18, color: active ? color : const Color(0xFFC9D1D9)),
             const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
                 fontSize: 9,
                 fontWeight: FontWeight.w700,
-                color: active ? color : const Color(0xFF90A4AE),
+                color: active ? color : const Color(0xFF8B949E),
               ),
             ),
           ],
@@ -732,9 +710,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xD00C1318),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x2800E5FF)),
+        color: const Color(0xE6161B22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -748,7 +726,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 style: TextStyle(
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF78909C),
+                  color: Color(0xFF8B949E),
                   letterSpacing: 0.8,
                 ),
               ),
@@ -766,14 +744,14 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 style: const TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF00E5FF),
+                  color: Color(0xFFF0F6FC),
                 ),
               ),
             ],
           ),
 
           const SizedBox(width: 14),
-          Container(width: 1, height: 68, color: const Color(0x20FFFFFF)),
+          Container(width: 1, height: 68, color: const Color(0xFF30363D)),
           const SizedBox(width: 14),
 
           // 4-Wheel Slip & Suspension Telemetry
@@ -786,7 +764,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 style: TextStyle(
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF78909C),
+                  color: Color(0xFF8B949E),
                   letterSpacing: 0.8,
                 ),
               ),
@@ -817,11 +795,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   Widget _buildWheelBar(String name, double slip, double comp) {
     Color barColor;
     if (slip > 0.6) {
-      barColor = const Color(0xFFFF5252);
+      barColor = const Color(0xFFF85149);
     } else if (slip > 0.3) {
-      barColor = const Color(0xFFFFB74D);
+      barColor = const Color(0xFFD29922);
     } else {
-      barColor = const Color(0xFF00E676);
+      barColor = const Color(0xFF3FB950);
     }
 
     return Column(
@@ -832,7 +810,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           style: const TextStyle(
             fontSize: 8,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF90A4AE),
+            color: Color(0xFF8B949E),
           ),
         ),
         const SizedBox(height: 4),
@@ -840,7 +818,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           width: 10,
           height: 38,
           decoration: BoxDecoration(
-            color: const Color(0x3037474F),
+            color: const Color(0xFF21262D),
             borderRadius: BorderRadius.circular(3),
           ),
           alignment: Alignment.bottomCenter,
@@ -874,16 +852,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xD80C1318),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x3500E5FF)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x3000E5FF),
-            blurRadius: 20,
-            spreadRadius: -4,
-          ),
-        ],
+        color: const Color(0xE6161B22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -899,8 +870,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 '${_sim.speedKmh.toInt()}',
                 style: const TextStyle(
                   fontSize: 48,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFFECEFF1),
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFFF0F6FC),
                   letterSpacing: -1.0,
                   height: 1.0,
                 ),
@@ -909,10 +880,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               const Text(
                 'KM/H',
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF00E5FF),
-                  letterSpacing: 0.8,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF8B949E),
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(width: 16),
@@ -922,24 +893,20 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _sim.currentGear == -1
-                      ? const Color(0x40FF5252)
-                      : const Color(0x3500E5FF),
+                  color: const Color(0xFF21262D),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(
-                    color: _sim.currentGear == -1
-                        ? const Color(0xFFFF5252)
-                        : const Color(0xFF00E5FF),
+                    color: const Color(0xFF30363D),
                   ),
                 ),
                 child: Text(
                   gearStr,
                   style: TextStyle(
                     fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                     color: _sim.currentGear == -1
-                        ? const Color(0xFFFF5252)
-                        : const Color(0xFF00E5FF),
+                        ? const Color(0xFFF85149)
+                        : const Color(0xFFF0F6FC),
                   ),
                 ),
               ),
@@ -1014,7 +981,7 @@ class _GMeterPainter extends CustomPainter {
 
     // Outer circle
     final circlePaint = Paint()
-      ..color = const Color(0x35607D8B)
+      ..color = const Color(0xFF30363D)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawCircle(c, r, circlePaint);
@@ -1022,7 +989,7 @@ class _GMeterPainter extends CustomPainter {
 
     // Crosshairs
     final linePaint = Paint()
-      ..color = const Color(0x35607D8B)
+      ..color = const Color(0xFF21262D)
       ..strokeWidth = 1.0;
     canvas.drawLine(Offset(c.dx, 0), Offset(c.dx, size.height), linePaint);
     canvas.drawLine(Offset(0, c.dy), Offset(size.width, c.dy), linePaint);
@@ -1035,15 +1002,15 @@ class _GMeterPainter extends CustomPainter {
 
     // Trail line
     final trailPaint = Paint()
-      ..color = const Color(0x6000E5FF)
-      ..strokeWidth = 1.5;
+      ..color = const Color(0x6058A6FF)
+      ..strokeWidth = 1.2;
     canvas.drawLine(c, pt, trailPaint);
 
     // Point
     final gPointPaint = Paint()
-      ..color = const Color(0xFF00E5FF)
+      ..color = const Color(0xFF58A6FF)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(pt, 3.5, gPointPaint);
+    canvas.drawCircle(pt, 3.0, gPointPaint);
   }
 
   @override
@@ -1374,12 +1341,8 @@ class _TestDriveScenePainter extends CustomPainter {
     Offset? Function(Vec3) project,
   ) {
     final bodyPaint = Paint()
-      ..color = const Color(0xFF00E5FF)
-      ..strokeWidth = 1.3;
-
-    final underglowPaint = Paint()
-      ..color = const Color(0x3500E5FF)
-      ..strokeWidth = 2.4;
+      ..color = accentColor
+      ..strokeWidth = 1.2;
 
     // Body vertices in local car coordinates
     final bodyCorners = [
@@ -1426,18 +1389,6 @@ class _TestDriveScenePainter extends CustomPainter {
       if (p0 != null && p1 != null) {
         canvas.drawLine(p0, p1, bodyPaint);
       }
-    }
-
-    // Draw underglow ground rectangle
-    final ug0 = project(vehicleMatrix.transformPoint(const Vec3(-1.1, 0.05, -2.0)));
-    final ug1 = project(vehicleMatrix.transformPoint(const Vec3(1.1, 0.05, -2.0)));
-    final ug2 = project(vehicleMatrix.transformPoint(const Vec3(1.1, 0.05, 2.0)));
-    final ug3 = project(vehicleMatrix.transformPoint(const Vec3(-1.1, 0.05, 2.0)));
-    if (ug0 != null && ug1 != null && ug2 != null && ug3 != null) {
-      canvas.drawLine(ug0, ug1, underglowPaint);
-      canvas.drawLine(ug1, ug2, underglowPaint);
-      canvas.drawLine(ug2, ug3, underglowPaint);
-      canvas.drawLine(ug3, ug0, underglowPaint);
     }
 
     // 4 Wheels

@@ -415,9 +415,9 @@ class _Badge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xD8141E24),
+        color: const Color(0xFF161B22),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -426,10 +426,10 @@ class _Badge extends StatelessWidget {
           const SizedBox(width: 5),
           Text(
             label,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: color,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFC9D1D9),
             ),
           ),
         ],
@@ -671,17 +671,6 @@ class _WireframeScenePainter extends CustomPainter {
         if (p0 != null && p1 != null) {
           canvas.drawLine(p0, p1, z == 0 ? axisPaint : gridPaint);
         }
-      }
-
-      // Animated sweeping laser scan line across grid
-      final scanZ = -extent + (pulseProgress * 2.0 * extent);
-      final sp0 = projectPoint(Vec3(-extent, groundY, scanZ));
-      final sp1 = projectPoint(Vec3(extent, groundY, scanZ));
-      if (sp0 != null && sp1 != null) {
-        final laserPaint = Paint()
-          ..color = const Color(0x7000F5FF)
-          ..strokeWidth = 1.8;
-        canvas.drawLine(sp0, sp1, laserPaint);
       }
     }
 
