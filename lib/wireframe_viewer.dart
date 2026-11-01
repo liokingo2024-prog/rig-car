@@ -51,6 +51,7 @@ class _WireframeViewerState extends State<WireframeViewer> {
 
   bool _showMarkers = true;
   bool _showGrid = true;
+  bool _invertDrag = false;
   final bool _denseWireframe = true;
 
   @override
@@ -126,11 +127,13 @@ class _WireframeViewerState extends State<WireframeViewer> {
               },
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onDoubleTap: () => setState(_resetCameraToModel),
                 onPanUpdate: (details) {
                   setState(() {
-                    // Left click / touch drag rotates camera
-                    _azimuth += details.delta.dx * 0.01;
-                    _elevation = (_elevation + details.delta.dy * 0.01)
+                    // Natural orbit: dragging right rotates model right; dragging up tilts view up.
+                    final factor = _invertDrag ? 1.0 : -1.0;
+                    _azimuth += factor * details.delta.dx * 0.01;
+                    _elevation = (_elevation + factor * details.delta.dy * 0.01)
                         .clamp(-1.5, 1.5);
                   });
                 },
@@ -255,6 +258,21 @@ class _WireframeViewerState extends State<WireframeViewer> {
                         : const Color(0xFF71818B),
                   ),
                   onPressed: () => setState(() => _showGrid = !_showGrid),
+                ),
+                IconButton(
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: _invertDrag
+                      ? 'Controls: Inverted (Click for Natural)'
+                      : 'Controls: Natural (Click for Inverted)',
+                  icon: Icon(
+                    _invertDrag ? Icons.swap_vertical_circle_rounded : Icons.swap_vertical_circle_outlined,
+                    color: _invertDrag
+                        ? const Color(0xFFFF713D)
+                        : const Color(0xFF8BA2B0),
+                  ),
+                  onPressed: () =>
+                      setState(() => _invertDrag = !_invertDrag),
                 ),
               ],
             ),
