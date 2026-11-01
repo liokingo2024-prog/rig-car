@@ -1312,8 +1312,8 @@ class _TestDriveScenePainter extends CustomPainter {
     // 6. Draw Slalom Cones
     _drawCones(canvas, projectPoint);
 
-    // 7. Draw Vehicle & Realistic Dynamic Shadows
-    _drawVehicle(canvas, size, viewProj, projectPoint);
+    // 7. Draw Vehicle
+    _drawVehicle(canvas, size, projectPoint);
   }
 
   void _drawAtmosphere(
@@ -2742,7 +2742,6 @@ class _TestDriveScenePainter extends CustomPainter {
   void _drawVehicle(
     Canvas canvas,
     Size size,
-    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     // Construct vehicle world transformation matrix
@@ -2771,14 +2770,8 @@ class _TestDriveScenePainter extends CustomPainter {
 
     final vehicleMatrix = trans * rot;
 
-    // ── REALISTIC MULTI-STAGE VEHICLE SHADOW SYSTEM ─────────────────────────
-    _drawRealisticVehicleShadow(
-      canvas: canvas,
-      size: size,
-      viewProj: viewProj,
-      vehicleMatrix: vehicleMatrix,
-      project: project,
-    );
+    // Contact shadow under vehicle chassis onto asphalt
+    _drawVehicleContactShadow(canvas, vehicleMatrix, project);
 
     if (model != null && model!.instances.isNotEmpty) {
       _drawModelGeometry(canvas, vehicleMatrix, project);
@@ -2792,235 +2785,32 @@ class _TestDriveScenePainter extends CustomPainter {
     }
   }
 
-  void _drawRealisticVehicleShadow({
-    required Canvas canvas,
-    required Size size,
-    required Mat4 viewProj,
-    required Mat4 vehicleMatrix,
-    required Offset? Function(Vec3) project,
-  }) {
-    // 1. Directional Sun Cast Shadow (Silhouette projected onto ground plane)
-    _drawDirectionalSunShadow(canvas, size, viewProj, vehicleMatrix);
-
-    // 2. Soft Ambient Occlusion Chassis Contact Shadow (Planted on ground)
-    _drawChassisAmbientOcclusion(canvas, size, viewProj);
-
-    // 3. High-Density Tire Contact Footprints (Directly under 4 wheels)
-    _drawTireContactPatches(canvas, size, viewProj);
-  }
-
-  void _drawDirectionalSunShadow(
+  void _drawVehicleContactShadow(
     Canvas canvas,
-    Size size,
-    Mat4 viewProj,
     Mat4 vehicleMatrix,
+    Offset? Function(Vec3) project,
   ) {
-    Vec3 sunDir;
-    double shadowAlpha;
+    final p0 = project(
+        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, -2.1)));
+    final p1 = project(
+        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, -2.1)));
+    final p2 = project(
+        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, 2.1)));
+    final p3 = project(
+        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, 2.1)));
 
-    switch (lighting) {
-      case TestDriveLighting.day:
-        sunDir = const Vec3(0.40, 0.58, -0.71).normalized;
-        shadowAlpha = 0.38;
-      case TestDriveLighting.sunset:
-        // Low golden sun = dramatic long shadow stretching across the road
-        sunDir = const Vec3(0.52, 0.16, -0.84).normalized;
-        shadowAlpha = 0.55;
-      case TestDriveLighting.night:
-        // Subtle soft moon shadow
-        sunDir = const Vec3(-0.48, 0.60, 0.64).normalized;
-        shadowAlpha = 0.14;
-    }
-
-    if (sunDir.y <= 0.02) return;
-
-    // Ground plane constant
-    const groundY = 0.002;
-
-    // Project any world 3D point down to ground along -sunDir
-    Vec3 projectToGround(Vec3 worldPt) {
-      final t = (worldPt.y - groundY) / sunDir.y;
-      return Vec3(
-        worldPt.x - sunDir.x * t,
-        groundY,
-        worldPt.z - sunDir.z * t,
-      );
-    }
-
-    // Vehicle silhouette key outline vertices in local vehicle coordinates
-    final localPoints = [
-      // Front bumper
-      const Vec3(-0.95, 0.22, -1.95),
-      const Vec3(0.95, 0.22, -1.95),
-      // Hood
-      const Vec3(0.92, 0.68, -1.65),
-      // Windshield base & top
-      const Vec3(0.85, 0.88, -0.60),
-      const Vec3(0.70, 1.32, -0.15),
-      // Roof & rear glass
-      const Vec3(0.70, 1.32, 0.75),
-      const Vec3(0.85, 0.88, 1.35),
-      // Rear spoiler / trunk
-      const Vec3(0.92, 0.88, 1.90),
-      const Vec3(-0.92, 0.88, 1.90),
-      // Left side roof / windshield
-      const Vec3(-0.85, 0.88, 1.35),
-      const Vec3(-0.70, 1.32, 0.75),
-      const Vec3(-0.70, 1.32, -0.15),
-      const Vec3(-0.85, 0.88, -0.60),
-      const Vec3(-0.92, 0.68, -1.65),
-    ];
-
-    // Transform points to world space, then cast onto ground plane
-    final shadowVerts = localPoints.map((localPt) {
-      final worldPt = vehicleMatrix.transformPoint(localPt);
-      return projectToGround(worldPt);
-    }).toList();
-
-    // Draw primary cast shadow polygon
-    final castPaint = Paint()
-      ..color = Color.fromRGBO(0, 0, 0, shadowAlpha)
-      ..style = PaintingStyle.fill;
-    _drawClippedPolygon(canvas, viewProj, size, shadowVerts, castPaint);
-
-    // In Sunset mode, add an extended soft penumbra edge for realism
-    if (lighting == TestDriveLighting.sunset) {
-      final penumbraVerts = localPoints.map((localPt) {
-        final worldPt = vehicleMatrix.transformPoint(localPt * 1.08);
-        return projectToGround(worldPt);
-      }).toList();
-      final penumbraPaint = Paint()
-        ..color = const Color(0x22000000)
+    if (p0 != null && p1 != null && p2 != null && p3 != null) {
+      final shadowPath = Path()
+        ..moveTo(p0.dx, p0.dy)
+        ..lineTo(p1.dx, p1.dy)
+        ..lineTo(p2.dx, p2.dy)
+        ..lineTo(p3.dx, p3.dy)
+        ..close();
+      final shadowPaint = Paint()
+        ..color = Color.fromRGBO(
+            0, 0, 0, lighting == TestDriveLighting.day ? 0.40 : 0.65)
         ..style = PaintingStyle.fill;
-      _drawClippedPolygon(canvas, viewProj, size, penumbraVerts, penumbraPaint);
-    }
-  }
-
-  void _drawChassisAmbientOcclusion(
-    Canvas canvas,
-    Size size,
-    Mat4 viewProj,
-  ) {
-    const groundY = 0.003;
-    final carX = sim.position.x;
-    final carZ = sim.position.z;
-    final yaw = sim.yaw;
-
-    final cy = cos(yaw);
-    final sy = sin(yaw);
-
-    // Aerodynamic rounded chassis footprint (16-point smooth hull)
-    const points = 16;
-    const baseW = 1.08;
-    const baseL = 2.15;
-
-    List<Vec3> makeHull(double wScale, double lScale, double y) {
-      final verts = <Vec3>[];
-      final w = baseW * wScale;
-      final l = baseL * lScale;
-      for (var i = 0; i < points; i++) {
-        final a = i * 2 * pi / points;
-        // Taper slightly at the front nose
-        final noseTaper = (cos(a) < 0) ? 0.90 : 0.98;
-        final lx = sin(a) * w * noseTaper;
-        final lz = cos(a) * l;
-        // Rotate by yaw and translate by car position on ground
-        final wx = carX - lx * cy - lz * sy;
-        final wz = carZ - lx * sy + lz * cy;
-        verts.add(Vec3(wx, y, wz));
-      }
-      return verts;
-    }
-
-    // Outer soft ambient occlusion penumbra
-    final outerVerts = makeHull(1.30, 1.25, groundY);
-    final outerPaint = Paint()
-      ..color = const Color(0x20000000)
-      ..style = PaintingStyle.fill;
-    _drawClippedPolygon(canvas, viewProj, size, outerVerts, outerPaint);
-
-    // Middle ambient occlusion body
-    final midVerts = makeHull(1.08, 1.08, groundY + 0.001);
-    final midPaint = Paint()
-      ..color = const Color(0x50000000)
-      ..style = PaintingStyle.fill;
-    _drawClippedPolygon(canvas, viewProj, size, midVerts, midPaint);
-
-    // Deep inner contact core (directly under engine and heavy chassis)
-    final innerVerts = makeHull(0.85, 0.85, groundY + 0.002);
-    final innerPaint = Paint()
-      ..color = const Color(0x80000000)
-      ..style = PaintingStyle.fill;
-    _drawClippedPolygon(canvas, viewProj, size, innerVerts, innerPaint);
-  }
-
-  void _drawTireContactPatches(
-    Canvas canvas,
-    Size size,
-    Mat4 viewProj,
-  ) {
-    const groundY = 0.005; // Slightly above chassis shadow
-    final carX = sim.position.x;
-    final carZ = sim.position.z;
-    final yaw = sim.yaw;
-    final steer = sim.steerAngle;
-
-    final cy = cos(yaw);
-    final sy = sin(yaw);
-
-    // Wheel offsets in local car space: [lx, lz, isSteered]
-    final wheels = [
-      (-0.98, -1.25, true),  // Front Left
-      (0.98, -1.25, true),   // Front Right
-      (-0.98, 1.25, false),  // Rear Left
-      (0.98, 1.25, false),   // Rear Right
-    ];
-
-    const tireHalfW = 0.15; // 30cm wide tire
-    const tireHalfL = 0.32; // 64cm contact patch
-
-    for (final (lx, lz, isSteered) in wheels) {
-      // World position of wheel center on ground
-      final wx = carX - lx * cy - lz * sy;
-      final wz = carZ - lx * sy + lz * cy;
-
-      // Wheel total orientation angle
-      final wheelAngle = yaw + (isSteered ? steer : 0.0);
-      final cwa = cos(wheelAngle);
-      final swa = sin(wheelAngle);
-
-      // 8-point rounded tire footprint polygon
-      const patchSegments = 8;
-      final patchVerts = <Vec3>[];
-      for (var i = 0; i < patchSegments; i++) {
-        final a = i * 2 * pi / patchSegments;
-        final px = sin(a) * tireHalfW;
-        final pz = cos(a) * tireHalfL;
-
-        final fx = wx - px * cwa - pz * swa;
-        final fz = wz - px * swa + pz * cwa;
-        patchVerts.add(Vec3(fx, groundY, fz));
-      }
-
-      // Outer soft rubber contact edge
-      final tireGlowPaint = Paint()
-        ..color = const Color(0x55000000)
-        ..style = PaintingStyle.fill;
-      _drawClippedPolygon(canvas, viewProj, size, patchVerts, tireGlowPaint);
-
-      // Dense inner rubber contact patch (where tire physically presses tarmac)
-      final innerVerts = patchVerts.map((v) {
-        return Vec3(
-          wx + (v.x - wx) * 0.72,
-          groundY + 0.001,
-          wz + (v.z - wz) * 0.72,
-        );
-      }).toList();
-
-      final tireCorePaint = Paint()
-        ..color = const Color(0xD0000000)
-        ..style = PaintingStyle.fill;
-      _drawClippedPolygon(canvas, viewProj, size, innerVerts, tireCorePaint);
+      canvas.drawPath(shadowPath, shadowPaint);
     }
   }
 
