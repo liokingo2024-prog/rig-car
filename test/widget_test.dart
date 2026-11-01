@@ -465,5 +465,32 @@ void main() {
 
       expect(find.byTooltip('Controls: Inverted (Click for Natural)'), findsOneWidget);
     });
+
+    testWidgets('cycles and switches land grid styles in 3D wireframe viewer',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: false),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Initially CAD Grid is selected
+      expect(find.text('CAD Grid'), findsOneWidget);
+
+      // Cycle to Radial Podium
+      final cycleButton = find.byTooltip('Cycle Land Grid (Radial Podium)');
+      expect(cycleButton, findsOneWidget);
+
+      await tester.tap(cycleButton);
+      await tester.pump();
+
+      expect(find.text('Radial'), findsOneWidget);
+    });
   });
 }

@@ -12,6 +12,24 @@ import 'model_data.dart';
 
 enum CameraPreset { iso, front, side, top }
 
+enum GroundGridStyle {
+  cad('CAD Studio', 'CAD Grid', Icons.grid_4x4_rounded),
+  radial('Radial Podium', 'Radial', Icons.motion_photos_on_rounded),
+  hex('Cyber Hex', 'Hex Grid', Icons.hive_rounded),
+  checker('Proving Skidpad', 'Skidpad', Icons.grid_view_rounded),
+  off('Minimal Floor (Off)', 'Off', Icons.grid_off_rounded);
+
+  const GroundGridStyle(this.label, this.shortName, this.icon);
+  final String label;
+  final String shortName;
+  final IconData icon;
+
+  GroundGridStyle get next {
+    final idx = (index + 1) % GroundGridStyle.values.length;
+    return GroundGridStyle.values[idx];
+  }
+}
+
 class WireframeViewer extends StatefulWidget {
   const WireframeViewer({
     super.key,
@@ -56,7 +74,8 @@ class _WireframeViewerState extends State<WireframeViewer>
   double _panY = 0;
 
   bool _showMarkers = true;
-  bool _showGrid = true;
+  GroundGridStyle _gridStyle = GroundGridStyle.cad;
+  bool get _showGrid => _gridStyle != GroundGridStyle.off;
   bool _invertDrag = false;
   final bool _denseWireframe = true;
 
@@ -175,6 +194,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                         target: _target,
                         panX: _panX,
                         panY: _panY,
+                        gridStyle: _gridStyle,
                         showGrid: _showGrid,
                         showMarkers: _showMarkers,
                         denseWireframe: _denseWireframe,
@@ -362,17 +382,108 @@ class _WireframeViewerState extends State<WireframeViewer>
                   onPressed: () =>
                       setState(() => _showMarkers = !_showMarkers),
                 ),
-                IconButton(
-                  iconSize: 18,
-                  visualDensity: VisualDensity.compact,
-                  tooltip: _showGrid ? 'Hide Grid' : 'Show Grid',
-                  icon: Icon(
-                    _showGrid ? Icons.grid_4x4_rounded : Icons.grid_off_rounded,
-                    color: _showGrid
-                        ? const Color(0xFF8BA2B0)
-                        : const Color(0xFF71818B),
+                // Land Grid Style Selector (CAD, Radial Podium, Cyber Hex, Skidpad, Off)
+                PopupMenuButton<GroundGridStyle>(
+                  tooltip: 'Land Grid: ${_gridStyle.label} (Click to choose)',
+                  initialValue: _gridStyle,
+                  onSelected: (style) => setState(() => _gridStyle = style),
+                  color: const Color(0xFF111714),
+                  surfaceTintColor: Colors.transparent,
+                  shadowColor: Colors.black87,
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: const BorderSide(color: Color(0xFF223127)),
                   ),
-                  onPressed: () => setState(() => _showGrid = !_showGrid),
+                  itemBuilder: (context) => GroundGridStyle.values.map((style) {
+                    final isSel = style == _gridStyle;
+                    return PopupMenuItem<GroundGridStyle>(
+                      value: style,
+                      height: 38,
+                      child: Row(
+                        children: [
+                          Icon(
+                            style.icon,
+                            size: 16,
+                            color: isSel
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFF86978C),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            style.label,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight:
+                                  isSel ? FontWeight.w700 : FontWeight.w500,
+                              color: isSel
+                                  ? const Color(0xFFF0FDF4)
+                                  : const Color(0xFFC9D1D9),
+                            ),
+                          ),
+                          if (isSel) ...[
+                            const Spacer(),
+                            const Icon(Icons.check,
+                                size: 14, color: Color(0xFF10B981)),
+                          ],
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xC0111714),
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(
+                        color: _gridStyle != GroundGridStyle.off
+                            ? const Color(0xFF10B981).withValues(alpha: 0.6)
+                            : const Color(0xFF223127),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _gridStyle.icon,
+                          size: 14,
+                          color: _gridStyle != GroundGridStyle.off
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFF71818B),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          _gridStyle.shortName,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: _gridStyle != GroundGridStyle.off
+                                ? const Color(0xFF34D399)
+                                : const Color(0xFF71818B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 13,
+                          color: _gridStyle != GroundGridStyle.off
+                              ? const Color(0xFF34D399)
+                              : const Color(0xFF71818B),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                IconButton(
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Cycle Land Grid (${_gridStyle.next.label})',
+                  icon: const Icon(Icons.swap_horiz_rounded),
+                  color: const Color(0xFF8BA2B0),
+                  onPressed: () => setState(() => _gridStyle = _gridStyle.next),
                 ),
                 IconButton(
                   iconSize: 18,
@@ -579,6 +690,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.target,
     required this.panX,
     required this.panY,
+    this.gridStyle = GroundGridStyle.cad,
     required this.showGrid,
     required this.showMarkers,
     required this.denseWireframe,
@@ -599,6 +711,7 @@ class _WireframeScenePainter extends CustomPainter {
   final Vec3 target;
   final double panX;
   final double panY;
+  final GroundGridStyle gridStyle;
   final bool showGrid;
   final bool showMarkers;
   final bool denseWireframe;
@@ -646,34 +759,8 @@ class _WireframeScenePainter extends CustomPainter {
       return Offset(sx, sy);
     }
 
-    // ── 1. Draw 3D Ground Grid ──────────────────────────────────────────────
-    if (showGrid) {
-      final gridPaint = Paint()
-        ..color = const Color(0x1F455A64)
-        ..strokeWidth = 1.0;
-      final axisPaint = Paint()
-        ..color = const Color(0x35607D8B)
-        ..strokeWidth = 1.2;
-
-      final groundY = model?.worldBBox.lo.y ?? 0.0;
-      const extent = 4.0;
-      const step = 0.5;
-
-      for (var x = -extent; x <= extent; x += step) {
-        final p0 = projectPoint(Vec3(x, groundY, -extent));
-        final p1 = projectPoint(Vec3(x, groundY, extent));
-        if (p0 != null && p1 != null) {
-          canvas.drawLine(p0, p1, x == 0 ? axisPaint : gridPaint);
-        }
-      }
-      for (var z = -extent; z <= extent; z += step) {
-        final p0 = projectPoint(Vec3(-extent, groundY, z));
-        final p1 = projectPoint(Vec3(extent, groundY, z));
-        if (p0 != null && p1 != null) {
-          canvas.drawLine(p0, p1, z == 0 ? axisPaint : gridPaint);
-        }
-      }
-    }
+    // ── 1. Draw 3D Ground Surface Grid ───────────────────────────────────────
+    _drawGroundSurface(canvas, size, projectPoint);
 
     // ── 2. Draw Model Wireframe OR Procedural Rig ────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
@@ -686,6 +773,310 @@ class _WireframeScenePainter extends CustomPainter {
     if (showMarkers) {
       _drawMarkers(canvas, size, projectPoint);
     }
+  }
+
+  void _drawGroundSurface(
+    Canvas canvas,
+    Size size,
+    Offset? Function(Vec3) project,
+  ) {
+    final groundY = model?.worldBBox.lo.y ?? 0.0;
+
+    // Contact shadow beneath car chassis is always rendered for depth
+    _drawContactShadow(canvas, project, groundY);
+
+    if (gridStyle == GroundGridStyle.off) return;
+
+    switch (gridStyle) {
+      case GroundGridStyle.cad:
+        _drawCadGrid(canvas, project, groundY);
+      case GroundGridStyle.radial:
+        _drawRadialGrid(canvas, project, groundY);
+      case GroundGridStyle.hex:
+        _drawHexGrid(canvas, project, groundY);
+      case GroundGridStyle.checker:
+        _drawCheckerGrid(canvas, project, groundY);
+      case GroundGridStyle.off:
+        break;
+    }
+  }
+
+  void _drawContactShadow(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+  ) {
+    final bbox = model?.worldBBox;
+    final minX = bbox != null ? bbox.lo.x * 0.95 : -0.85;
+    final maxX = bbox != null ? bbox.hi.x * 0.95 : 0.85;
+    final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.6;
+    final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.6;
+
+    final p0 = project(Vec3(minX, groundY, minZ));
+    final p1 = project(Vec3(maxX, groundY, minZ));
+    final p2 = project(Vec3(maxX, groundY, maxZ));
+    final p3 = project(Vec3(minX, groundY, maxZ));
+
+    if (p0 != null && p1 != null && p2 != null && p3 != null) {
+      final shadowPath = Path()
+        ..moveTo(p0.dx, p0.dy)
+        ..lineTo(p1.dx, p1.dy)
+        ..lineTo(p2.dx, p2.dy)
+        ..lineTo(p3.dx, p3.dy)
+        ..close();
+      final shadowPaint = Paint()
+        ..color = const Color(0x35000000)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(shadowPath, shadowPaint);
+    }
+  }
+
+  void _drawCadGrid(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+  ) {
+    final minorGridPaint = Paint()
+      ..color = const Color(0x1834D399)
+      ..strokeWidth = 1.0;
+    final majorGridPaint = Paint()
+      ..color = const Color(0x3510B981)
+      ..strokeWidth = 1.2;
+    final axisXPaint = Paint()
+      ..color = const Color(0x7034D399)
+      ..strokeWidth = 1.6;
+    final axisZPaint = Paint()
+      ..color = const Color(0x9010B981)
+      ..strokeWidth = 1.8;
+
+    const extent = 5.0;
+    const step = 0.5;
+
+    for (var x = -extent; x <= extent; x += step) {
+      final isMajor = (x.abs() - x.abs().round()).abs() < 0.05;
+      final isAxis = x.abs() < 0.05;
+      final p0 = project(Vec3(x, groundY, -extent));
+      final p1 = project(Vec3(x, groundY, extent));
+      if (p0 != null && p1 != null) {
+        canvas.drawLine(
+          p0,
+          p1,
+          isAxis ? axisZPaint : (isMajor ? majorGridPaint : minorGridPaint),
+        );
+      }
+    }
+    for (var z = -extent; z <= extent; z += step) {
+      final isMajor = (z.abs() - z.abs().round()).abs() < 0.05;
+      final isAxis = z.abs() < 0.05;
+      final p0 = project(Vec3(-extent, groundY, z));
+      final p1 = project(Vec3(extent, groundY, z));
+      if (p0 != null && p1 != null) {
+        canvas.drawLine(
+          p0,
+          p1,
+          isAxis ? axisXPaint : (isMajor ? majorGridPaint : minorGridPaint),
+        );
+      }
+    }
+
+    // Outer boundary frame
+    final b0 = project(Vec3(-extent, groundY, -extent));
+    final b1 = project(Vec3(extent, groundY, -extent));
+    final b2 = project(Vec3(extent, groundY, extent));
+    final b3 = project(Vec3(-extent, groundY, extent));
+    if (b0 != null && b1 != null && b2 != null && b3 != null) {
+      final framePaint = Paint()
+        ..color = const Color(0x4010B981)
+        ..strokeWidth = 1.3;
+      canvas.drawLine(b0, b1, framePaint);
+      canvas.drawLine(b1, b2, framePaint);
+      canvas.drawLine(b2, b3, framePaint);
+      canvas.drawLine(b3, b0, framePaint);
+    }
+  }
+
+  void _drawRadialGrid(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+  ) {
+    final ringPaint = Paint()
+      ..color = const Color(0x2810B981)
+      ..strokeWidth = 1.1
+      ..style = PaintingStyle.stroke;
+    final rimPaint = Paint()
+      ..color = const Color(0x6034D399)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke;
+    final spokePaint = Paint()
+      ..color = const Color(0x2034D399)
+      ..strokeWidth = 1.0;
+    final axisSpokePaint = Paint()
+      ..color = const Color(0x5010B981)
+      ..strokeWidth = 1.4;
+
+    final radii = [0.8, 1.6, 2.5, 3.5, 4.6];
+    const segments = 36;
+
+    // Concentric turntable rings
+    for (var rIdx = 0; rIdx < radii.length; rIdx++) {
+      final r = radii[rIdx];
+      final isOuterRim = rIdx == radii.length - 1;
+      final paint = isOuterRim ? rimPaint : ringPaint;
+
+      Offset? prev;
+      Offset? first;
+      for (var i = 0; i <= segments; i++) {
+        final angle = i * 2 * pi / segments;
+        final curr = project(Vec3(r * cos(angle), groundY, r * sin(angle)));
+        if (curr != null) {
+          first ??= curr;
+          if (prev != null) {
+            canvas.drawLine(prev, curr, paint);
+          }
+          prev = curr;
+        }
+      }
+      if (prev != null && first != null) {
+        canvas.drawLine(prev, first, paint);
+      }
+    }
+
+    // 12 Radial turntable spokes
+    const spokeCount = 12;
+    final maxR = radii.last;
+    for (var i = 0; i < spokeCount; i++) {
+      final angle = i * 2 * pi / spokeCount;
+      final isCardinal = i % 3 == 0;
+      final p0 = project(Vec3(0, groundY, 0));
+      final p1 = project(Vec3(maxR * cos(angle), groundY, maxR * sin(angle)));
+      if (p0 != null && p1 != null) {
+        canvas.drawLine(p0, p1, isCardinal ? axisSpokePaint : spokePaint);
+      }
+    }
+
+    // Degree tick marks on 3.5m ring
+    const tickR1 = 3.35;
+    const tickR2 = 3.65;
+    const tickCount = 24;
+    final tickPaint = Paint()
+      ..color = const Color(0x4034D399)
+      ..strokeWidth = 1.0;
+    for (var i = 0; i < tickCount; i++) {
+      final angle = i * 2 * pi / tickCount;
+      final t0 = project(Vec3(tickR1 * cos(angle), groundY, tickR1 * sin(angle)));
+      final t1 = project(Vec3(tickR2 * cos(angle), groundY, tickR2 * sin(angle)));
+      if (t0 != null && t1 != null) {
+        canvas.drawLine(t0, t1, tickPaint);
+      }
+    }
+  }
+
+  void _drawHexGrid(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+  ) {
+    final hexPaint = Paint()
+      ..color = const Color(0x2210B981)
+      ..strokeWidth = 1.0;
+    final hexCenterPaint = Paint()
+      ..color = const Color(0x4534D399)
+      ..strokeWidth = 1.2;
+    final dotPaint = Paint()
+      ..color = const Color(0x5510B981)
+      ..style = PaintingStyle.fill;
+
+    const r = 0.65;
+    const dx = 1.5 * r;
+    const dz = 1.73205 * r;
+    const range = 3;
+
+    for (var q = -range; q <= range; q++) {
+      for (var rCol = -range; rCol <= range; rCol++) {
+        final cx = q * dx;
+        final cz = (rCol * dz) + (q.abs() % 2 == 1 ? dz * 0.5 : 0.0);
+        final dist = sqrt(cx * cx + cz * cz);
+        if (dist > 4.5) continue;
+
+        final isCenter = dist < 1.5;
+        final currentPaint = isCenter ? hexCenterPaint : hexPaint;
+
+        Offset? prev;
+        Offset? first;
+        for (var i = 0; i < 6; i++) {
+          final a0 = i * pi / 3.0;
+          final p = project(Vec3(cx + r * cos(a0), groundY, cz + r * sin(a0)));
+          if (p != null) {
+            first ??= p;
+            if (prev != null) {
+              canvas.drawLine(prev, p, currentPaint);
+            }
+            prev = p;
+            if (isCenter) {
+              canvas.drawCircle(p, 1.2, dotPaint);
+            }
+          }
+        }
+        if (prev != null && first != null) {
+          canvas.drawLine(prev, first, currentPaint);
+        }
+      }
+    }
+  }
+
+  void _drawCheckerGrid(
+    Canvas canvas,
+    Offset? Function(Vec3) project,
+    double groundY,
+  ) {
+    const extent = 4.0;
+    const step = 1.0;
+
+    final fillPaintA = Paint()
+      ..color = const Color(0x1610B981)
+      ..style = PaintingStyle.fill;
+    final fillPaintB = Paint()
+      ..color = const Color(0x0610B981)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = const Color(0x2834D399)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+    final centerCrossPaint = Paint()
+      ..color = const Color(0x6010B981)
+      ..strokeWidth = 1.6;
+
+    for (var x = -extent; x < extent; x += step) {
+      for (var z = -extent; z < extent; z += step) {
+        final isEven =
+            (((x + extent) / step).round() + ((z + extent) / step).round()) %
+                    2 ==
+                0;
+        final p0 = project(Vec3(x, groundY, z));
+        final p1 = project(Vec3(x + step, groundY, z));
+        final p2 = project(Vec3(x + step, groundY, z + step));
+        final p3 = project(Vec3(x, groundY, z + step));
+
+        if (p0 != null && p1 != null && p2 != null && p3 != null) {
+          final path = Path()
+            ..moveTo(p0.dx, p0.dy)
+            ..lineTo(p1.dx, p1.dy)
+            ..lineTo(p2.dx, p2.dy)
+            ..lineTo(p3.dx, p3.dy)
+            ..close();
+          canvas.drawPath(path, isEven ? fillPaintA : fillPaintB);
+          canvas.drawPath(path, borderPaint);
+        }
+      }
+    }
+
+    final x0 = project(Vec3(-extent, groundY, 0));
+    final x1 = project(Vec3(extent, groundY, 0));
+    final z0 = project(Vec3(0, groundY, -extent));
+    final z1 = project(Vec3(0, groundY, extent));
+    if (x0 != null && x1 != null) canvas.drawLine(x0, x1, centerCrossPaint);
+    if (z0 != null && z1 != null) canvas.drawLine(z0, z1, centerCrossPaint);
   }
 
   void _drawModelWireframe(
