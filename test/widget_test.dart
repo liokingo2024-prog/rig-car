@@ -1,9 +1,9 @@
-import 'dart:ui';
-
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
+import 'package:rig_car/pre_rigged_cars.dart';
 
 void main() {
   group('3D Math & Matrix', () {
@@ -17,13 +17,13 @@ void main() {
     });
 
     test('Mat4 lookAt & perspective transform', () {
-      final eye = const Vec3(0, 0, 5);
-      final target = Vec3.zero;
+      const eye = Vec3(0, 0, 5);
+      const target = Vec3.zero;
       final view = Mat4.lookAt(eye, target, const Vec3(0, 1, 0));
       final proj = Mat4.perspective(1.0, 1.0, 0.1, 100.0);
       final vp = proj * view;
 
-      final p = const Vec3(0, 0, 0);
+      const p = Vec3(0, 0, 0);
       final clip = vp.transformClip(p);
       expect(clip[3] > 0, isTrue); // In front of camera
     });
@@ -98,7 +98,6 @@ void main() {
         ),
       ];
 
-      // Compute world transforms
       for (final n in nodes) {
         n.worldTransform = n.localTransform;
       }
@@ -106,7 +105,7 @@ void main() {
       final bodyMesh = MeshData(
         index: 0,
         name: 'BodyMesh',
-        vertices: [const Vec3(-1, 0, -2), const Vec3(1, 1.5, 2)],
+        vertices: const [Vec3(-1, 0, -2), Vec3(1, 1.5, 2)],
         edges: [Edge(0, 1)],
         bbox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1.5, 2)),
       );
@@ -114,7 +113,7 @@ void main() {
       final wheelMesh = MeshData(
         index: 1,
         name: 'WheelMesh',
-        vertices: [const Vec3(-0.2, -0.3, -0.2), const Vec3(0.2, 0.3, 0.2)],
+        vertices: const [Vec3(-0.2, -0.3, -0.2), Vec3(0.2, 0.3, 0.2)],
         edges: [Edge(0, 1)],
         bbox: const BBox(Vec3(-0.2, -0.3, -0.2), Vec3(0.2, 0.3, 0.2)),
       );
@@ -144,7 +143,7 @@ void main() {
     });
 
     test('RigConfig exports real wheel coordinates', () {
-      final config = RigConfig(
+      const config = RigConfig(
         modelName: 'race_car.glb',
         presetName: 'Sports coupe',
         drive: 'RWD',
@@ -158,10 +157,10 @@ void main() {
         frontTraction: false,
         rearTraction: true,
         wheelPositions: [
-          const Vec3(-0.82, 0.31, -1.38),
-          const Vec3(0.82, 0.31, -1.38),
-          const Vec3(-0.84, 0.31, 1.42),
-          const Vec3(0.84, 0.31, 1.42),
+          Vec3(-0.82, 0.31, -1.38),
+          Vec3(0.82, 0.31, -1.38),
+          Vec3(-0.84, 0.31, 1.42),
+          Vec3(0.84, 0.31, 1.42),
         ],
       );
 
@@ -173,6 +172,51 @@ void main() {
       final json = config.toJson();
       expect(json['model'], 'race_car.glb');
     });
+
+    test('PreRiggedCar exports valid Godot config', () {
+      final car = preRiggedCars.first;
+      final config = car.toRigConfig();
+      expect(config.modelName, 'Apex GT Coupe.glb');
+      expect(config.wheelPositions?.length, 4);
+      expect(config.toTscn().contains('VehicleBody3D'), isTrue);
+    });
+  });
+
+  group('Fleet Library Home Screen', () {
+    testWidgets('renders fleet library home screen with cards', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const RigCarApp());
+
+      expect(find.text('RIG-CAR'), findsWidgets);
+      expect(find.text('PRE-RIGGED VEHICLE FLEET'), findsOneWidget);
+      expect(find.text('Apex GT Coupe'), findsOneWidget);
+      expect(find.text('Vanguard 4x4 Trail'), findsOneWidget);
+      expect(find.text('Rig Your Car'), findsWidgets);
+    });
+
+    testWidgets('navigates from home screen to workbench via "Rig Your Car"',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const RigCarApp());
+
+      // Tap top Rig Your Car button
+      await tester.tap(find.text('Rig Your Car').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('CAR RIGGER'), findsOneWidget);
+      expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
+
+      // Back button exists and navigates back
+      expect(find.text('Fleet Library'), findsWidgets);
+    });
   });
 
   group('UI Workbench Flow', () {
@@ -183,7 +227,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(const RigCarApp());
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
 
       expect(find.text('RIG-CAR'), findsWidgets);
       expect(find.text('CAR RIGGER'), findsOneWidget);
@@ -191,8 +235,8 @@ void main() {
       expect(find.text('Procedural 3D Rig'), findsOneWidget);
     });
 
-    testWidgets('switches between workflow steps', (tester) async {
-      await tester.pumpWidget(const RigCarApp());
+    testWidgets('switches between workflow steps in workbench', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
 
       // Tap Step 2: Review Detections
       await tester.tap(find.text('2  Review Rig'));

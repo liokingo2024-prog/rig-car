@@ -6,7 +6,9 @@ import 'auto_detector.dart';
 import 'download_config.dart';
 import 'file_picker.dart';
 import 'glb_parser.dart';
+import 'home_screen.dart';
 import 'model_data.dart';
+import 'pre_rigged_cars.dart';
 import 'wireframe_viewer.dart';
 
 void main() {
@@ -20,7 +22,7 @@ class RigCarApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const ink = Color(0xFFE9EEF2);
     return MaterialApp(
-      title: 'RIG-CAR Auto-Rigger',
+      title: 'RIG-CAR Fleet & Auto-Rigger',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -75,13 +77,15 @@ class RigCarApp extends StatelessWidget {
           labelSmall: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
         ),
       ),
-      home: const RigWorkbenchPage(),
+      home: const RigHomeScreen(),
     );
   }
 }
 
 class RigWorkbenchPage extends StatefulWidget {
-  const RigWorkbenchPage({super.key});
+  const RigWorkbenchPage({super.key, this.initialCar});
+
+  final PreRiggedCar? initialCar;
 
   @override
   State<RigWorkbenchPage> createState() => _RigWorkbenchPageState();
@@ -114,6 +118,61 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     'RL': null,
     'RR': null,
   };
+
+  @override
+  void initState() {
+    super.initState();
+    final car = widget.initialCar;
+    if (car != null) {
+      _modelName = '${car.name} (Pre-rigged)';
+      _drive = car.drive;
+      _mass = car.mass;
+      _engineForce = car.engineForce;
+      _grip = car.grip;
+      _suspension = car.suspension;
+      _centerOfMass = car.centerOfMass;
+      _frontSteering = car.frontSteering;
+      _rearSteering = car.rearSteering;
+      _frontTraction = car.frontTraction;
+      _rearTraction = car.rearTraction;
+
+      if (car.wheelPositions.length >= 4) {
+        _assignedWheels['FL'] = DetectedWheel(
+          nodeIndex: 0,
+          nodeName: 'Wheel_FL',
+          worldPosition: car.wheelPositions[0],
+          confidence: 1.0,
+          axle: 'front',
+          side: 'left',
+        );
+        _assignedWheels['FR'] = DetectedWheel(
+          nodeIndex: 1,
+          nodeName: 'Wheel_FR',
+          worldPosition: car.wheelPositions[1],
+          confidence: 1.0,
+          axle: 'front',
+          side: 'right',
+        );
+        _assignedWheels['RL'] = DetectedWheel(
+          nodeIndex: 2,
+          nodeName: 'Wheel_RL',
+          worldPosition: car.wheelPositions[2],
+          confidence: 1.0,
+          axle: 'rear',
+          side: 'left',
+        );
+        _assignedWheels['RR'] = DetectedWheel(
+          nodeIndex: 3,
+          nodeName: 'Wheel_RR',
+          worldPosition: car.wheelPositions[3],
+          confidence: 1.0,
+          axle: 'rear',
+          side: 'right',
+        );
+      }
+      _activeStep = 3; // Jump straight to physics tuning
+    }
+  }
 
   Future<void> _pickModel() async {
     try {
@@ -478,7 +537,42 @@ class _DesktopSidebar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _Brand(),
-          const SizedBox(height: 36),
+          const SizedBox(height: 16),
+          InkWell(
+            onTap: () {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const RigHomeScreen()),
+                );
+              }
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF19252E),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF2B3A44)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.arrow_back_rounded, size: 14, color: Color(0xFFFF986D)),
+                  SizedBox(width: 8),
+                  Text(
+                    'Fleet Library',
+                    style: TextStyle(
+                      color: Color(0xFFD4DFE5),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
           const _SmallLabel('MIXAMO AUTO-RIGGER'),
           const SizedBox(height: 10),
           _SidebarStep(
@@ -585,6 +679,20 @@ class _DesktopTopbar extends StatelessWidget {
       ),
       child: Row(
         children: [
+          IconButton(
+            tooltip: 'Back to Fleet Library',
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFFBAC7CE)),
+            onPressed: () {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const RigHomeScreen()),
+                );
+              }
+            },
+          ),
+          const SizedBox(width: 8),
           const Text(
             'CAR RIGGER',
             style: TextStyle(
@@ -656,6 +764,20 @@ class _MobileHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
+          IconButton(
+            tooltip: 'Back to Fleet Library',
+            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFFBAC7CE)),
+            onPressed: () {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const RigHomeScreen()),
+                );
+              }
+            },
+          ),
+          const SizedBox(width: 6),
           const _Brand(),
           const Spacer(),
           IconButton(

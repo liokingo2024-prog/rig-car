@@ -1,14 +1,14 @@
-# RIG-CAR Auto-Rigger
+# RIG-CAR Auto-Rigger & Fleet Library
 
-RIG-CAR is an automated, Mixamo-style 3D car rigging workbench for Godot 4.
-Drop any `.glb` or `.gltf` vehicle asset into the browser, and RIG-CAR parses the
-binary scene graph, auto-detects wheels, axles, car body, and drivetrain topology,
-renders an interactive 3D wireframe preview with part markers, allows human-assist
-review/reassignment, and exports a production-ready Godot 4 vehicle rig with
-**actual model wheel coordinates**.
+RIG-CAR is an automated, Mixamo-style 3D car rigging workbench and fleet library for Godot 4.
+Browse and export pre-calibrated vehicles (Sports, Off-Road, Utility, Electric), or drop any
+`.glb` or `.gltf` vehicle asset into the browser to auto-detect wheels, axles, body, and drivetrain
+with an interactive 3D wireframe preview and human-assist review.
 
 ## Features
 
+- **Pre-rigged Vehicle Fleet**: Browse ready-to-use car rigs (Apex GT, Vanguard 4x4, Phantom Hyper-EV, Titan Cargo, RallyCross RS, Metro Shuttle) with instant Godot 4 export or workbench tuning.
+- **Mixamo-style Auto-Rigger**: One-click "Rig Your Car" flow to upload custom 3D car models.
 - **Binary GLB/glTF parser**: decodes nodes, transforms, meshes, primitives, and accessors directly in the browser.
 - **Auto-detection heuristics**: detects 4 wheels by name, position, and symmetry; isolates the car body mesh; estimates vehicle mass and archetype.
 - **Interactive 3D wireframe viewport**: orbit, zoom, pan, camera presets (ISO, Front, Side, Top), 3D ground grid, and 3D wheel/CoM markers.
