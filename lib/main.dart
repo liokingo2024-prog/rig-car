@@ -305,111 +305,59 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               onStepSelected: _selectStep,
                             ),
                           Expanded(
-                            child: SingleChildScrollView(
-                              padding: EdgeInsets.fromLTRB(
-                                desktop ? 24 : 16,
-                                desktop ? 20 : 16,
-                                desktop ? 24 : 16,
-                                28,
-                              ),
-                              child: tablet && desktop
-                                  ? Row(
+                            child: tablet && desktop
+                                ? Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      20,
+                                      24,
+                                      20,
+                                    ),
+                                    child: Row(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.stretch,
                                       children: [
+                                        // 3D Viewport stays anchored and fills available height
                                         Expanded(
-                                          child: SizedBox(
-                                            height: 520,
-                                            child: WireframeViewer(
-                                              model: _parsedModel,
-                                              detection: _detection,
-                                              selectedNodeIndex:
-                                                  _selectedNodeIndex,
-                                              onNodeSelected: (idx) {
-                                                setState(() =>
-                                                    _selectedNodeIndex = idx);
-                                              },
-                                              accentColor: _preset.accent,
-                                              centerOfMassY: _centerOfMass,
-                                            ),
+                                          child: WireframeViewer(
+                                            model: _parsedModel,
+                                            detection: _detection,
+                                            selectedNodeIndex:
+                                                _selectedNodeIndex,
+                                            onNodeSelected: (idx) {
+                                              setState(() =>
+                                                  _selectedNodeIndex = idx);
+                                            },
+                                            accentColor: _preset.accent,
+                                            centerOfMassY: _centerOfMass,
                                           ),
                                         ),
                                         const SizedBox(width: 18),
+                                        // Right side inspector panel with independent scroll
                                         SizedBox(
-                                          width: 360,
-                                          child: _InspectorPanel(
-                                            activeStep: _activeStep,
-                                            preset: _preset,
-                                            modelName: _modelName,
-                                            parsedModel: _parsedModel,
-                                            detection: _detection,
-                                            assignedWheels: _assignedWheels,
-                                            drive: _drive,
-                                            mass: _mass,
-                                            engineForce: _engineForce,
-                                            grip: _grip,
-                                            suspension: _suspension,
-                                            centerOfMass: _centerOfMass,
-                                            frontSteering: _frontSteering,
-                                            rearSteering: _rearSteering,
-                                            frontTraction: _frontTraction,
-                                            rearTraction: _rearTraction,
-                                            onPickModel: _pickModel,
-                                            onReassignWheel: _reassignWheel,
-                                            onPresetChanged: (value) {
-                                              setState(() => _preset = value);
-                                            },
-                                            onDriveChanged: (value) {
-                                              setState(() => _drive = value);
-                                            },
-                                            onMassChanged: (value) {
-                                              setState(() => _mass = value);
-                                            },
-                                            onEngineForceChanged: (value) {
-                                              setState(
-                                                () => _engineForce = value,
-                                              );
-                                            },
-                                            onGripChanged: (value) {
-                                              setState(() => _grip = value);
-                                            },
-                                            onSuspensionChanged: (value) {
-                                              setState(
-                                                () => _suspension = value,
-                                              );
-                                            },
-                                            onCenterOfMassChanged: (value) {
-                                              setState(
-                                                () => _centerOfMass = value,
-                                              );
-                                            },
-                                            onFrontSteeringChanged: (value) {
-                                              setState(
-                                                () => _frontSteering = value,
-                                              );
-                                            },
-                                            onRearSteeringChanged: (value) {
-                                              setState(
-                                                () => _rearSteering = value,
-                                              );
-                                            },
-                                            onFrontTractionChanged: (value) {
-                                              setState(
-                                                () => _frontTraction = value,
-                                              );
-                                            },
-                                            onRearTractionChanged: (value) {
-                                              setState(
-                                                () => _rearTraction = value,
-                                              );
-                                            },
-                                            onExport: _exportGodotFiles,
-                                            onStepSelected: _selectStep,
+                                          width: 380,
+                                          child: Scrollbar(
+                                            thumbVisibility: true,
+                                            child: SingleChildScrollView(
+                                              padding: const EdgeInsets.only(
+                                                right: 8,
+                                                bottom: 24,
+                                              ),
+                                              child: _buildInspector(),
+                                            ),
                                           ),
                                         ),
                                       ],
-                                    )
-                                  : Column(
+                                    ),
+                                  )
+                                : SingleChildScrollView(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      16,
+                                      16,
+                                      28,
+                                    ),
+                                    child: Column(
                                       children: [
                                         SizedBox(
                                           height: 380,
@@ -427,78 +375,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                           ),
                                         ),
                                         const SizedBox(height: 16),
-                                        _InspectorPanel(
-                                          activeStep: _activeStep,
-                                          preset: _preset,
-                                          modelName: _modelName,
-                                          parsedModel: _parsedModel,
-                                          detection: _detection,
-                                          assignedWheels: _assignedWheels,
-                                          drive: _drive,
-                                          mass: _mass,
-                                          engineForce: _engineForce,
-                                          grip: _grip,
-                                          suspension: _suspension,
-                                          centerOfMass: _centerOfMass,
-                                          frontSteering: _frontSteering,
-                                          rearSteering: _rearSteering,
-                                          frontTraction: _frontTraction,
-                                          rearTraction: _rearTraction,
-                                          onPickModel: _pickModel,
-                                          onReassignWheel: _reassignWheel,
-                                          onPresetChanged: (value) {
-                                            setState(() => _preset = value);
-                                          },
-                                          onDriveChanged: (value) {
-                                            setState(() => _drive = value);
-                                          },
-                                          onMassChanged: (value) {
-                                            setState(() => _mass = value);
-                                          },
-                                          onEngineForceChanged: (value) {
-                                            setState(
-                                              () => _engineForce = value,
-                                            );
-                                          },
-                                          onGripChanged: (value) {
-                                            setState(() => _grip = value);
-                                          },
-                                          onSuspensionChanged: (value) {
-                                            setState(
-                                              () => _suspension = value,
-                                            );
-                                          },
-                                          onCenterOfMassChanged: (value) {
-                                            setState(
-                                              () => _centerOfMass = value,
-                                            );
-                                          },
-                                          onFrontSteeringChanged: (value) {
-                                            setState(
-                                              () => _frontSteering = value,
-                                            );
-                                          },
-                                          onRearSteeringChanged: (value) {
-                                            setState(
-                                              () => _rearSteering = value,
-                                            );
-                                          },
-                                          onFrontTractionChanged: (value) {
-                                            setState(
-                                              () => _frontTraction = value,
-                                            );
-                                          },
-                                          onRearTractionChanged: (value) {
-                                            setState(
-                                              () => _rearTraction = value,
-                                            );
-                                          },
-                                          onExport: _exportGodotFiles,
-                                          onStepSelected: _selectStep,
-                                        ),
+                                        _buildInspector(),
                                       ],
                                     ),
-                            ),
+                                  ),
                           ),
                         ],
                       ),
@@ -510,6 +390,64 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildInspector() {
+    return _InspectorPanel(
+      activeStep: _activeStep,
+      preset: _preset,
+      modelName: _modelName,
+      parsedModel: _parsedModel,
+      detection: _detection,
+      assignedWheels: _assignedWheels,
+      drive: _drive,
+      mass: _mass,
+      engineForce: _engineForce,
+      grip: _grip,
+      suspension: _suspension,
+      centerOfMass: _centerOfMass,
+      frontSteering: _frontSteering,
+      rearSteering: _rearSteering,
+      frontTraction: _frontTraction,
+      rearTraction: _rearTraction,
+      onPickModel: _pickModel,
+      onReassignWheel: _reassignWheel,
+      onPresetChanged: (value) {
+        setState(() => _preset = value);
+      },
+      onDriveChanged: (value) {
+        setState(() => _drive = value);
+      },
+      onMassChanged: (value) {
+        setState(() => _mass = value);
+      },
+      onEngineForceChanged: (value) {
+        setState(() => _engineForce = value);
+      },
+      onGripChanged: (value) {
+        setState(() => _grip = value);
+      },
+      onSuspensionChanged: (value) {
+        setState(() => _suspension = value);
+      },
+      onCenterOfMassChanged: (value) {
+        setState(() => _centerOfMass = value);
+      },
+      onFrontSteeringChanged: (value) {
+        setState(() => _frontSteering = value);
+      },
+      onRearSteeringChanged: (value) {
+        setState(() => _rearSteering = value);
+      },
+      onFrontTractionChanged: (value) {
+        setState(() => _frontTraction = value);
+      },
+      onRearTractionChanged: (value) {
+        setState(() => _rearTraction = value);
+      },
+      onExport: _exportGodotFiles,
+      onStepSelected: _selectStep,
     );
   }
 }
