@@ -40,7 +40,11 @@ class WireframeViewer extends StatefulWidget {
   State<WireframeViewer> createState() => _WireframeViewerState();
 }
 
-class _WireframeViewerState extends State<WireframeViewer> {
+class _WireframeViewerState extends State<WireframeViewer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animController;
+  bool _autoTurntable = false;
+
   // Camera spherical coordinates
   double _azimuth = 0.785; // 45 degrees
   double _elevation = 0.45; // ~26 degrees
@@ -58,6 +62,23 @@ class _WireframeViewerState extends State<WireframeViewer> {
   void initState() {
     super.initState();
     _resetCameraToModel();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..addListener(() {
+        if (_autoTurntable) {
+          setState(() {
+            _azimuth += 0.007;
+          });
+        }
+      });
+    _animController.repeat();
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
   }
 
   @override
@@ -137,26 +158,32 @@ class _WireframeViewerState extends State<WireframeViewer> {
                         .clamp(-1.5, 1.5);
                   });
                 },
-                child: CustomPaint(
-                  painter: _WireframeScenePainter(
-                    model: widget.model,
-                    detection: widget.detection,
-                    selectedNodeIndex: widget.selectedNodeIndex,
-                    azimuth: _azimuth,
-                    elevation: _elevation,
-                    distance: _distance,
-                    target: _target,
-                    panX: _panX,
-                    panY: _panY,
-                    showGrid: _showGrid,
-                    showMarkers: _showMarkers,
-                    denseWireframe: _denseWireframe,
-                    accentColor: widget.accentColor,
-                    bodyColor: widget.bodyColor,
-                    wheelColor: widget.wheelColor,
-                    wireColor: widget.wireColor,
-                    centerOfMassY: widget.centerOfMassY,
-                  ),
+                child: AnimatedBuilder(
+                  animation: _animController,
+                  builder: (context, _) {
+                    return CustomPaint(
+                      painter: _WireframeScenePainter(
+                        model: widget.model,
+                        detection: widget.detection,
+                        selectedNodeIndex: widget.selectedNodeIndex,
+                        azimuth: _azimuth,
+                        elevation: _elevation,
+                        distance: _distance,
+                        target: _target,
+                        panX: _panX,
+                        panY: _panY,
+                        showGrid: _showGrid,
+                        showMarkers: _showMarkers,
+                        denseWireframe: _denseWireframe,
+                        accentColor: widget.accentColor,
+                        bodyColor: widget.bodyColor,
+                        wheelColor: widget.wheelColor,
+                        wireColor: widget.wireColor,
+                        centerOfMassY: widget.centerOfMassY,
+                        pulseProgress: _animController.value,
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -201,11 +228,39 @@ class _WireframeViewerState extends State<WireframeViewer> {
                 IconButton.filledTonal(
                   iconSize: 16,
                   visualDensity: VisualDensity.compact,
+                  tooltip: _autoTurntable ? 'Pause Turntable' : 'Auto 360° Turntable',
+                  icon: Icon(
+                    _autoTurntable
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.rotate_right_rounded,
+                    color: _autoTurntable
+                        ? const Color(0xFFFF713D)
+                        : const Color(0xFFBAC7CE),
+                  ),
+                  onPressed: () =>
+                      setState(() => _autoTurntable = !_autoTurntable),
+                ),
+                const SizedBox(width: 4),
+                IconButton.filledTonal(
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
                   tooltip: 'Reset View',
                   icon: const Icon(Icons.refresh_rounded),
                   onPressed: () => setState(_resetCameraToModel),
                 ),
               ],
+            ),
+          ),
+
+          // ── HUD Telemetry Overlay ─────────────────────────────────────────
+          Positioned(
+            left: 14,
+            bottom: 42,
+            child: _TelemetryOverlay(
+              azimuth: _azimuth,
+              elevation: _elevation,
+              distance: _distance,
+              model: widget.model,
             ),
           ),
 
@@ -383,6 +438,74 @@ class _LegendItem extends StatelessWidget {
   }
 }
 
+class _TelemetryOverlay extends StatelessWidget {
+  const _TelemetryOverlay({
+    required this.azimuth,
+    required this.elevation,
+    required this.distance,
+    required this.model,
+  });
+
+  final double azimuth;
+  final double elevation;
+  final double distance;
+  final ParsedModel? model;
+
+  @override
+  Widget build(BuildContext context) {
+    final yawDeg = ((azimuth * 180 / pi) % 360).round();
+    final pitchDeg = (elevation * 180 / pi).round();
+    final bbox = model?.worldBBox;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xC010181F),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0x3300F5FF)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: const BoxDecoration(
+              color: Color(0xFF00F5FF),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'YAW $yawDeg°  •  PITCH $pitchDeg°  •  ${distance.toStringAsFixed(1)}m',
+            style: const TextStyle(
+              color: Color(0xFFB0C4CE),
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              fontFamily: 'monospace',
+            ),
+          ),
+          if (bbox != null) ...[
+            const SizedBox(width: 8),
+            Container(width: 1, height: 10, color: const Color(0xFF334652)),
+            const SizedBox(width: 8),
+            Text(
+              '${bbox.size.z.abs().toStringAsFixed(1)}L × ${bbox.size.x.abs().toStringAsFixed(1)}W × ${bbox.size.y.abs().toStringAsFixed(1)}H',
+              style: const TextStyle(
+                color: Color(0xFFFFB15C),
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ── Custom Painter ──────────────────────────────────────────────────────────
 
 class _WireframeScenePainter extends CustomPainter {
@@ -404,6 +527,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.wheelColor,
     required this.wireColor,
     required this.centerOfMassY,
+    this.pulseProgress = 0.0,
   });
 
   final ParsedModel? model;
@@ -423,6 +547,7 @@ class _WireframeScenePainter extends CustomPainter {
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
+  final double pulseProgress;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -487,6 +612,17 @@ class _WireframeScenePainter extends CustomPainter {
         if (p0 != null && p1 != null) {
           canvas.drawLine(p0, p1, z == 0 ? axisPaint : gridPaint);
         }
+      }
+
+      // Animated sweeping laser scan line across grid
+      final scanZ = -extent + (pulseProgress * 2.0 * extent);
+      final sp0 = projectPoint(Vec3(-extent, groundY, scanZ));
+      final sp1 = projectPoint(Vec3(extent, groundY, scanZ));
+      if (sp0 != null && sp1 != null) {
+        final laserPaint = Paint()
+          ..color = const Color(0x7000F5FF)
+          ..strokeWidth = 1.8;
+        canvas.drawLine(sp0, sp1, laserPaint);
       }
     }
 
@@ -681,6 +817,15 @@ class _WireframeScenePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5;
       canvas.drawCircle(pos, 8, ringPaint);
+
+      // Pulsing animated ring
+      final pulseRadius = 7.0 + pulseProgress * 13.0;
+      final pulseAlpha = (1.0 - pulseProgress).clamp(0.0, 1.0);
+      final pulsePaint = Paint()
+        ..color = wheelColor.withValues(alpha: pulseAlpha * 0.75)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6;
+      canvas.drawCircle(pos, pulseRadius, pulsePaint);
 
       // Label
       final span = TextSpan(

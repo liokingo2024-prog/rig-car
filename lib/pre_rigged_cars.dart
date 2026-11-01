@@ -60,6 +60,12 @@ class PreRiggedCar {
         rearTraction: rearTraction,
         wheelPositions: wheelPositions,
       );
+
+  int get estimatedHp => (engineForce * 0.72).round();
+  int get topSpeedKmh =>
+      (120 + (engineForce / mass) * 350).round().clamp(110, 360);
+  double get zeroToHundred =>
+      double.parse(((mass / engineForce) * 1.8).clamp(2.1, 9.8).toStringAsFixed(1));
 }
 
 const preRiggedCars = [

@@ -206,10 +206,12 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(const RigCarApp());
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Tap top Rig Your Car button
       await tester.tap(find.text('Rig Your Car').first);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('CAR RIGGER'), findsOneWidget);
       expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
@@ -228,6 +230,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('RIG-CAR'), findsWidgets);
       expect(find.text('CAR RIGGER'), findsOneWidget);
@@ -236,22 +239,31 @@ void main() {
     });
 
     testWidgets('switches between workflow steps in workbench', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Tap Step 2: Review Detections
-      await tester.tap(find.text('2  Review Rig'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review Detections'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Human-Assist Wheel Assignment'), findsOneWidget);
 
       // Tap Step 3: Tune physics
-      await tester.tap(find.text('3  Tune physics'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tune physics'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Vehicle Physics'), findsOneWidget);
       expect(find.text('Mass'), findsOneWidget);
 
       // Tap Step 4: Export to Godot
-      await tester.tap(find.text('4  Export to Godot'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.text('Export to Godot'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Godot 4 Rig Package'), findsOneWidget);
       expect(find.text('rig_car.tscn'), findsOneWidget);
     });

@@ -1324,15 +1324,18 @@ class _WheelAssignmentTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                _title,
-                style: const TextStyle(
-                  color: Color(0xFFE2E9EC),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  _title,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFE2E9EC),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               if (wheel != null)
                 Text(
                   '${(wheel!.confidence * 100).toInt()}% conf.',
@@ -1805,11 +1808,14 @@ class _SliderField extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text(
-              label,
-              style: const TextStyle(color: Color(0xFFD5DEE2), fontSize: 12),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFFD5DEE2), fontSize: 12),
+              ),
             ),
-            const Spacer(),
+            const SizedBox(width: 8),
             Text(
               '$valueText$suffix',
               style: const TextStyle(
