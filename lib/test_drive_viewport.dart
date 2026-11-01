@@ -1257,9 +1257,6 @@ class _TestDriveScenePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
 
-    // 1. Draw Sky & Sun / Environment Atmosphere
-    _drawSky(canvas, size);
-
     // 1. Determine Camera Matrix
     Vec3 eye;
     Vec3 target;
@@ -1300,124 +1297,319 @@ class _TestDriveScenePainter extends CustomPainter {
       return Offset(sx, sy);
     }
 
-    // 2. Draw Asphalt Runway & Grid
+    // 2. Draw Sky & Atmospheric Environment with Dynamic Horizon & Parallax Mountains
+    _drawAtmosphere(canvas, size, eye, target, viewProj);
+
+    // 3. Draw 3D Celestial Body (Fixed in World Space: Sun / Sunset / Moon)
+    _drawCelestialBody(canvas, size, eye, viewProj);
+
+    // 4. Draw Asphalt Runway & Proving Grounds Land
     _drawTrack(canvas, size, viewProj, projectPoint);
 
-    // 3. Draw Tire Skid Marks
+    // 5. Draw Tire Skid Marks
     _drawSkidMarks(canvas, projectPoint);
 
-    // 4. Draw Slalom Cones
+    // 6. Draw Slalom Cones
     _drawCones(canvas, projectPoint);
 
-    // 5. Draw Vehicle
+    // 7. Draw Vehicle
     _drawVehicle(canvas, size, projectPoint);
   }
 
-  void _drawSky(Canvas canvas, Size size) {
+  void _drawAtmosphere(
+    Canvas canvas,
+    Size size,
+    Vec3 eye,
+    Vec3 target,
+    Mat4 viewProj,
+  ) {
+    final look = (target - eye).normalized;
+    final lookH = Vec3(look.x, 0, look.z);
+    final lookHLen = sqrt(lookH.x * lookH.x + lookH.z * lookH.z);
+    final horizDir = (lookHLen > 0.001)
+        ? Vec3(lookH.x / lookHLen, 0, lookH.z / lookHLen)
+        : const Vec3(0, 0, -1);
+
+    final horizonWorld = eye + horizDir * 500.0;
+    final horizClip = viewProj.transformClip(horizonWorld);
+    double horizonY;
+    if (horizClip[3] > 0.05) {
+      horizonY =
+          (1.0 - (horizClip[1] / horizClip[3] * 0.5 + 0.5)) * size.height;
+    } else {
+      horizonY = size.height * 0.5;
+    }
+    horizonY = horizonY.clamp(size.height * 0.15, size.height * 0.85);
+
     switch (lighting) {
       case TestDriveLighting.day:
-        // Vibrant daytime sky gradient with bright horizon
         final skyPaint = Paint()
-          ..shader = const LinearGradient(
+          ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF0284C7), // Deep azure
-              Color(0xFF38BDF8), // Bright sky blue
-              Color(0xFFBAE6FD), // Light horizon
+            colors: const [
+              Color(0xFF0369A1), // Deep azure zenith
+              Color(0xFF0284C7),
+              Color(0xFF38BDF8), // Bright daytime sky
+              Color(0xFFBAE6FD), // Atmosphere haze
               Color(0xFFF1F5F9), // Horizon line
             ],
-            stops: [0.0, 0.40, 0.78, 1.0],
-          ).createShader(Offset.zero & size);
+            stops: const [0.0, 0.25, 0.55, 0.82, 1.0],
+          ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Bright Daylight Sun
-        final sunCenter = Offset(size.width * 0.76, size.height * 0.20);
-        final sunGlow = Paint()
-          ..shader = RadialGradient(
-            colors: const [
-              Color(0xFFFFFBEB),
-              Color(0x60FEF08A),
-              Color(0x00FEF08A),
-            ],
-          ).createShader(Rect.fromCircle(center: sunCenter, radius: 95));
-        canvas.drawCircle(sunCenter, 95, sunGlow);
-        canvas.drawCircle(
-            sunCenter, 18, Paint()..color = const Color(0xFFFFFBEB));
+        // Distant Mountain Silhouettes along the horizon
+        _drawParallaxMountains(
+          canvas,
+          size,
+          look,
+          horizonY,
+          const Color(0x50475569),
+          const Color(0x3064748B),
+        );
 
-        // Subtle cumulus cloud wisps near horizon
+        // Subtle cumulus cloud wisps drifting near horizon
         final cloudPaint = Paint()
-          ..color = const Color(0x30FFFFFF)
+          ..color = const Color(0x24FFFFFF)
           ..style = PaintingStyle.fill;
+        final cloudOffset = look.x * 120.0;
         canvas.drawOval(
           Rect.fromCenter(
-            center: Offset(size.width * 0.28, size.height * 0.44),
-            width: size.width * 0.35,
-            height: 18,
+            center: Offset(size.width * 0.25 + cloudOffset, horizonY - 45),
+            width: size.width * 0.38,
+            height: 22,
           ),
           cloudPaint,
         );
         canvas.drawOval(
           Rect.fromCenter(
-            center: Offset(size.width * 0.72, size.height * 0.48),
-            width: size.width * 0.42,
-            height: 22,
+            center: Offset(size.width * 0.75 + cloudOffset, horizonY - 32),
+            width: size.width * 0.45,
+            height: 26,
           ),
           cloudPaint,
         );
 
       case TestDriveLighting.sunset:
-        // Warm dusk automotive commercial lighting
         final skyPaint = Paint()
-          ..shader = const LinearGradient(
+          ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF1E1B4B), // Deep indigo dusk
+            colors: const [
+              Color(0xFF1E1B4B), // Deep indigo dusk zenith
+              Color(0xFF4C0519), // Midnight crimson
               Color(0xFF831843), // Rich magenta
-              Color(0xFFC2410C), // Amber orange
-              Color(0xFFFDE68A), // Golden horizon
+              Color(0xFFC2410C), // Deep amber
+              Color(0xFFFDE68A), // Glowing golden horizon
             ],
-            stops: [0.0, 0.38, 0.72, 1.0],
-          ).createShader(Offset.zero & size);
+            stops: const [0.0, 0.28, 0.52, 0.78, 1.0],
+          ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Low Golden Sunset
-        final sunCenter = Offset(size.width * 0.65, size.height * 0.46);
-        final sunGlow = Paint()
-          ..shader = RadialGradient(
-            colors: const [
-              Color(0xFFFFF7ED),
-              Color(0x80F97316),
-              Color(0x00F97316),
-            ],
-          ).createShader(Rect.fromCircle(center: sunCenter, radius: 120));
-        canvas.drawCircle(sunCenter, 120, sunGlow);
-        canvas.drawCircle(
-            sunCenter, 22, Paint()..color = const Color(0xFFFFF7ED));
+        // Dusk mountain range
+        _drawParallaxMountains(
+          canvas,
+          size,
+          look,
+          horizonY,
+          const Color(0x803B0764),
+          const Color(0x55581C87),
+        );
 
       case TestDriveLighting.night:
-        // Deep obsidian night with moon
         final skyPaint = Paint()
-          ..shader = const LinearGradient(
+          ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF090D0B), Color(0xFF040605)],
-          ).createShader(Offset.zero & size);
+            colors: const [
+              Color(0xFF020403), // Pure obsidian zenith
+              Color(0xFF050B08),
+              Color(0xFF09140E),
+              Color(0xFF0E1F16), // Horizon starlight rim
+            ],
+            stops: const [0.0, 0.35, 0.70, 1.0],
+          ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Moon
-        final moonCenter = Offset(size.width * 0.8, size.height * 0.18);
+        // Night mountain silhouette
+        _drawParallaxMountains(
+          canvas,
+          size,
+          look,
+          horizonY,
+          const Color(0xA0040705),
+          const Color(0x7009100C),
+        );
+    }
+  }
+
+  void _drawParallaxMountains(
+    Canvas canvas,
+    Size size,
+    Vec3 look,
+    double horizonY,
+    Color frontColor,
+    Color backColor,
+  ) {
+    final yaw = atan2(look.x, look.z);
+
+    // Background distant mountain layer
+    final backPath = Path();
+    backPath.moveTo(-60, horizonY + 20);
+    const step = 20.0;
+    for (var x = -60.0; x <= size.width + 60.0; x += step) {
+      final u = (x / size.width) * 1.8 + yaw;
+      final h = (sin(u * 2.2) * 20.0 + sin(u * 5.1 + 0.8) * 11.0 + sin(u * 11.0) * 5.0).abs() + 8.0;
+      backPath.lineTo(x, horizonY - h);
+    }
+    backPath.lineTo(size.width + 60, horizonY + 20);
+    backPath.close();
+    canvas.drawPath(backPath, Paint()..color = backColor..style = PaintingStyle.fill);
+
+    // Foreground ridge layer
+    final frontPath = Path();
+    frontPath.moveTo(-60, horizonY + 20);
+    for (var x = -60.0; x <= size.width + 60.0; x += step) {
+      final u = (x / size.width) * 2.4 + yaw * 1.3 + 1.2;
+      final h = (sin(u * 3.1) * 15.0 + sin(u * 7.3) * 8.0).abs() + 4.0;
+      frontPath.lineTo(x, horizonY - h);
+    }
+    frontPath.lineTo(size.width + 60, horizonY + 20);
+    frontPath.close();
+    canvas.drawPath(frontPath, Paint()..color = frontColor..style = PaintingStyle.fill);
+  }
+
+  void _drawCelestialBody(
+    Canvas canvas,
+    Size size,
+    Vec3 eye,
+    Mat4 viewProj,
+  ) {
+    Vec3 celestialDir;
+    switch (lighting) {
+      case TestDriveLighting.day:
+        // Positioned high in the south-west sky
+        celestialDir = const Vec3(0.40, 0.58, -0.71).normalized;
+      case TestDriveLighting.sunset:
+        // Low golden sun just above the horizon in the south-west
+        celestialDir = const Vec3(0.52, 0.16, -0.84).normalized;
+      case TestDriveLighting.night:
+        // Crescent moon high in the north-east sky
+        celestialDir = const Vec3(-0.48, 0.60, 0.64).normalized;
+    }
+
+    final celestialPos = eye + (celestialDir * 500.0);
+    final clip = viewProj.transformClip(celestialPos);
+
+    // Must be in front of camera
+    if (clip[3] <= 0.08) return;
+
+    final ndcX = clip[0] / clip[3];
+    final ndcY = clip[1] / clip[3];
+    final sx = (ndcX * 0.5 + 0.5) * size.width;
+    final sy = (1.0 - (ndcY * 0.5 + 0.5)) * size.height;
+
+    const margin = 200.0;
+    if (sx < -margin || sx > size.width + margin || sy < -margin || sy > size.height + margin) {
+      return;
+    }
+
+    final center = Offset(sx, sy);
+
+    switch (lighting) {
+      case TestDriveLighting.day:
+        // Wide corona glow
+        final corona = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0x60FFFBEB),
+              Color(0x28FDE047),
+              Color(0x00FDE047),
+            ],
+          ).createShader(Rect.fromCircle(center: center, radius: 130));
+        canvas.drawCircle(center, 130, corona);
+
+        // Core glow
+        final core = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0xF0FFFFFF),
+              Color(0x80FEF08A),
+              Color(0x00FEF08A),
+            ],
+          ).createShader(Rect.fromCircle(center: center, radius: 50));
+        canvas.drawCircle(center, 50, core);
+
+        // Solid sun disk
+        canvas.drawCircle(center, 18, Paint()..color = const Color(0xFFFFFFFF));
+
+        // Horizontal lens flare streak
+        final streak = Paint()
+          ..shader = LinearGradient(
+            colors: const [
+              Color(0x00FFFFFF),
+              Color(0x40FFFFFF),
+              Color(0x00FFFFFF),
+            ],
+          ).createShader(Rect.fromCenter(center: center, width: size.width * 0.6, height: 4));
+        canvas.drawRect(Rect.fromCenter(center: center, width: size.width * 0.6, height: 4), streak);
+
+      case TestDriveLighting.sunset:
+        // Broad sunset halo
+        final halo = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0x95FFF7ED),
+              Color(0x75F97316),
+              Color(0x20EA580C),
+              Color(0x00C2410C),
+            ],
+          ).createShader(Rect.fromCircle(center: center, radius: 170));
+        canvas.drawCircle(center, 170, halo);
+
+        // Intense inner glow
+        final inner = Paint()
+          ..shader = RadialGradient(
+            colors: const [
+              Color(0xF5FFFBEB),
+              Color(0x85F59E0B),
+              Color(0x00F59E0B),
+            ],
+          ).createShader(Rect.fromCircle(center: center, radius: 65));
+        canvas.drawCircle(center, 65, inner);
+
+        // Golden sun disk
+        canvas.drawCircle(center, 22, Paint()..color = const Color(0xFFFFFBEB));
+
+        // Horizontal golden flare
+        final sunsetStreak = Paint()
+          ..shader = LinearGradient(
+            colors: const [
+              Color(0x00F97316),
+              Color(0x55F97316),
+              Color(0x00F97316),
+            ],
+          ).createShader(Rect.fromCenter(center: center, width: size.width * 0.75, height: 6));
+        canvas.drawRect(Rect.fromCenter(center: center, width: size.width * 0.75, height: 6), sunsetStreak);
+
+      case TestDriveLighting.night:
+        // Moon soft glow
         final moonGlow = Paint()
           ..shader = RadialGradient(
             colors: const [
-              Color(0x40E2E8F0),
-              Color(0x00E2E8F0),
+              Color(0x4560A5FA),
+              Color(0x1538BDF8),
+              Color(0x00000000),
             ],
-          ).createShader(Rect.fromCircle(center: moonCenter, radius: 45));
-        canvas.drawCircle(moonCenter, 45, moonGlow);
-        canvas.drawCircle(
-            moonCenter, 12, Paint()..color = const Color(0xFFF1F5F9));
+          ).createShader(Rect.fromCircle(center: center, radius: 60));
+        canvas.drawCircle(center, 60, moonGlow);
+
+        // Moon disk
+        canvas.drawCircle(center, 15, Paint()..color = const Color(0xFFE2E8F0));
+
+        // Crescent cutout for realistic moon phase
+        final shadowOffset = Offset(center.dx + 4.5, center.dy - 2.5);
+        canvas.drawCircle(shadowOffset, 12.5, Paint()..color = const Color(0xFF060B08));
     }
   }
 
@@ -1655,7 +1847,7 @@ class _TestDriveScenePainter extends CustomPainter {
     const groundY = 0.0;
     const trackWidth = 14.0;
     const curbWidth = 1.4;
-    const shoulderWidth = 10.0;
+    const shoulderWidth = 14.0;
 
     final isDay = lighting == TestDriveLighting.day;
     final isSunset = lighting == TestDriveLighting.sunset;
@@ -1667,10 +1859,10 @@ class _TestDriveScenePainter extends CustomPainter {
     final zStart = centerZ - 200.0;
     final zEnd = centerZ + 80.0;
 
-    // Solid Terrain Base underneath everything
+    // Solid Terrain Base underneath everything (Natural Green Turf / Prairie)
     final terrainColor = isDay
-        ? const Color(0xFF334155)
-        : (isSunset ? const Color(0xFF1C1917) : const Color(0xFF090D0B));
+        ? const Color(0xFF1E3A2B) // Rich natural green-slate turf
+        : (isSunset ? const Color(0xFF281C16) : const Color(0xFF070B09));
     final terrainPaint = Paint()
       ..color = terrainColor
       ..style = PaintingStyle.fill;
@@ -1679,10 +1871,10 @@ class _TestDriveScenePainter extends CustomPainter {
       canvas,
       viewProj,
       size,
-      Vec3(-350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zEnd + 50),
-      Vec3(-350, groundY - 0.05, zEnd + 50),
+      Vec3(-600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zEnd + 100),
+      Vec3(-600, groundY - 0.05, zEnd + 100),
       terrainPaint,
     );
 
@@ -1690,8 +1882,8 @@ class _TestDriveScenePainter extends CustomPainter {
         ? const Color(0xFF1E293B)
         : (isSunset ? const Color(0xFF18181B) : const Color(0xFF0F1713));
     final shoulderColor = isDay
-        ? const Color(0xFF475569)
-        : (isSunset ? const Color(0xFF27272A) : const Color(0xFF111714));
+        ? const Color(0xFF475569) // Gravel runoff shoulder
+        : (isSunset ? const Color(0xFF2E2724) : const Color(0xFF141916));
 
     final asphaltPaint = Paint()
       ..color = asphaltColor
@@ -1811,21 +2003,21 @@ class _TestDriveScenePainter extends CustomPainter {
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
-    const padWidth = 42.0;
+    const padWidth = 70.0; // 140-meter wide expansive dynamic proving pad
+    const runoffWidth = 16.0;
 
     final isDay = lighting == TestDriveLighting.day;
+    final isSunset = lighting == TestDriveLighting.sunset;
     final carZ = sim.position.z;
     const sliceLen = 10.0;
     final centerZ = (carZ / sliceLen).round() * sliceLen;
     final zStart = centerZ - 200.0;
     final zEnd = centerZ + 80.0;
 
-    // Solid Terrain Base underneath
+    // 1. Solid Natural Landscape Base
     final terrainColor = isDay
-        ? const Color(0xFF334155)
-        : (lighting == TestDriveLighting.sunset
-            ? const Color(0xFF1C1917)
-            : const Color(0xFF090D0B));
+        ? const Color(0xFF1E3A2B)
+        : (isSunset ? const Color(0xFF281C16) : const Color(0xFF070B09));
     final terrainPaint = Paint()
       ..color = terrainColor
       ..style = PaintingStyle.fill;
@@ -1834,82 +2026,225 @@ class _TestDriveScenePainter extends CustomPainter {
       canvas,
       viewProj,
       size,
-      Vec3(-350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zEnd + 50),
-      Vec3(-350, groundY - 0.05, zEnd + 50),
+      Vec3(-600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zEnd + 100),
+      Vec3(-600, groundY - 0.05, zEnd + 100),
       terrainPaint,
     );
 
+    // 2. High-Grade Dynamic Proving Ground Tarmac
     final asphaltColor = isDay
-        ? const Color(0xFF1E293B)
-        : (lighting == TestDriveLighting.sunset
-            ? const Color(0xFF18181B)
-            : const Color(0xFF0F1713));
+        ? const Color(0xFF1E2832)
+        : (isSunset ? const Color(0xFF18171B) : const Color(0xFF0D1210));
+    final gravelColor = isDay
+        ? const Color(0xFF475569)
+        : (isSunset ? const Color(0xFF2B2522) : const Color(0xFF141916));
+
     final asphaltPaint = Paint()
       ..color = asphaltColor
       ..style = PaintingStyle.fill;
+    final gravelPaint = Paint()
+      ..color = gravelColor
+      ..style = PaintingStyle.fill;
     final borderPaint = Paint()
-      ..color = isDay ? const Color(0xFF64748B) : const Color(0xFF223127)
-      ..strokeWidth = 2.0;
+      ..color = isDay ? const Color(0xFFF8FAFC) : const Color(0x90FFFFFF)
+      ..strokeWidth = 2.4;
+    final guidePaint = Paint()
+      ..color = const Color(0x4094A3B8)
+      ..strokeWidth = 1.4;
 
     for (var z = zStart; z < zEnd; z += sliceLen) {
+      final z0 = z;
+      final z1 = z + sliceLen;
+
+      // Gravel Safety Runoff Shoulders
       _drawQuad(
         canvas,
         viewProj,
         size,
-        Vec3(-padWidth, groundY, z),
-        Vec3(padWidth, groundY, z),
-        Vec3(padWidth, groundY, z + sliceLen),
-        Vec3(-padWidth, groundY, z + sliceLen),
+        Vec3(-padWidth - runoffWidth, groundY, z0),
+        Vec3(-padWidth, groundY, z0),
+        Vec3(-padWidth, groundY, z1),
+        Vec3(-padWidth - runoffWidth, groundY, z1),
+        gravelPaint,
+      );
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(padWidth, groundY, z0),
+        Vec3(padWidth + runoffWidth, groundY, z0),
+        Vec3(padWidth + runoffWidth, groundY, z1),
+        Vec3(padWidth, groundY, z1),
+        gravelPaint,
+      );
+
+      // Main Proving Tarmac Pad
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-padWidth, groundY, z0),
+        Vec3(padWidth, groundY, z0),
+        Vec3(padWidth, groundY, z1),
+        Vec3(-padWidth, groundY, z1),
         asphaltPaint,
       );
-      _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, z),
-          Vec3(-padWidth, groundY, z + sliceLen), borderPaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(padWidth, groundY, z),
-          Vec3(padWidth, groundY, z + sliceLen), borderPaint);
+
+      // Perimeter boundary lines
+      _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, z0),
+          Vec3(-padWidth, groundY, z1), borderPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(padWidth, groundY, z0),
+          Vec3(padWidth, groundY, z1), borderPaint);
+
+      // Slalom & Sprint lane dashed dividers
+      _drawClippedLine(canvas, viewProj, size, Vec3(-35.0, groundY, z0),
+          Vec3(-35.0, groundY, z0 + sliceLen * 0.5), guidePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(35.0, groundY, z0),
+          Vec3(35.0, groundY, z0 + sliceLen * 0.5), guidePaint);
     }
 
-    // Concentric drift test circles centered at (0, 0, centerZ)
-    final circleCenter = Vec3(0, groundY, centerZ);
-    final radii = [8.0, 16.0, 26.0, 38.0];
-    final circlePaintA = Paint()
-      ..color = const Color(0x90FBBF24)
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke;
-    final circlePaintB = Paint()
-      ..color = const Color(0x80FFFFFF)
-      ..strokeWidth = 1.8
-      ..style = PaintingStyle.stroke;
+    // Transverse Distance Marks every 40m across the pad
+    final minGridZ = ((zStart / 40).floor() * 40).toDouble();
+    final maxGridZ = ((zEnd / 40).ceil() * 40).toDouble();
+    final transPaint = Paint()
+      ..color = const Color(0x3094A3B8)
+      ..strokeWidth = 1.2;
+    for (var tz = minGridZ; tz <= maxGridZ; tz += 40.0) {
+      _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, tz),
+          Vec3(padWidth, groundY, tz), transPaint);
+    }
 
-    const segments = 36;
-    for (var rIdx = 0; rIdx < radii.length; rIdx++) {
-      final r = radii[rIdx];
-      final paint = (rIdx % 2 == 0) ? circlePaintA : circlePaintB;
-      for (var i = 0; i < segments; i++) {
-        final a0 = i * 2 * pi / segments;
-        final a1 = (i + 1) * 2 * pi / segments;
+    // ── FIXED WORLD PROVING FACILITIES (Stationary Coordinates) ──────────────
+    // 3. Main Central Dynamics Skidpad at World Origin (0, 0, 0)
+    if ((centerZ - 0.0).abs() < 220.0) {
+      // Inner Wet Low-Friction Drift Pad (Polished Epoxy Slick Ring, R <= 26m)
+      const wetR = 26.0;
+      const wetSegments = 24;
+      final wetColor = isDay
+          ? const Color(0xFF26394D)
+          : (isSunset ? const Color(0xFF1E2836) : const Color(0xFF111A24));
+      final wetPaint = Paint()
+        ..color = wetColor
+        ..style = PaintingStyle.fill;
+
+      final wetPoly = <Vec3>[];
+      for (var i = 0; i < wetSegments; i++) {
+        final a = i * 2 * pi / wetSegments;
+        wetPoly.add(Vec3(wetR * cos(a), groundY + 0.002, wetR * sin(a)));
+      }
+      _drawClippedPolygon(canvas, viewProj, size, wetPoly, wetPaint);
+
+      // Stationary Concentric Guidance Drift Rings
+      final rings = [
+        (14.0, const Color(0xFFF59E0B), 2.2), // Inner Drift guidance
+        (26.0, const Color(0xFFF8FAFC), 2.4), // Low-friction boundary
+        (42.0, const Color(0xFFF59E0B), 2.2), // Outer High-G drift ring
+        (58.0, const Color(0xFF38BDF8), 2.8), // Skidpad perimeter ring
+      ];
+
+      const ringSegs = 36;
+      for (final (r, color, width) in rings) {
+        final p = Paint()
+          ..color = color
+          ..strokeWidth = width;
+        for (var i = 0; i < ringSegs; i++) {
+          final a0 = i * 2 * pi / ringSegs;
+          final a1 = (i + 1) * 2 * pi / ringSegs;
+          _drawClippedLine(
+            canvas,
+            viewProj,
+            size,
+            Vec3(r * cos(a0), groundY + 0.003, r * sin(a0)),
+            Vec3(r * cos(a1), groundY + 0.003, r * sin(a1)),
+            p,
+          );
+        }
+      }
+
+      // Circular Red & White Runoff Curbing around the 58m perimeter
+      const curbSegs = 36;
+      final redCurb = Paint()
+        ..color = const Color(0xFFDC2626)
+        ..style = PaintingStyle.fill;
+      final whiteCurb = Paint()
+        ..color = const Color(0xFFF8FAFC)
+        ..style = PaintingStyle.fill;
+      for (var i = 0; i < curbSegs; i++) {
+        final a0 = i * 2 * pi / curbSegs;
+        final a1 = (i + 1) * 2 * pi / curbSegs;
+        final isRed = (i % 2 == 0);
+        _drawQuad(
+          canvas,
+          viewProj,
+          size,
+          Vec3(58.0 * cos(a0), groundY + 0.004, 58.0 * sin(a0)),
+          Vec3(59.6 * cos(a0), groundY + 0.004, 59.6 * sin(a0)),
+          Vec3(59.6 * cos(a1), groundY + 0.004, 59.6 * sin(a1)),
+          Vec3(58.0 * cos(a1), groundY + 0.004, 58.0 * sin(a1)),
+          isRed ? redCurb : whiteCurb,
+        );
+      }
+
+      // 12 Radial Azimuth Graduation Spokes (every 30°)
+      final spokePaint = Paint()
+        ..color = const Color(0x6094A3B8)
+        ..strokeWidth = 1.4;
+      for (var deg = 0; deg < 360; deg += 30) {
+        final rad = deg * pi / 180;
         _drawClippedLine(
           canvas,
           viewProj,
           size,
-          Vec3(circleCenter.x + r * cos(a0), groundY,
-              circleCenter.z + r * sin(a0)),
-          Vec3(circleCenter.x + r * cos(a1), groundY,
-              circleCenter.z + r * sin(a1)),
-          paint,
+          Vec3(5.0 * cos(rad), groundY + 0.003, 5.0 * sin(rad)),
+          Vec3(58.0 * cos(rad), groundY + 0.003, 58.0 * sin(rad)),
+          spokePaint,
         );
       }
+
+      // Center Origin Crosshairs & Rosette
+      final crossPaint = Paint()
+        ..color = const Color(0xFFFBBF24)
+        ..strokeWidth = 2.0;
+      _drawClippedLine(canvas, viewProj, size, Vec3(-58, groundY + 0.004, 0),
+          Vec3(58, groundY + 0.004, 0), crossPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY + 0.004, -58),
+          Vec3(0, groundY + 0.004, 58), crossPaint);
     }
 
-    // Origin calibration crosshairs
-    final crossPaint = Paint()
-      ..color = const Color(0x6034D399)
-      ..strokeWidth = 1.5;
-    _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, centerZ),
-        Vec3(padWidth, groundY, centerZ), crossPaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, zStart),
-        Vec3(0, groundY, zEnd), crossPaint);
+    // 4. Secondary Figure-8 Drift Circle at World (0, 0, -110)
+    if ((centerZ - (-110.0)).abs() < 220.0) {
+      const f8Center = Vec3(0, groundY + 0.003, -110.0);
+      const f8R = 34.0;
+      const f8Segs = 32;
+      final f8Paint = Paint()
+        ..color = const Color(0x95F59E0B)
+        ..strokeWidth = 2.2;
+      for (var i = 0; i < f8Segs; i++) {
+        final a0 = i * 2 * pi / f8Segs;
+        final a1 = (i + 1) * 2 * pi / f8Segs;
+        _drawClippedLine(
+          canvas,
+          viewProj,
+          size,
+          Vec3(f8Center.x + f8R * cos(a0), f8Center.y,
+              f8Center.z + f8R * sin(a0)),
+          Vec3(f8Center.x + f8R * cos(a1), f8Center.y,
+              f8Center.z + f8R * sin(a1)),
+          f8Paint,
+        );
+      }
+
+      // Figure-8 connecting transition lines to center pad
+      final transLine = Paint()
+        ..color = const Color(0x70F8FAFC)
+        ..strokeWidth = 2.0;
+      _drawClippedLine(canvas, viewProj, size, const Vec3(-20, groundY + 0.003, -58),
+          const Vec3(20, groundY + 0.003, -76), transLine);
+      _drawClippedLine(canvas, viewProj, size, const Vec3(20, groundY + 0.003, -58),
+          const Vec3(-20, groundY + 0.003, -76), transLine);
+    }
   }
 
   void _drawDragstripAsphalt(
@@ -1920,19 +2255,21 @@ class _TestDriveScenePainter extends CustomPainter {
   ) {
     const groundY = 0.0;
     const stripWidth = 11.0;
-    const shoulderWidth = 4.0;
+    const shoulderWidth = 5.0;
+    const gravelWidth = 14.0;
 
     final isDay = lighting == TestDriveLighting.day;
+    final isSunset = lighting == TestDriveLighting.sunset;
     final carZ = sim.position.z;
     const sliceLen = 10.0;
     final centerZ = (carZ / sliceLen).round() * sliceLen;
     final zStart = centerZ - 200.0;
     final zEnd = centerZ + 80.0;
 
-    // Solid Terrain Base underneath
+    // Solid Terrain Base underneath (Natural Landscape)
     final terrainColor = isDay
-        ? const Color(0xFF334155)
-        : const Color(0xFF090D0B);
+        ? const Color(0xFF1E3A2B)
+        : (isSunset ? const Color(0xFF281C16) : const Color(0xFF070B09));
     final terrainPaint = Paint()
       ..color = terrainColor
       ..style = PaintingStyle.fill;
@@ -1941,10 +2278,10 @@ class _TestDriveScenePainter extends CustomPainter {
       canvas,
       viewProj,
       size,
-      Vec3(-350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zStart - 50),
-      Vec3(350, groundY - 0.05, zEnd + 50),
-      Vec3(-350, groundY - 0.05, zEnd + 50),
+      Vec3(-600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zStart - 100),
+      Vec3(600, groundY - 0.05, zEnd + 100),
+      Vec3(-600, groundY - 0.05, zEnd + 100),
       terrainPaint,
     );
 
@@ -1952,14 +2289,20 @@ class _TestDriveScenePainter extends CustomPainter {
         ? const Color(0xFF0F172A)
         : const Color(0xFF070B0E);
     final shoulderColor = isDay
-        ? const Color(0xFF475569)
+        ? const Color(0xFF334155)
         : const Color(0xFF161F26);
+    final gravelColor = isDay
+        ? const Color(0xFF475569)
+        : const Color(0xFF1E1B18);
 
     final asphaltPaint = Paint()
       ..color = asphaltColor
       ..style = PaintingStyle.fill;
     final shoulderPaint = Paint()
       ..color = shoulderColor
+      ..style = PaintingStyle.fill;
+    final gravelPaint = Paint()
+      ..color = gravelColor
       ..style = PaintingStyle.fill;
     final yellowLinePaint = Paint()
       ..color = const Color(0xFFFDE047)
@@ -1972,7 +2315,29 @@ class _TestDriveScenePainter extends CustomPainter {
       final z0 = z;
       final z1 = z + sliceLen;
 
-      // Shoulder
+      // Outer Gravel Trap
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, z0),
+        Vec3(-stripWidth - shoulderWidth, groundY, z0),
+        Vec3(-stripWidth - shoulderWidth, groundY, z1),
+        Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, z1),
+        gravelPaint,
+      );
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(stripWidth + shoulderWidth, groundY, z0),
+        Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, z0),
+        Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, z1),
+        Vec3(stripWidth + shoulderWidth, groundY, z1),
+        gravelPaint,
+      );
+
+      // Runway Shoulder
       _drawQuad(
         canvas,
         viewProj,
@@ -2041,37 +2406,173 @@ class _TestDriveScenePainter extends CustomPainter {
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
-    const trackWidth = 14.0;
+    const trackWidth = 12.0; // 24-meter wide high-tech cyber corridor
 
     final carZ = sim.position.z;
-    const sliceLen = 10.0;
+    const sliceLen = 8.0;
     final centerZ = (carZ / sliceLen).round() * sliceLen;
     final zStart = centerZ - 200.0;
     final zEnd = centerZ + 80.0;
 
-    final boundaryPaint = Paint()
-      ..color = const Color(0x9010B981)
-      ..strokeWidth = 2.4;
-    final gridPaint = Paint()
-      ..color = const Color(0x2834D399)
+    // 1. Solid Deep Obsidian Matrix Floor (No empty air!)
+    final groundPaint = Paint()
+      ..color = const Color(0xFF020504)
+      ..style = PaintingStyle.fill;
+
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zEnd + 50),
+      Vec3(-350, groundY - 0.05, zEnd + 50),
+      groundPaint,
+    );
+
+    // 2. Outlying Matrix Grid lines extending to +/- 100m
+    final outerGridPaint = Paint()
+      ..color = const Color(0x1510B981)
       ..strokeWidth = 1.0;
-
-    _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, zStart),
-        Vec3(-trackWidth, groundY, zEnd), boundaryPaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, zStart),
-        Vec3(trackWidth, groundY, zEnd), boundaryPaint);
-
-    for (var z = zStart; z <= zEnd; z += 5.0) {
-      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z),
-          Vec3(trackWidth, groundY, z), gridPaint);
+    for (var x = -100.0; x <= 100.0; x += 16.0) {
+      if (x.abs() > trackWidth) {
+        _drawClippedLine(canvas, viewProj, size, Vec3(x, groundY, zStart),
+            Vec3(x, groundY, zEnd), outerGridPaint);
+      }
     }
 
-    final centerPaint = Paint()
-      ..color = const Color(0x8010B981)
-      ..strokeWidth = 2.0;
-    for (var z = zStart; z <= zEnd; z += 6.0) {
-      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z),
-          Vec3(0, groundY, z + 3.0), centerPaint);
+    // 3. Main Cyber Track Corridor Slices & Glowing Neon Cells
+    final trackBasePaint = Paint()
+      ..color = const Color(0xFF05120A)
+      ..style = PaintingStyle.fill;
+    final tileA = Paint()
+      ..color = const Color(0x1810B981)
+      ..style = PaintingStyle.fill;
+    final tileB = Paint()
+      ..color = const Color(0x0610B981)
+      ..style = PaintingStyle.fill;
+
+    final glowBorderPaint = Paint()
+      ..color = const Color(0x5534D399)
+      ..strokeWidth = 6.0;
+    final laserBorderPaint = Paint()
+      ..color = const Color(0xFF10B981)
+      ..strokeWidth = 2.8;
+
+    final centerPulsePaint = Paint()
+      ..color = Color.lerp(
+        const Color(0x8010B981),
+        const Color(0xFF34D399),
+        uiPulse,
+      )!
+      ..strokeWidth = 2.4;
+    final laneDividerPaint = Paint()
+      ..color = const Color(0x5006B6D4)
+      ..strokeWidth = 1.2;
+
+    for (var z = zStart; z < zEnd; z += sliceLen) {
+      final z0 = z;
+      final z1 = z + sliceLen;
+
+      // Dark carbon road bed
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z1),
+        Vec3(-trackWidth, groundY, z1),
+        trackBasePaint,
+      );
+
+      // Alternating luminescent grid cell quads
+      final isEven = ((z / sliceLen).floor() % 2 == 0);
+      _drawQuad(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z0),
+        Vec3(trackWidth, groundY, z1),
+        Vec3(-trackWidth, groundY, z1),
+        isEven ? tileA : tileB,
+      );
+
+      // Glowing Neon Boundary Laser Lines
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
+          Vec3(-trackWidth, groundY, z1), glowBorderPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
+          Vec3(-trackWidth, groundY, z1), laserBorderPaint);
+
+      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
+          Vec3(trackWidth, groundY, z1), glowBorderPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
+          Vec3(trackWidth, groundY, z1), laserBorderPaint);
+
+      // Center glowing pulse line
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
+          Vec3(0, groundY, z0 + sliceLen * 0.6), centerPulsePaint);
+
+      // Secondary lane lines at X = -6 and X = +6
+      _drawClippedLine(canvas, viewProj, size, Vec3(-6.0, groundY, z0),
+          Vec3(-6.0, groundY, z0 + sliceLen * 0.45), laneDividerPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(6.0, groundY, z0),
+          Vec3(6.0, groundY, z0 + sliceLen * 0.45), laneDividerPaint);
+    }
+
+    // 4. Holographic Directional Chevrons every 32m
+    final minChevZ = ((zStart / 32).floor() * 32).toDouble();
+    final maxChevZ = ((zEnd / 32).ceil() * 32).toDouble();
+    final chevPaint = Paint()
+      ..color = const Color(0x9510B981)
+      ..strokeWidth = 2.4;
+    for (var cz = minChevZ; cz <= maxChevZ; cz += 32.0) {
+      // Left lane chevron
+      _drawClippedLine(canvas, viewProj, size, Vec3(-8.0, groundY + 0.005, cz),
+          Vec3(-6.0, groundY + 0.005, cz - 2.5), chevPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-4.0, groundY + 0.005, cz),
+          Vec3(-6.0, groundY + 0.005, cz - 2.5), chevPaint);
+
+      // Right lane chevron
+      _drawClippedLine(canvas, viewProj, size, Vec3(4.0, groundY + 0.005, cz),
+          Vec3(6.0, groundY + 0.005, cz - 2.5), chevPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(8.0, groundY + 0.005, cz),
+          Vec3(6.0, groundY + 0.005, cz - 2.5), chevPaint);
+    }
+
+    // 5. Vertical Holographic Light Pillars along boundaries every 24m
+    final minPillarZ = ((zStart / 24).floor() * 24).toDouble();
+    final maxPillarZ = ((zEnd / 24).ceil() * 24).toDouble();
+    final pillarLaserPaint = Paint()
+      ..color = const Color(0xC010B981)
+      ..strokeWidth = 2.2;
+    final pillarGlowPaint = Paint()
+      ..color = const Color(0x4034D399)
+      ..strokeWidth = 5.0;
+
+    for (var pz = minPillarZ; pz <= maxPillarZ; pz += 24.0) {
+      // Left pillar
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, pz),
+          Vec3(-trackWidth, groundY + 3.4, pz), pillarGlowPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, pz),
+          Vec3(-trackWidth, groundY + 3.4, pz), pillarLaserPaint);
+
+      // Right pillar
+      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, pz),
+          Vec3(trackWidth, groundY + 3.4, pz), pillarGlowPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, pz),
+          Vec3(trackWidth, groundY + 3.4, pz), pillarLaserPaint);
+
+      // Glowing emitter beacon head at the top of each pillar
+      final pL = project(Vec3(-trackWidth, groundY + 3.4, pz));
+      if (pL != null) {
+        canvas.drawCircle(pL, 3.5, Paint()..color = const Color(0xFF34D399));
+      }
+      final pR = project(Vec3(trackWidth, groundY + 3.4, pz));
+      if (pR != null) {
+        canvas.drawCircle(pR, 3.5, Paint()..color = const Color(0xFF34D399));
+      }
     }
   }
 
