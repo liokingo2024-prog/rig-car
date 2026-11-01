@@ -1297,8 +1297,8 @@ class _TestDriveScenePainter extends CustomPainter {
       return Offset(sx, sy);
     }
 
-    // 2. Draw Sky & Atmospheric Environment with Dynamic Horizon & Parallax Mountains
-    _drawAtmosphere(canvas, size, eye, target, viewProj);
+    // 2. Draw Sky & Atmospheric Environment with Dynamic Horizon & World-Anchored Mountains
+    _drawAtmosphere(canvas, size, eye, target, viewProj, projectPoint);
 
     // 3. Draw 3D Celestial Body (Fixed in World Space: Sun / Sunset / Moon)
     _drawCelestialBody(canvas, size, eye, viewProj);
@@ -1322,6 +1322,7 @@ class _TestDriveScenePainter extends CustomPainter {
     Vec3 eye,
     Vec3 target,
     Mat4 viewProj,
+    Offset? Function(Vec3) project,
   ) {
     final look = (target - eye).normalized;
     final lookH = Vec3(look.x, 0, look.z);
@@ -1358,37 +1359,20 @@ class _TestDriveScenePainter extends CustomPainter {
           ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Distant Mountain Silhouettes along the horizon
-        _drawParallaxMountains(
+        // Distant Mountain Silhouettes (Anchored to 3D World Space)
+        _drawWorldAnchoredMountains(
           canvas,
           size,
+          eye,
           look,
           horizonY,
+          project,
           const Color(0x50475569),
           const Color(0x3064748B),
         );
 
-        // Subtle cumulus cloud wisps drifting near horizon
-        final cloudPaint = Paint()
-          ..color = const Color(0x24FFFFFF)
-          ..style = PaintingStyle.fill;
-        final cloudOffset = look.x * 120.0;
-        canvas.drawOval(
-          Rect.fromCenter(
-            center: Offset(size.width * 0.25 + cloudOffset, horizonY - 45),
-            width: size.width * 0.38,
-            height: 22,
-          ),
-          cloudPaint,
-        );
-        canvas.drawOval(
-          Rect.fromCenter(
-            center: Offset(size.width * 0.75 + cloudOffset, horizonY - 32),
-            width: size.width * 0.45,
-            height: 26,
-          ),
-          cloudPaint,
-        );
+        // Cumulus Clouds (Anchored to 3D World Space)
+        _drawWorldAnchoredClouds(canvas, size, eye, project);
 
       case TestDriveLighting.sunset:
         final skyPaint = Paint()
@@ -1406,12 +1390,14 @@ class _TestDriveScenePainter extends CustomPainter {
           ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Dusk mountain range
-        _drawParallaxMountains(
+        // Dusk mountain range (Anchored to 3D World Space)
+        _drawWorldAnchoredMountains(
           canvas,
           size,
+          eye,
           look,
           horizonY,
+          project,
           const Color(0x803B0764),
           const Color(0x55581C87),
         );
@@ -1431,52 +1417,155 @@ class _TestDriveScenePainter extends CustomPainter {
           ).createShader(Rect.fromLTRB(0, 0, size.width, horizonY + 80));
         canvas.drawRect(Offset.zero & size, skyPaint);
 
-        // Night mountain silhouette
-        _drawParallaxMountains(
+        // Night mountain silhouette (Anchored to 3D World Space)
+        _drawWorldAnchoredMountains(
           canvas,
           size,
+          eye,
           look,
           horizonY,
+          project,
           const Color(0xA0040705),
           const Color(0x7009100C),
         );
     }
   }
 
-  void _drawParallaxMountains(
+  void _drawWorldAnchoredMountains(
     Canvas canvas,
     Size size,
+    Vec3 eye,
     Vec3 look,
     double horizonY,
+    Offset? Function(Vec3) project,
     Color frontColor,
     Color backColor,
   ) {
-    final yaw = atan2(look.x, look.z);
+    final camYaw = atan2(look.x, look.z);
 
-    // Background distant mountain layer
-    final backPath = Path();
-    backPath.moveTo(-60, horizonY + 20);
-    const step = 20.0;
-    for (var x = -60.0; x <= size.width + 60.0; x += step) {
-      final u = (x / size.width) * 1.8 + yaw;
-      final h = (sin(u * 2.2) * 20.0 + sin(u * 5.1 + 0.8) * 11.0 + sin(u * 11.0) * 5.0).abs() + 8.0;
-      backPath.lineTo(x, horizonY - h);
-    }
-    backPath.lineTo(size.width + 60, horizonY + 20);
-    backPath.close();
-    canvas.drawPath(backPath, Paint()..color = backColor..style = PaintingStyle.fill);
+    // 1. Distant background peaks layer (radius 900m)
+    _drawMountainRidge(
+      canvas,
+      size,
+      eye,
+      camYaw,
+      horizonY,
+      project,
+      backColor,
+      radius: 900.0,
+      scale: 1.3,
+      phaseOffset: 1.4,
+    );
 
-    // Foreground ridge layer
-    final frontPath = Path();
-    frontPath.moveTo(-60, horizonY + 20);
-    for (var x = -60.0; x <= size.width + 60.0; x += step) {
-      final u = (x / size.width) * 2.4 + yaw * 1.3 + 1.2;
-      final h = (sin(u * 3.1) * 15.0 + sin(u * 7.3) * 8.0).abs() + 4.0;
-      frontPath.lineTo(x, horizonY - h);
+    // 2. Closer foreground ridge layer (radius 720m)
+    _drawMountainRidge(
+      canvas,
+      size,
+      eye,
+      camYaw,
+      horizonY,
+      project,
+      frontColor,
+      radius: 720.0,
+      scale: 0.85,
+      phaseOffset: 0.0,
+    );
+  }
+
+  void _drawMountainRidge(
+    Canvas canvas,
+    Size size,
+    Vec3 eye,
+    double camYaw,
+    double horizonY,
+    Offset? Function(Vec3) project,
+    Color color, {
+    required double radius,
+    required double scale,
+    required double phaseOffset,
+  }) {
+    const fovSpan = 2.4; // approx 137° visible horizontal field of view with safety margins
+    const sampleCount = 36;
+
+    final ridgePoints = <Offset>[];
+
+    for (var i = 0; i <= sampleCount; i++) {
+      // theta is absolute world compass bearing in radians
+      final theta = (camYaw - (fovSpan * 0.5)) + (fovSpan * i / sampleCount);
+
+      // Height function based strictly on absolute world compass bearing theta
+      final s1 = sin(theta * 3.0 + phaseOffset);
+      final s2 = sin(theta * 7.0 + phaseOffset * 1.5);
+      final s3 = sin(theta * 13.0 - phaseOffset);
+      final s4 = sin(theta * 23.0);
+      final normalizedHeight =
+          (s1 * 0.45 + s2 * 0.28 + s3 * 0.18 + s4 * 0.09).abs();
+      final heightMeters = (normalizedHeight * 58.0 + 14.0) * scale;
+
+      // 3D world position of the mountain peak at this world bearing
+      final peakWorld = Vec3(
+        eye.x + radius * sin(theta),
+        heightMeters,
+        eye.z + radius * cos(theta),
+      );
+
+      final screenPt = project(peakWorld);
+      if (screenPt != null) {
+        ridgePoints.add(screenPt);
+      }
     }
-    frontPath.lineTo(size.width + 60, horizonY + 20);
-    frontPath.close();
-    canvas.drawPath(frontPath, Paint()..color = frontColor..style = PaintingStyle.fill);
+
+    if (ridgePoints.length < 2) return;
+
+    final path = Path();
+    path.moveTo(-100, horizonY + 60);
+    path.lineTo(ridgePoints.first.dx, horizonY + 60);
+    for (final pt in ridgePoints) {
+      path.lineTo(pt.dx, pt.dy);
+    }
+    path.lineTo(ridgePoints.last.dx, horizonY + 60);
+    path.lineTo(size.width + 100, horizonY + 60);
+    path.close();
+
+    canvas.drawPath(path, Paint()..color = color..style = PaintingStyle.fill);
+  }
+
+  void _drawWorldAnchoredClouds(
+    Canvas canvas,
+    Size size,
+    Vec3 eye,
+    Offset? Function(Vec3) project,
+  ) {
+    // Stationary clouds at fixed world azimuth bearings
+    final clouds = [
+      (0.65, 80.0, 0.38, 20.0, 0x24FFFFFF),
+      (1.85, 95.0, 0.44, 24.0, 0x20FFFFFF),
+      (-1.20, 75.0, 0.34, 18.0, 0x22FFFFFF),
+      (-2.40, 90.0, 0.40, 22.0, 0x1EFFFFFF),
+    ];
+
+    const cloudRadius = 650.0;
+    for (final (azimuth, alt, wFrac, hPx, colorHex) in clouds) {
+      final cloudPos = Vec3(
+        eye.x + cloudRadius * sin(azimuth),
+        alt,
+        eye.z + cloudRadius * cos(azimuth),
+      );
+      final screenPt = project(cloudPos);
+      if (screenPt != null) {
+        final cloudPaint = Paint()
+          ..color = Color(colorHex)
+          ..style = PaintingStyle.fill;
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: screenPt,
+            width: size.width * wFrac,
+            height: hPx,
+          ),
+          cloudPaint,
+        );
+      }
+    }
   }
 
   void _drawCelestialBody(
