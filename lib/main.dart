@@ -100,6 +100,7 @@ class RigWorkbenchPage extends StatefulWidget {
 class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
   bool _isTestDriveMode = false;
+  bool _isDriveFullscreen = false;
   RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
@@ -344,6 +345,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   void _exitTestDrive() {
     setState(() {
       _isTestDriveMode = false;
+      _isDriveFullscreen = false;
       if (_activeStep == 5) {
         _activeStep = 3;
       }
@@ -357,6 +359,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         _isTestDriveMode = true;
       } else {
         _isTestDriveMode = false;
+        _isDriveFullscreen = false;
       }
     });
   }
@@ -385,36 +388,52 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     ];
   }
 
-  Widget _buildTestDriveViewport() {
+  Widget _buildTestDriveViewport({bool isFullscreen = false}) {
+    final viewport = TestDriveViewport(
+      mass: _mass,
+      engineForce: _engineForce,
+      grip: _grip,
+      suspension: _suspension,
+      centerOfMass: _centerOfMass,
+      drive: _drive,
+      frontSteering: _frontSteering,
+      rearSteering: _rearSteering,
+      frontTraction: _frontTraction,
+      rearTraction: _rearTraction,
+      wheelPositions: _getEffectiveWheelPositions(),
+      model: _parsedModel,
+      detection: _detection,
+      accentColor: _preset.accent,
+      isFullscreen: isFullscreen,
+      onToggleFullscreen: (full) =>
+          setState(() => _isDriveFullscreen = full),
+      onExit: _exitTestDrive,
+    );
+
+    if (isFullscreen) {
+      return viewport;
+    }
+
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0A1016),
+        color: const Color(0xFF041D14),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF253440)),
+        border: Border.all(color: const Color(0xFF223127)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: TestDriveViewport(
-        mass: _mass,
-        engineForce: _engineForce,
-        grip: _grip,
-        suspension: _suspension,
-        centerOfMass: _centerOfMass,
-        drive: _drive,
-        frontSteering: _frontSteering,
-        rearSteering: _rearSteering,
-        frontTraction: _frontTraction,
-        rearTraction: _rearTraction,
-        wheelPositions: _getEffectiveWheelPositions(),
-        model: _parsedModel,
-        detection: _detection,
-        accentColor: _preset.accent,
-        onExit: _exitTestDrive,
-      ),
+      child: viewport,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isTestDriveMode && _isDriveFullscreen) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF041D14),
+        body: _buildTestDriveViewport(isFullscreen: true),
+      );
+    }
+
     return Scaffold(
       body: LayoutBuilder(
         builder: (context, constraints) {

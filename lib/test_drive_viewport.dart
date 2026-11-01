@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'fullscreen.dart';
 import 'model_data.dart';
 import 'physics_sim.dart';
 
@@ -64,6 +65,8 @@ class TestDriveViewport extends StatefulWidget {
     this.model,
     this.detection,
     this.accentColor = const Color(0xFF10B981),
+    this.isFullscreen,
+    this.onToggleFullscreen,
     this.onExit,
   });
 
@@ -81,6 +84,8 @@ class TestDriveViewport extends StatefulWidget {
   final ParsedModel? model;
   final DetectionResult? detection;
   final Color accentColor;
+  final bool? isFullscreen;
+  final ValueChanged<bool>? onToggleFullscreen;
   final VoidCallback? onExit;
 
   @override
@@ -92,6 +97,16 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   late final VehiclePhysicsSimulation _sim;
   late final Ticker _ticker;
   final FocusNode _focusNode = FocusNode();
+
+  bool _internalFullscreen = false;
+  bool get _isFullscreen => widget.isFullscreen ?? _internalFullscreen;
+
+  void _toggleFullscreen() {
+    final next = !_isFullscreen;
+    setState(() => _internalFullscreen = next);
+    widget.onToggleFullscreen?.call(next);
+    toggleBrowserFullscreen();
+  }
 
   CameraMode _cameraMode = CameraMode.chase;
   TestDriveLighting _lighting = TestDriveLighting.day;
@@ -252,8 +267,16 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         });
         return KeyEventResult.handled;
       }
+      if (event.logicalKey == LogicalKeyboardKey.keyF) {
+        _toggleFullscreen();
+        return KeyEventResult.handled;
+      }
       if (event.logicalKey == LogicalKeyboardKey.escape) {
-        widget.onExit?.call();
+        if (_isFullscreen) {
+          _toggleFullscreen();
+        } else {
+          widget.onExit?.call();
+        }
         return KeyEventResult.handled;
       }
     } else if (event is KeyUpEvent) {
@@ -332,7 +355,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   Widget _buildTopBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: const Color(0xF0111714),
         borderRadius: BorderRadius.circular(8),
@@ -340,6 +363,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final showSpecBadge = constraints.maxWidth >= 1400;
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: ConstrainedBox(
@@ -357,7 +381,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         borderRadius: BorderRadius.circular(6),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                              horizontal: 8, vertical: 5),
                           decoration: BoxDecoration(
                             color: const Color(0xFF1A231E),
                             borderRadius: BorderRadius.circular(6),
@@ -368,7 +392,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             children: [
                               Icon(Icons.arrow_back,
                                   size: 14, color: Color(0xFFC9D1D9)),
-                              SizedBox(width: 6),
+                              SizedBox(width: 5),
                               Text(
                                 'EXIT TEST DRIVE',
                                 style: TextStyle(
@@ -382,7 +406,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           ),
                         ),
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 10),
 
                       // Godot Engine title & status
                       Container(
@@ -393,7 +417,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       const Text(
                         'GODOT 4 VEHICLE SIMULATOR',
                         style: TextStyle(
@@ -403,31 +427,33 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           letterSpacing: 0.8,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1A231E),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: const Color(0xFF223127)),
-                        ),
-                        child: Text(
-                          '${_sim.drive} • ${_sim.mass.toInt()}KG • ${_sim.engineForce.toInt()}HP',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF86978C),
-                            letterSpacing: 0.4,
+                      if (showSpecBadge) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF223127)),
+                          ),
+                          child: Text(
+                            '${_sim.drive} • ${_sim.mass.toInt()}KG • ${_sim.engineForce.toInt()}HP',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF86978C),
+                              letterSpacing: 0.4,
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
 
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
 
-                  // Right Cluster: Camera & Reset
+                  // Right Cluster: Camera, Surface, Lighting, Fullscreen, Reset
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -437,13 +463,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         children: CameraMode.values.map((mode) {
                           final isSel = _cameraMode == mode;
                           return Padding(
-                            padding: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.only(left: 4),
                             child: InkWell(
                               onTap: () => setState(() => _cameraMode = mode),
                               borderRadius: BorderRadius.circular(5),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
+                                    horizontal: 6, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: isSel
                                       ? const Color(0xFF1A231E)
@@ -458,7 +484,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                                 child: Text(
                                   mode.name.toUpperCase(),
                                   style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 9.5,
                                     fontWeight: isSel
                                         ? FontWeight.w700
                                         : FontWeight.w500,
@@ -473,7 +499,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         }).toList(),
                       ),
 
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
 
                       // Track Surface Selector (Circuit, Skidpad, Runway, Matrix)
                       PopupMenuButton<TrackSurfaceStyle>(
@@ -527,7 +553,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         }).toList(),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 7, vertical: 4),
                           decoration: BoxDecoration(
                             color: const Color(0xFF1A231E),
                             borderRadius: BorderRadius.circular(5),
@@ -539,7 +565,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             children: [
                               Icon(_trackStyle.icon,
                                   size: 13, color: const Color(0xFF10B981)),
-                              const SizedBox(width: 5),
+                              const SizedBox(width: 4),
                               Text(
                                 _trackStyle.shortName,
                                 style: const TextStyle(
@@ -557,7 +583,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         ),
                       ),
 
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
 
                       // Time of Day / Lighting Selector (Day Bright, Sunset, Night)
                       PopupMenuButton<TestDriveLighting>(
@@ -610,7 +636,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         }).toList(),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 7, vertical: 4),
                           decoration: BoxDecoration(
                             color: const Color(0xFF1A231E),
                             borderRadius: BorderRadius.circular(5),
@@ -622,7 +648,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             children: [
                               Icon(_lighting.icon,
                                   size: 13, color: const Color(0xFF10B981)),
-                              const SizedBox(width: 5),
+                              const SizedBox(width: 4),
                               Text(
                                 _lighting.shortName,
                                 style: const TextStyle(
@@ -640,7 +666,56 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         ),
                       ),
 
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 6),
+
+                      // Fullscreen toggle button
+                      InkWell(
+                        onTap: _toggleFullscreen,
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _isFullscreen
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: _isFullscreen
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFF223127),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isFullscreen
+                                    ? Icons.fullscreen_exit_rounded
+                                    : Icons.fullscreen_rounded,
+                                size: 15,
+                                color: _isFullscreen
+                                    ? const Color(0xFF041D14)
+                                    : const Color(0xFFF0FDF4),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _isFullscreen ? 'EXIT FULL (F)' : 'FULLSCREEN (F)',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _isFullscreen
+                                      ? const Color(0xFF041D14)
+                                      : const Color(0xFFF0FDF4),
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 6),
 
                       // Reset button
                       InkWell(
@@ -648,7 +723,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         borderRadius: BorderRadius.circular(6),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                              horizontal: 8, vertical: 5),
                           decoration: BoxDecoration(
                             color: const Color(0xFF1A231E),
                             borderRadius: BorderRadius.circular(6),
@@ -659,11 +734,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             children: [
                               Icon(Icons.refresh,
                                   size: 14, color: Color(0xFFC9D1D9)),
-                              SizedBox(width: 5),
+                              SizedBox(width: 4),
                               Text(
                                 'RESET (R)',
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10.5,
                                   fontWeight: FontWeight.w600,
                                   color: Color(0xFFC9D1D9),
                                 ),
@@ -697,7 +772,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           Icon(Icons.keyboard, size: 13, color: Color(0xFF86978C)),
           SizedBox(width: 6),
           Text(
-            'WASD / ARROWS: Drive  •  SPACE: Handbrake  •  C: Camera  •  R: Reset  •  ESC: Exit',
+            'WASD / ARROWS: Drive  •  SPACE: Handbrake  •  C: Camera  •  F: Fullscreen  •  R: Reset  •  ESC: Exit',
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
@@ -1121,7 +1196,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
           // RPM Tachometer Bar
           SizedBox(
-            width: 170,
+            width: 195,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

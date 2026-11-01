@@ -513,5 +513,39 @@ void main() {
       expect(find.byTooltip('Environment Lighting: Day Bright'), findsOneWidget);
       expect(find.byTooltip('Track Surface: Circuit Asphalt'), findsOneWidget);
     });
+
+    testWidgets(
+        'toggles fullscreen mode in TestDriveViewport with button',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: true),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final fsBtn = find.text('FULLSCREEN (F)');
+      expect(fsBtn, findsOneWidget);
+      await tester.ensureVisible(fsBtn);
+
+      await tester.tap(fsBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      final exitFsBtn = find.text('EXIT FULL (F)');
+      expect(exitFsBtn, findsOneWidget);
+      await tester.ensureVisible(exitFsBtn);
+
+      await tester.tap(exitFsBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('FULLSCREEN (F)'), findsOneWidget);
+    });
   });
 }
