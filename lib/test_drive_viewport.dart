@@ -240,7 +240,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           if (_cameraMode == CameraMode.orbit) {
             setState(() {
               _orbitAzimuth -= details.delta.dx * 0.008;
-              _orbitElevation = (_orbitElevation - details.delta.dy * 0.008)
+              _orbitElevation = (_orbitElevation + details.delta.dy * 0.008)
                   .clamp(0.05, 1.4);
             });
           }

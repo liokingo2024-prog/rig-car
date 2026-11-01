@@ -154,9 +154,10 @@ class _WireframeViewerState extends State<WireframeViewer>
                 onPanUpdate: (details) {
                   setState(() {
                     // Natural orbit: dragging right rotates model right; dragging up tilts view up.
+                    // Both axes maintain unified polarity across natural and inverted modes.
                     final factor = _invertDrag ? 1.0 : -1.0;
                     _azimuth += factor * details.delta.dx * 0.01;
-                    _elevation = (_elevation + factor * details.delta.dy * 0.01)
+                    _elevation = (_elevation - factor * details.delta.dy * 0.01)
                         .clamp(-1.5, 1.5);
                   });
                 },

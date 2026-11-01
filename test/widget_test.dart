@@ -441,5 +441,29 @@ void main() {
 
       expect(find.text('GODOT 4 VEHICLE SIMULATOR'), findsOneWidget);
     });
+
+    testWidgets('toggles natural and inverted controls in 3D wireframe viewer',
+        (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: RigWorkbenchPage(startInTestDrive: false),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Find invert controls toggle button by tooltip
+      final invertButton = find.byTooltip('Controls: Natural (Click for Inverted)');
+      expect(invertButton, findsOneWidget);
+
+      await tester.tap(invertButton);
+      await tester.pump();
+
+      expect(find.byTooltip('Controls: Inverted (Click for Natural)'), findsOneWidget);
+    });
   });
 }
