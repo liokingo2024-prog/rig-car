@@ -917,16 +917,61 @@ class _WireframeScenePainter extends CustomPainter {
     final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.6;
     final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.6;
 
-    final shadowPaint = Paint()
-      ..color = const Color(0x35000000)
+    final centerX = (minX + maxX) * 0.5;
+    final centerZ = (minZ + maxZ) * 0.5;
+    final halfW = (maxX - minX) * 0.5;
+    final halfL = (maxZ - minZ) * 0.5;
+
+    // Smooth multi-layer ambient occlusion hull
+    List<Vec3> makeHull(double wScale, double lScale, double y) {
+      const segs = 16;
+      final verts = <Vec3>[];
+      for (var i = 0; i < segs; i++) {
+        final a = i * 2 * pi / segs;
+        final x = centerX + sin(a) * halfW * wScale;
+        final z = centerZ + cos(a) * halfL * lScale;
+        verts.add(Vec3(x, y, z));
+      }
+      return verts;
+    }
+
+    // Outer soft penumbra
+    final outerVerts = makeHull(1.28, 1.22, groundY);
+    _drawClippedPolygon(canvas, viewProj, size, outerVerts,
+        Paint()..color = const Color(0x18000000)..style = PaintingStyle.fill);
+
+    // Middle ambient occlusion
+    final midVerts = makeHull(1.05, 1.05, groundY + 0.001);
+    _drawClippedPolygon(canvas, viewProj, size, midVerts,
+        Paint()..color = const Color(0x35000000)..style = PaintingStyle.fill);
+
+    // Inner contact core under chassis
+    final innerVerts = makeHull(0.82, 0.82, groundY + 0.002);
+    _drawClippedPolygon(canvas, viewProj, size, innerVerts,
+        Paint()..color = const Color(0x65000000)..style = PaintingStyle.fill);
+
+    // Tire contact footprints directly under the 4 wheels
+    final wheelPositions = [
+      Vec3(minX * 0.95, groundY + 0.003, minZ * 0.78),
+      Vec3(maxX * 0.95, groundY + 0.003, minZ * 0.78),
+      Vec3(minX * 0.95, groundY + 0.003, maxZ * 0.78),
+      Vec3(maxX * 0.95, groundY + 0.003, maxZ * 0.78),
+    ];
+
+    const tireHalfW = 0.14;
+    const tireHalfL = 0.28;
+    final tirePaint = Paint()
+      ..color = const Color(0x95000000)
       ..style = PaintingStyle.fill;
 
-    _drawClippedPolygon(canvas, viewProj, size, [
-      Vec3(minX, groundY, minZ),
-      Vec3(maxX, groundY, minZ),
-      Vec3(maxX, groundY, maxZ),
-      Vec3(minX, groundY, maxZ),
-    ], shadowPaint);
+    for (final wp in wheelPositions) {
+      _drawClippedPolygon(canvas, viewProj, size, [
+        Vec3(wp.x - tireHalfW, wp.y, wp.z - tireHalfL),
+        Vec3(wp.x + tireHalfW, wp.y, wp.z - tireHalfL),
+        Vec3(wp.x + tireHalfW, wp.y, wp.z + tireHalfL),
+        Vec3(wp.x - tireHalfW, wp.y, wp.z + tireHalfL),
+      ], tirePaint);
+    }
   }
 
   void _drawCadGrid(
