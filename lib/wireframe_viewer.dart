@@ -760,7 +760,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
 
     // ── 1. Draw 3D Ground Surface Grid ───────────────────────────────────────
-    _drawGroundSurface(canvas, size, projectPoint);
+    _drawGroundSurface(canvas, size, viewProj, projectPoint);
 
     // ── 2. Draw Model Wireframe OR Procedural Rig ────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
@@ -775,27 +775,131 @@ class _WireframeScenePainter extends CustomPainter {
     }
   }
 
+  void _drawClippedLine(
+    Canvas canvas,
+    Mat4 viewProj,
+    Size size,
+    Vec3 p0,
+    Vec3 p1,
+    Paint paint,
+  ) {
+    final c0 = viewProj.transformClip(p0);
+    final c1 = viewProj.transformClip(p1);
+    const wMin = 0.05;
+
+    final in0 = c0[3] >= wMin;
+    final in1 = c1[3] >= wMin;
+
+    if (!in0 && !in1) return;
+
+    List<double> final0 = c0;
+    List<double> final1 = c1;
+
+    if (in0 && !in1) {
+      final t = (wMin - c0[3]) / (c1[3] - c0[3]);
+      final1 = [
+        c0[0] + t * (c1[0] - c0[0]),
+        c0[1] + t * (c1[1] - c0[1]),
+        c0[2] + t * (c1[2] - c0[2]),
+        wMin,
+      ];
+    } else if (!in0 && in1) {
+      final t = (wMin - c0[3]) / (c1[3] - c0[3]);
+      final0 = [
+        c0[0] + t * (c1[0] - c0[0]),
+        c0[1] + t * (c1[1] - c0[1]),
+        c0[2] + t * (c1[2] - c0[2]),
+        wMin,
+      ];
+    }
+
+    final sx0 = (final0[0] / final0[3] * 0.5 + 0.5) * size.width + panX;
+    final sy0 = (1.0 - (final0[1] / final0[3] * 0.5 + 0.5)) * size.height + panY;
+    final sx1 = (final1[0] / final1[3] * 0.5 + 0.5) * size.width + panX;
+    final sy1 = (1.0 - (final1[1] / final1[3] * 0.5 + 0.5)) * size.height + panY;
+
+    canvas.drawLine(Offset(sx0, sy0), Offset(sx1, sy1), paint);
+  }
+
+  void _drawClippedPolygon(
+    Canvas canvas,
+    Mat4 viewProj,
+    Size size,
+    List<Vec3> worldVertices,
+    Paint paint,
+  ) {
+    const wMin = 0.05;
+    final clips = worldVertices.map((v) => viewProj.transformClip(v)).toList();
+
+    final outClips = <List<double>>[];
+    for (var i = 0; i < clips.length; i++) {
+      final cur = clips[i];
+      final next = clips[(i + 1) % clips.length];
+      final curIn = cur[3] >= wMin;
+      final nextIn = next[3] >= wMin;
+
+      if (curIn && nextIn) {
+        outClips.add(next);
+      } else if (curIn && !nextIn) {
+        final t = (wMin - cur[3]) / (next[3] - cur[3]);
+        outClips.add([
+          cur[0] + t * (next[0] - cur[0]),
+          cur[1] + t * (next[1] - cur[1]),
+          cur[2] + t * (next[2] - cur[2]),
+          wMin,
+        ]);
+      } else if (!curIn && nextIn) {
+        final t = (wMin - cur[3]) / (next[3] - cur[3]);
+        outClips.add([
+          cur[0] + t * (next[0] - cur[0]),
+          cur[1] + t * (next[1] - cur[1]),
+          cur[2] + t * (next[2] - cur[2]),
+          wMin,
+        ]);
+        outClips.add(next);
+      }
+    }
+
+    if (outClips.length < 3) return;
+
+    final path = Path();
+    for (var i = 0; i < outClips.length; i++) {
+      final c = outClips[i];
+      final w = c[3];
+      final sx = (c[0] / w * 0.5 + 0.5) * size.width + panX;
+      final sy = (1.0 - (c[1] / w * 0.5 + 0.5)) * size.height + panY;
+      if (i == 0) {
+        path.moveTo(sx, sy);
+      } else {
+        path.lineTo(sx, sy);
+      }
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
   void _drawGroundSurface(
     Canvas canvas,
     Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     final groundY = model?.worldBBox.lo.y ?? 0.0;
 
     // Contact shadow beneath car chassis is always rendered for depth
-    _drawContactShadow(canvas, project, groundY);
+    _drawContactShadow(canvas, viewProj, size, groundY);
 
     if (gridStyle == GroundGridStyle.off) return;
 
     switch (gridStyle) {
       case GroundGridStyle.cad:
-        _drawCadGrid(canvas, project, groundY);
+        _drawCadGrid(canvas, viewProj, size, groundY);
       case GroundGridStyle.radial:
-        _drawRadialGrid(canvas, project, groundY);
+        _drawRadialGrid(canvas, viewProj, size, groundY);
       case GroundGridStyle.hex:
-        _drawHexGrid(canvas, project, groundY);
+        _drawHexGrid(canvas, viewProj, size, groundY);
       case GroundGridStyle.checker:
-        _drawCheckerGrid(canvas, project, groundY);
+        _drawCheckerGrid(canvas, viewProj, size, groundY);
       case GroundGridStyle.off:
         break;
     }
@@ -803,7 +907,8 @@ class _WireframeScenePainter extends CustomPainter {
 
   void _drawContactShadow(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
   ) {
     final bbox = model?.worldBBox;
@@ -812,28 +917,22 @@ class _WireframeScenePainter extends CustomPainter {
     final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.6;
     final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.6;
 
-    final p0 = project(Vec3(minX, groundY, minZ));
-    final p1 = project(Vec3(maxX, groundY, minZ));
-    final p2 = project(Vec3(maxX, groundY, maxZ));
-    final p3 = project(Vec3(minX, groundY, maxZ));
+    final shadowPaint = Paint()
+      ..color = const Color(0x35000000)
+      ..style = PaintingStyle.fill;
 
-    if (p0 != null && p1 != null && p2 != null && p3 != null) {
-      final shadowPath = Path()
-        ..moveTo(p0.dx, p0.dy)
-        ..lineTo(p1.dx, p1.dy)
-        ..lineTo(p2.dx, p2.dy)
-        ..lineTo(p3.dx, p3.dy)
-        ..close();
-      final shadowPaint = Paint()
-        ..color = const Color(0x35000000)
-        ..style = PaintingStyle.fill;
-      canvas.drawPath(shadowPath, shadowPaint);
-    }
+    _drawClippedPolygon(canvas, viewProj, size, [
+      Vec3(minX, groundY, minZ),
+      Vec3(maxX, groundY, minZ),
+      Vec3(maxX, groundY, maxZ),
+      Vec3(minX, groundY, maxZ),
+    ], shadowPaint);
   }
 
   void _drawCadGrid(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
   ) {
     final minorGridPaint = Paint()
@@ -855,49 +954,50 @@ class _WireframeScenePainter extends CustomPainter {
     for (var x = -extent; x <= extent; x += step) {
       final isMajor = (x.abs() - x.abs().round()).abs() < 0.05;
       final isAxis = x.abs() < 0.05;
-      final p0 = project(Vec3(x, groundY, -extent));
-      final p1 = project(Vec3(x, groundY, extent));
-      if (p0 != null && p1 != null) {
-        canvas.drawLine(
-          p0,
-          p1,
-          isAxis ? axisZPaint : (isMajor ? majorGridPaint : minorGridPaint),
-        );
-      }
+      final paint =
+          isAxis ? axisZPaint : (isMajor ? majorGridPaint : minorGridPaint);
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(x, groundY, -extent),
+        Vec3(x, groundY, extent),
+        paint,
+      );
     }
     for (var z = -extent; z <= extent; z += step) {
       final isMajor = (z.abs() - z.abs().round()).abs() < 0.05;
       final isAxis = z.abs() < 0.05;
-      final p0 = project(Vec3(-extent, groundY, z));
-      final p1 = project(Vec3(extent, groundY, z));
-      if (p0 != null && p1 != null) {
-        canvas.drawLine(
-          p0,
-          p1,
-          isAxis ? axisXPaint : (isMajor ? majorGridPaint : minorGridPaint),
-        );
-      }
+      final paint =
+          isAxis ? axisXPaint : (isMajor ? majorGridPaint : minorGridPaint);
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-extent, groundY, z),
+        Vec3(extent, groundY, z),
+        paint,
+      );
     }
 
     // Outer boundary frame
-    final b0 = project(Vec3(-extent, groundY, -extent));
-    final b1 = project(Vec3(extent, groundY, -extent));
-    final b2 = project(Vec3(extent, groundY, extent));
-    final b3 = project(Vec3(-extent, groundY, extent));
-    if (b0 != null && b1 != null && b2 != null && b3 != null) {
-      final framePaint = Paint()
-        ..color = const Color(0x4010B981)
-        ..strokeWidth = 1.3;
-      canvas.drawLine(b0, b1, framePaint);
-      canvas.drawLine(b1, b2, framePaint);
-      canvas.drawLine(b2, b3, framePaint);
-      canvas.drawLine(b3, b0, framePaint);
-    }
+    final framePaint = Paint()
+      ..color = const Color(0x4010B981)
+      ..strokeWidth = 1.3;
+    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, -extent),
+        Vec3(extent, groundY, -extent), framePaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(extent, groundY, -extent),
+        Vec3(extent, groundY, extent), framePaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(extent, groundY, extent),
+        Vec3(-extent, groundY, extent), framePaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, extent),
+        Vec3(-extent, groundY, -extent), framePaint);
   }
 
   void _drawRadialGrid(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
   ) {
     final ringPaint = Paint()
@@ -924,21 +1024,17 @@ class _WireframeScenePainter extends CustomPainter {
       final isOuterRim = rIdx == radii.length - 1;
       final paint = isOuterRim ? rimPaint : ringPaint;
 
-      Offset? prev;
-      Offset? first;
-      for (var i = 0; i <= segments; i++) {
-        final angle = i * 2 * pi / segments;
-        final curr = project(Vec3(r * cos(angle), groundY, r * sin(angle)));
-        if (curr != null) {
-          first ??= curr;
-          if (prev != null) {
-            canvas.drawLine(prev, curr, paint);
-          }
-          prev = curr;
-        }
-      }
-      if (prev != null && first != null) {
-        canvas.drawLine(prev, first, paint);
+      for (var i = 0; i < segments; i++) {
+        final a0 = i * 2 * pi / segments;
+        final a1 = (i + 1) * 2 * pi / segments;
+        _drawClippedLine(
+          canvas,
+          viewProj,
+          size,
+          Vec3(r * cos(a0), groundY, r * sin(a0)),
+          Vec3(r * cos(a1), groundY, r * sin(a1)),
+          paint,
+        );
       }
     }
 
@@ -948,11 +1044,14 @@ class _WireframeScenePainter extends CustomPainter {
     for (var i = 0; i < spokeCount; i++) {
       final angle = i * 2 * pi / spokeCount;
       final isCardinal = i % 3 == 0;
-      final p0 = project(Vec3(0, groundY, 0));
-      final p1 = project(Vec3(maxR * cos(angle), groundY, maxR * sin(angle)));
-      if (p0 != null && p1 != null) {
-        canvas.drawLine(p0, p1, isCardinal ? axisSpokePaint : spokePaint);
-      }
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(0, groundY, 0),
+        Vec3(maxR * cos(angle), groundY, maxR * sin(angle)),
+        isCardinal ? axisSpokePaint : spokePaint,
+      );
     }
 
     // Degree tick marks on 3.5m ring
@@ -964,17 +1063,21 @@ class _WireframeScenePainter extends CustomPainter {
       ..strokeWidth = 1.0;
     for (var i = 0; i < tickCount; i++) {
       final angle = i * 2 * pi / tickCount;
-      final t0 = project(Vec3(tickR1 * cos(angle), groundY, tickR1 * sin(angle)));
-      final t1 = project(Vec3(tickR2 * cos(angle), groundY, tickR2 * sin(angle)));
-      if (t0 != null && t1 != null) {
-        canvas.drawLine(t0, t1, tickPaint);
-      }
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(tickR1 * cos(angle), groundY, tickR1 * sin(angle)),
+        Vec3(tickR2 * cos(angle), groundY, tickR2 * sin(angle)),
+        tickPaint,
+      );
     }
   }
 
   void _drawHexGrid(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
   ) {
     final hexPaint = Paint()
@@ -983,9 +1086,6 @@ class _WireframeScenePainter extends CustomPainter {
     final hexCenterPaint = Paint()
       ..color = const Color(0x4534D399)
       ..strokeWidth = 1.2;
-    final dotPaint = Paint()
-      ..color = const Color(0x5510B981)
-      ..style = PaintingStyle.fill;
 
     const r = 0.65;
     const dx = 1.5 * r;
@@ -1002,24 +1102,17 @@ class _WireframeScenePainter extends CustomPainter {
         final isCenter = dist < 1.5;
         final currentPaint = isCenter ? hexCenterPaint : hexPaint;
 
-        Offset? prev;
-        Offset? first;
         for (var i = 0; i < 6; i++) {
           final a0 = i * pi / 3.0;
-          final p = project(Vec3(cx + r * cos(a0), groundY, cz + r * sin(a0)));
-          if (p != null) {
-            first ??= p;
-            if (prev != null) {
-              canvas.drawLine(prev, p, currentPaint);
-            }
-            prev = p;
-            if (isCenter) {
-              canvas.drawCircle(p, 1.2, dotPaint);
-            }
-          }
-        }
-        if (prev != null && first != null) {
-          canvas.drawLine(prev, first, currentPaint);
+          final a1 = (i + 1) * pi / 3.0;
+          _drawClippedLine(
+            canvas,
+            viewProj,
+            size,
+            Vec3(cx + r * cos(a0), groundY, cz + r * sin(a0)),
+            Vec3(cx + r * cos(a1), groundY, cz + r * sin(a1)),
+            currentPaint,
+          );
         }
       }
     }
@@ -1027,7 +1120,8 @@ class _WireframeScenePainter extends CustomPainter {
 
   void _drawCheckerGrid(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
   ) {
     const extent = 4.0;
@@ -1053,30 +1147,22 @@ class _WireframeScenePainter extends CustomPainter {
             (((x + extent) / step).round() + ((z + extent) / step).round()) %
                     2 ==
                 0;
-        final p0 = project(Vec3(x, groundY, z));
-        final p1 = project(Vec3(x + step, groundY, z));
-        final p2 = project(Vec3(x + step, groundY, z + step));
-        final p3 = project(Vec3(x, groundY, z + step));
+        final poly = [
+          Vec3(x, groundY, z),
+          Vec3(x + step, groundY, z),
+          Vec3(x + step, groundY, z + step),
+          Vec3(x, groundY, z + step),
+        ];
 
-        if (p0 != null && p1 != null && p2 != null && p3 != null) {
-          final path = Path()
-            ..moveTo(p0.dx, p0.dy)
-            ..lineTo(p1.dx, p1.dy)
-            ..lineTo(p2.dx, p2.dy)
-            ..lineTo(p3.dx, p3.dy)
-            ..close();
-          canvas.drawPath(path, isEven ? fillPaintA : fillPaintB);
-          canvas.drawPath(path, borderPaint);
-        }
+        _drawClippedPolygon(canvas, viewProj, size, poly, isEven ? fillPaintA : fillPaintB);
+        _drawClippedPolygon(canvas, viewProj, size, poly, borderPaint);
       }
     }
 
-    final x0 = project(Vec3(-extent, groundY, 0));
-    final x1 = project(Vec3(extent, groundY, 0));
-    final z0 = project(Vec3(0, groundY, -extent));
-    final z1 = project(Vec3(0, groundY, extent));
-    if (x0 != null && x1 != null) canvas.drawLine(x0, x1, centerCrossPaint);
-    if (z0 != null && z1 != null) canvas.drawLine(z0, z1, centerCrossPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, 0),
+        Vec3(extent, groundY, 0), centerCrossPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, -extent),
+        Vec3(0, groundY, extent), centerCrossPaint);
   }
 
   void _drawModelWireframe(

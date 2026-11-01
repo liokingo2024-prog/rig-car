@@ -1301,7 +1301,7 @@ class _TestDriveScenePainter extends CustomPainter {
     }
 
     // 2. Draw Asphalt Runway & Grid
-    _drawTrack(canvas, size, projectPoint);
+    _drawTrack(canvas, size, viewProj, projectPoint);
 
     // 3. Draw Tire Skid Marks
     _drawSkidMarks(canvas, projectPoint);
@@ -1424,47 +1424,141 @@ class _TestDriveScenePainter extends CustomPainter {
   void _drawTrack(
     Canvas canvas,
     Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     switch (trackStyle) {
       case TrackSurfaceStyle.circuit:
-        _drawCircuitAsphalt(canvas, project);
+        _drawCircuitAsphalt(canvas, size, viewProj, project);
       case TrackSurfaceStyle.skidpad:
-        _drawSkidpadAsphalt(canvas, project);
+        _drawSkidpadAsphalt(canvas, size, viewProj, project);
       case TrackSurfaceStyle.dragstrip:
-        _drawDragstripAsphalt(canvas, project);
+        _drawDragstripAsphalt(canvas, size, viewProj, project);
       case TrackSurfaceStyle.cyberGrid:
-        _drawCyberGridAsphalt(canvas, project);
+        _drawCyberGridAsphalt(canvas, size, viewProj, project);
     }
+  }
+
+  void _drawClippedLine(
+    Canvas canvas,
+    Mat4 viewProj,
+    Size size,
+    Vec3 p0,
+    Vec3 p1,
+    Paint paint,
+  ) {
+    final c0 = viewProj.transformClip(p0);
+    final c1 = viewProj.transformClip(p1);
+    const wMin = 0.05;
+
+    final in0 = c0[3] >= wMin;
+    final in1 = c1[3] >= wMin;
+
+    if (!in0 && !in1) return;
+
+    List<double> final0 = c0;
+    List<double> final1 = c1;
+
+    if (in0 && !in1) {
+      final t = (wMin - c0[3]) / (c1[3] - c0[3]);
+      final1 = [
+        c0[0] + t * (c1[0] - c0[0]),
+        c0[1] + t * (c1[1] - c0[1]),
+        c0[2] + t * (c1[2] - c0[2]),
+        wMin,
+      ];
+    } else if (!in0 && in1) {
+      final t = (wMin - c0[3]) / (c1[3] - c0[3]);
+      final0 = [
+        c0[0] + t * (c1[0] - c0[0]),
+        c0[1] + t * (c1[1] - c0[1]),
+        c0[2] + t * (c1[2] - c0[2]),
+        wMin,
+      ];
+    }
+
+    final sx0 = (final0[0] / final0[3] * 0.5 + 0.5) * size.width;
+    final sy0 = (1.0 - (final0[1] / final0[3] * 0.5 + 0.5)) * size.height;
+    final sx1 = (final1[0] / final1[3] * 0.5 + 0.5) * size.width;
+    final sy1 = (1.0 - (final1[1] / final1[3] * 0.5 + 0.5)) * size.height;
+
+    canvas.drawLine(Offset(sx0, sy0), Offset(sx1, sy1), paint);
+  }
+
+  void _drawClippedPolygon(
+    Canvas canvas,
+    Mat4 viewProj,
+    Size size,
+    List<Vec3> worldVertices,
+    Paint paint,
+  ) {
+    const wMin = 0.05;
+    final clips = worldVertices.map((v) => viewProj.transformClip(v)).toList();
+
+    final outClips = <List<double>>[];
+    for (var i = 0; i < clips.length; i++) {
+      final cur = clips[i];
+      final next = clips[(i + 1) % clips.length];
+      final curIn = cur[3] >= wMin;
+      final nextIn = next[3] >= wMin;
+
+      if (curIn && nextIn) {
+        outClips.add(next);
+      } else if (curIn && !nextIn) {
+        final t = (wMin - cur[3]) / (next[3] - cur[3]);
+        outClips.add([
+          cur[0] + t * (next[0] - cur[0]),
+          cur[1] + t * (next[1] - cur[1]),
+          cur[2] + t * (next[2] - cur[2]),
+          wMin,
+        ]);
+      } else if (!curIn && nextIn) {
+        final t = (wMin - cur[3]) / (next[3] - cur[3]);
+        outClips.add([
+          cur[0] + t * (next[0] - cur[0]),
+          cur[1] + t * (next[1] - cur[1]),
+          cur[2] + t * (next[2] - cur[2]),
+          wMin,
+        ]);
+        outClips.add(next);
+      }
+    }
+
+    if (outClips.length < 3) return;
+
+    final path = Path();
+    for (var i = 0; i < outClips.length; i++) {
+      final c = outClips[i];
+      final w = c[3];
+      final sx = (c[0] / w * 0.5 + 0.5) * size.width;
+      final sy = (1.0 - (c[1] / w * 0.5 + 0.5)) * size.height;
+      if (i == 0) {
+        path.moveTo(sx, sy);
+      } else {
+        path.lineTo(sx, sy);
+      }
+    }
+    path.close();
+    canvas.drawPath(path, paint);
   }
 
   void _drawQuad(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     Vec3 p0,
     Vec3 p1,
     Vec3 p2,
     Vec3 p3,
     Paint paint,
   ) {
-    final s0 = project(p0);
-    final s1 = project(p1);
-    final s2 = project(p2);
-    final s3 = project(p3);
-    if (s0 != null && s1 != null && s2 != null && s3 != null) {
-      final path = Path()
-        ..moveTo(s0.dx, s0.dy)
-        ..lineTo(s1.dx, s1.dy)
-        ..lineTo(s2.dx, s2.dy)
-        ..lineTo(s3.dx, s3.dy)
-        ..close();
-      canvas.drawPath(path, paint);
-    }
+    _drawClippedPolygon(canvas, viewProj, size, [p0, p1, p2, p3], paint);
   }
 
   void _drawCheckeredLine(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
     double zPos,
     double width,
@@ -1490,7 +1584,8 @@ class _TestDriveScenePainter extends CustomPainter {
         final isWhite = (r + c) % 2 == 0;
         _drawQuad(
           canvas,
-          project,
+          viewProj,
+          size,
           Vec3(x0, groundY, z0),
           Vec3(x1, groundY, z0),
           Vec3(x1, groundY, z1),
@@ -1503,67 +1598,100 @@ class _TestDriveScenePainter extends CustomPainter {
 
   void _drawDistanceBoard(
     Canvas canvas,
-    Offset? Function(Vec3) project,
+    Mat4 viewProj,
+    Size size,
     double groundY,
     double zPos,
     double xPos,
   ) {
-    final post0 = project(Vec3(xPos, groundY, zPos));
-    final post1 = project(Vec3(xPos, groundY + 1.8, zPos));
-    final board0 = project(Vec3(xPos - 0.7, groundY + 1.0, zPos));
-    final board1 = project(Vec3(xPos + 0.7, groundY + 2.2, zPos));
+    final postPaint = Paint()
+      ..color = const Color(0xFF64748B)
+      ..strokeWidth = 2.5;
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(xPos, groundY, zPos),
+      Vec3(xPos, groundY + 1.8, zPos),
+      postPaint,
+    );
 
-    if (post0 != null && post1 != null) {
-      final postPaint = Paint()
-        ..color = const Color(0xFF64748B)
-        ..strokeWidth = 2.5;
-      canvas.drawLine(post0, post1, postPaint);
-    }
-    if (board0 != null && board1 != null) {
-      final boardRect = Rect.fromPoints(board0, board1);
-      final boardPaint = Paint()
-        ..color = const Color(0xFF0F172A)
-        ..style = PaintingStyle.fill;
-      final borderPaint = Paint()
-        ..color = const Color(0xFFFDE047)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawRect(boardRect, boardPaint);
-      canvas.drawRect(boardRect, borderPaint);
+    final boardPaint = Paint()
+      ..color = const Color(0xFF0F172A)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = const Color(0xFFFDE047)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
 
-      final label = '${(zPos.abs()).toInt()}m';
-      final span = TextSpan(
-        text: label,
-        style: const TextStyle(
-          color: Color(0xFFFDE047),
-          fontSize: 9,
-          fontWeight: FontWeight.w800,
-        ),
-      );
-      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
-        ..layout();
-      tp.paint(canvas, boardRect.center - Offset(tp.width / 2, tp.height / 2));
-    }
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(xPos - 0.7, groundY + 1.0, zPos),
+      Vec3(xPos + 0.7, groundY + 1.0, zPos),
+      Vec3(xPos + 0.7, groundY + 2.2, zPos),
+      Vec3(xPos - 0.7, groundY + 2.2, zPos),
+      boardPaint,
+    );
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(xPos - 0.7, groundY + 1.0, zPos),
+      Vec3(xPos + 0.7, groundY + 1.0, zPos),
+      Vec3(xPos + 0.7, groundY + 2.2, zPos),
+      Vec3(xPos - 0.7, groundY + 2.2, zPos),
+      borderPaint,
+    );
   }
 
   void _drawCircuitAsphalt(
     Canvas canvas,
+    Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
     const trackWidth = 14.0;
     const curbWidth = 1.4;
-    const shoulderWidth = 8.0;
+    const shoulderWidth = 10.0;
 
     final isDay = lighting == TestDriveLighting.day;
     final isSunset = lighting == TestDriveLighting.sunset;
+
+    // Center dynamically around car so track is infinite in both directions
+    final carZ = sim.position.z;
+    const sliceLen = 8.0;
+    final centerZ = (carZ / sliceLen).round() * sliceLen;
+    final zStart = centerZ - 200.0;
+    final zEnd = centerZ + 80.0;
+
+    // Solid Terrain Base underneath everything
+    final terrainColor = isDay
+        ? const Color(0xFF334155)
+        : (isSunset ? const Color(0xFF1C1917) : const Color(0xFF090D0B));
+    final terrainPaint = Paint()
+      ..color = terrainColor
+      ..style = PaintingStyle.fill;
+
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zEnd + 50),
+      Vec3(-350, groundY - 0.05, zEnd + 50),
+      terrainPaint,
+    );
 
     final asphaltColor = isDay
         ? const Color(0xFF1E293B)
         : (isSunset ? const Color(0xFF18181B) : const Color(0xFF0F1713));
     final shoulderColor = isDay
-        ? const Color(0xFF334155)
-        : (isSunset ? const Color(0xFF27272A) : const Color(0xFF0A0F0C));
+        ? const Color(0xFF475569)
+        : (isSunset ? const Color(0xFF27272A) : const Color(0xFF111714));
 
     final asphaltPaint = Paint()
       ..color = asphaltColor
@@ -1584,10 +1712,6 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0xFFF8FAFC)
       ..style = PaintingStyle.fill;
 
-    const zStart = -170.0;
-    const zEnd = 50.0;
-    const sliceLen = 8.0;
-
     for (var z = zStart; z < zEnd; z += sliceLen) {
       final z0 = z;
       final z1 = z + sliceLen;
@@ -1595,7 +1719,8 @@ class _TestDriveScenePainter extends CustomPainter {
       // 1. Asphalt Shoulder Runoff (Left & Right)
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, z0),
         Vec3(-trackWidth - curbWidth, groundY, z0),
         Vec3(-trackWidth - curbWidth, groundY, z1),
@@ -1604,7 +1729,8 @@ class _TestDriveScenePainter extends CustomPainter {
       );
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(trackWidth + curbWidth, groundY, z0),
         Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z0),
         Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z1),
@@ -1615,7 +1741,8 @@ class _TestDriveScenePainter extends CustomPainter {
       // 2. Main Asphalt Roadbed
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(-trackWidth, groundY, z0),
         Vec3(trackWidth, groundY, z0),
         Vec3(trackWidth, groundY, z1),
@@ -1632,7 +1759,8 @@ class _TestDriveScenePainter extends CustomPainter {
 
         _drawQuad(
           canvas,
-          project,
+          viewProj,
+          size,
           Vec3(-trackWidth - curbWidth, groundY, cz),
           Vec3(-trackWidth, groundY, cz),
           Vec3(-trackWidth, groundY, cz1),
@@ -1641,7 +1769,8 @@ class _TestDriveScenePainter extends CustomPainter {
         );
         _drawQuad(
           canvas,
-          project,
+          viewProj,
+          size,
           Vec3(trackWidth, groundY, cz),
           Vec3(trackWidth + curbWidth, groundY, cz),
           Vec3(trackWidth + curbWidth, groundY, cz1),
@@ -1651,42 +1780,67 @@ class _TestDriveScenePainter extends CustomPainter {
       }
 
       // 4. White boundary lines
-      final eL0 = project(Vec3(-trackWidth, groundY, z0));
-      final eL1 = project(Vec3(-trackWidth, groundY, z1));
-      if (eL0 != null && eL1 != null) canvas.drawLine(eL0, eL1, edgeLinePaint);
-
-      final eR0 = project(Vec3(trackWidth, groundY, z0));
-      final eR1 = project(Vec3(trackWidth, groundY, z1));
-      if (eR0 != null && eR1 != null) canvas.drawLine(eR0, eR1, edgeLinePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
+          Vec3(-trackWidth, groundY, z1), edgeLinePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
+          Vec3(trackWidth, groundY, z1), edgeLinePaint);
 
       // 5. Center dashed line
-      final c0 = project(Vec3(0, groundY, z0));
-      final c1 = project(Vec3(0, groundY, z0 + sliceLen * 0.55));
-      if (c0 != null && c1 != null) canvas.drawLine(c0, c1, centerDashPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
+          Vec3(0, groundY, z0 + sliceLen * 0.55), centerDashPaint);
     }
 
-    // 6. Checkered Start Line at Z = 24
-    _drawCheckeredLine(canvas, project, groundY, 24.0, trackWidth);
+    // 6. Checkered Start Line (if within range of start grid at Z = 24)
+    if ((centerZ - 24.0).abs() < 140.0) {
+      _drawCheckeredLine(canvas, viewProj, size, groundY, 24.0, trackWidth);
+    }
 
-    // 7. Distance marker boards
-    final markerDistances = [0, -50, -100, -150];
-    for (final mz in markerDistances) {
+    // 7. Distance marker boards every 50m
+    final minBoardZ = ((zStart / 50).floor() * 50).toDouble();
+    final maxBoardZ = ((zEnd / 50).ceil() * 50).toDouble();
+    for (var bz = minBoardZ; bz <= maxBoardZ; bz += 50.0) {
       _drawDistanceBoard(
-          canvas, project, groundY, mz.toDouble(), trackWidth + curbWidth + 2.5);
+          canvas, viewProj, size, groundY, bz, trackWidth + curbWidth + 2.5);
     }
   }
 
   void _drawSkidpadAsphalt(
     Canvas canvas,
+    Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
-    const padWidth = 34.0;
-    const zStart = -170.0;
-    const zEnd = 50.0;
-    const sliceLen = 10.0;
+    const padWidth = 42.0;
 
     final isDay = lighting == TestDriveLighting.day;
+    final carZ = sim.position.z;
+    const sliceLen = 10.0;
+    final centerZ = (carZ / sliceLen).round() * sliceLen;
+    final zStart = centerZ - 200.0;
+    final zEnd = centerZ + 80.0;
+
+    // Solid Terrain Base underneath
+    final terrainColor = isDay
+        ? const Color(0xFF334155)
+        : (lighting == TestDriveLighting.sunset
+            ? const Color(0xFF1C1917)
+            : const Color(0xFF090D0B));
+    final terrainPaint = Paint()
+      ..color = terrainColor
+      ..style = PaintingStyle.fill;
+
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zEnd + 50),
+      Vec3(-350, groundY - 0.05, zEnd + 50),
+      terrainPaint,
+    );
+
     final asphaltColor = isDay
         ? const Color(0xFF1E293B)
         : (lighting == TestDriveLighting.sunset
@@ -1702,24 +1856,22 @@ class _TestDriveScenePainter extends CustomPainter {
     for (var z = zStart; z < zEnd; z += sliceLen) {
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(-padWidth, groundY, z),
         Vec3(padWidth, groundY, z),
         Vec3(padWidth, groundY, z + sliceLen),
         Vec3(-padWidth, groundY, z + sliceLen),
         asphaltPaint,
       );
-      final bL0 = project(Vec3(-padWidth, groundY, z));
-      final bL1 = project(Vec3(-padWidth, groundY, z + sliceLen));
-      if (bL0 != null && bL1 != null) canvas.drawLine(bL0, bL1, borderPaint);
-
-      final bR0 = project(Vec3(padWidth, groundY, z));
-      final bR1 = project(Vec3(padWidth, groundY, z + sliceLen));
-      if (bR0 != null && bR1 != null) canvas.drawLine(bR0, bR1, borderPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, z),
+          Vec3(-padWidth, groundY, z + sliceLen), borderPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(padWidth, groundY, z),
+          Vec3(padWidth, groundY, z + sliceLen), borderPaint);
     }
 
-    // Concentric drift test circles centered at (0, 0, -25)
-    final circleCenter = const Vec3(0, groundY, -25);
+    // Concentric drift test circles centered at (0, 0, centerZ)
+    final circleCenter = Vec3(0, groundY, centerZ);
     final radii = [8.0, 16.0, 26.0, 38.0];
     final circlePaintA = Paint()
       ..color = const Color(0x90FBBF24)
@@ -1734,50 +1886,73 @@ class _TestDriveScenePainter extends CustomPainter {
     for (var rIdx = 0; rIdx < radii.length; rIdx++) {
       final r = radii[rIdx];
       final paint = (rIdx % 2 == 0) ? circlePaintA : circlePaintB;
-      Offset? prev;
-      Offset? first;
-      for (var i = 0; i <= segments; i++) {
-        final angle = i * 2 * pi / segments;
-        final curr = project(Vec3(circleCenter.x + r * cos(angle), groundY,
-            circleCenter.z + r * sin(angle)));
-        if (curr != null) {
-          first ??= curr;
-          if (prev != null) canvas.drawLine(prev, curr, paint);
-          prev = curr;
-        }
+      for (var i = 0; i < segments; i++) {
+        final a0 = i * 2 * pi / segments;
+        final a1 = (i + 1) * 2 * pi / segments;
+        _drawClippedLine(
+          canvas,
+          viewProj,
+          size,
+          Vec3(circleCenter.x + r * cos(a0), groundY,
+              circleCenter.z + r * sin(a0)),
+          Vec3(circleCenter.x + r * cos(a1), groundY,
+              circleCenter.z + r * sin(a1)),
+          paint,
+        );
       }
-      if (prev != null && first != null) canvas.drawLine(prev, first, paint);
     }
 
     // Origin calibration crosshairs
-    final x0 = project(const Vec3(-padWidth, groundY, -25));
-    final x1 = project(const Vec3(padWidth, groundY, -25));
-    final z0 = project(const Vec3(0, groundY, -170));
-    final z1 = project(const Vec3(0, groundY, 40));
     final crossPaint = Paint()
       ..color = const Color(0x6034D399)
       ..strokeWidth = 1.5;
-    if (x0 != null && x1 != null) canvas.drawLine(x0, x1, crossPaint);
-    if (z0 != null && z1 != null) canvas.drawLine(z0, z1, crossPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, centerZ),
+        Vec3(padWidth, groundY, centerZ), crossPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, zStart),
+        Vec3(0, groundY, zEnd), crossPaint);
   }
 
   void _drawDragstripAsphalt(
     Canvas canvas,
+    Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
     const stripWidth = 11.0;
     const shoulderWidth = 4.0;
-    const zStart = -190.0;
-    const zEnd = 50.0;
-    const sliceLen = 10.0;
 
     final isDay = lighting == TestDriveLighting.day;
+    final carZ = sim.position.z;
+    const sliceLen = 10.0;
+    final centerZ = (carZ / sliceLen).round() * sliceLen;
+    final zStart = centerZ - 200.0;
+    final zEnd = centerZ + 80.0;
+
+    // Solid Terrain Base underneath
+    final terrainColor = isDay
+        ? const Color(0xFF334155)
+        : const Color(0xFF090D0B);
+    final terrainPaint = Paint()
+      ..color = terrainColor
+      ..style = PaintingStyle.fill;
+
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zStart - 50),
+      Vec3(350, groundY - 0.05, zEnd + 50),
+      Vec3(-350, groundY - 0.05, zEnd + 50),
+      terrainPaint,
+    );
+
     final asphaltColor = isDay
-        ? const Color(0xFF0F172A) // Heavy rubbered high-grip dark tarmac
+        ? const Color(0xFF0F172A)
         : const Color(0xFF070B0E);
     final shoulderColor = isDay
-        ? const Color(0xFF334155)
+        ? const Color(0xFF475569)
         : const Color(0xFF161F26);
 
     final asphaltPaint = Paint()
@@ -1800,7 +1975,8 @@ class _TestDriveScenePainter extends CustomPainter {
       // Shoulder
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(-stripWidth - shoulderWidth, groundY, z0),
         Vec3(-stripWidth, groundY, z0),
         Vec3(-stripWidth, groundY, z1),
@@ -1809,7 +1985,8 @@ class _TestDriveScenePainter extends CustomPainter {
       );
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(stripWidth, groundY, z0),
         Vec3(stripWidth + shoulderWidth, groundY, z0),
         Vec3(stripWidth + shoulderWidth, groundY, z1),
@@ -1820,7 +1997,8 @@ class _TestDriveScenePainter extends CustomPainter {
       // Main strip
       _drawQuad(
         canvas,
-        project,
+        viewProj,
+        size,
         Vec3(-stripWidth, groundY, z0),
         Vec3(stripWidth, groundY, z0),
         Vec3(stripWidth, groundY, z1),
@@ -1829,43 +2007,47 @@ class _TestDriveScenePainter extends CustomPainter {
       );
 
       // Center divider solid line
-      final c0 = project(Vec3(0, groundY, z0));
-      final c1 = project(Vec3(0, groundY, z1));
-      if (c0 != null && c1 != null) canvas.drawLine(c0, c1, yellowLinePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
+          Vec3(0, groundY, z1), yellowLinePaint);
 
       // Outer boundary white lines
-      final eL0 = project(Vec3(-stripWidth, groundY, z0));
-      final eL1 = project(Vec3(-stripWidth, groundY, z1));
-      if (eL0 != null && eL1 != null) canvas.drawLine(eL0, eL1, whiteLinePaint);
-
-      final eR0 = project(Vec3(stripWidth, groundY, z0));
-      final eR1 = project(Vec3(stripWidth, groundY, z1));
-      if (eR0 != null && eR1 != null) canvas.drawLine(eR0, eR1, whiteLinePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-stripWidth, groundY, z0),
+          Vec3(-stripWidth, groundY, z1), whiteLinePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(stripWidth, groundY, z0),
+          Vec3(stripWidth, groundY, z1), whiteLinePaint);
     }
 
-    // Staging launch box at Z = 24
-    _drawCheckeredLine(canvas, project, groundY, 24.0, stripWidth);
+    // Staging launch box at Z = 24 if in range
+    if ((centerZ - 24.0).abs() < 140.0) {
+      _drawCheckeredLine(canvas, viewProj, size, groundY, 24.0, stripWidth);
+    }
 
-    // Speed trap lines
-    final trapZ = [-50.0, -100.0, -150.0];
+    // Speed trap lines every 50m
+    final minTrapZ = ((zStart / 50).floor() * 50).toDouble();
+    final maxTrapZ = ((zEnd / 50).ceil() * 50).toDouble();
     final trapPaint = Paint()
       ..color = const Color(0xFFFDE047)
       ..strokeWidth = 3.0;
-    for (final tz in trapZ) {
-      final p0 = project(Vec3(-stripWidth, groundY, tz));
-      final p1 = project(Vec3(stripWidth, groundY, tz));
-      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, trapPaint);
+    for (var tz = minTrapZ; tz <= maxTrapZ; tz += 50.0) {
+      _drawClippedLine(canvas, viewProj, size, Vec3(-stripWidth, groundY, tz),
+          Vec3(stripWidth, groundY, tz), trapPaint);
     }
   }
 
   void _drawCyberGridAsphalt(
     Canvas canvas,
+    Size size,
+    Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
     const groundY = 0.0;
     const trackWidth = 14.0;
-    const zStart = -170.0;
-    const zEnd = 50.0;
+
+    final carZ = sim.position.z;
+    const sliceLen = 10.0;
+    final centerZ = (carZ / sliceLen).round() * sliceLen;
+    final zStart = centerZ - 200.0;
+    final zEnd = centerZ + 80.0;
 
     final boundaryPaint = Paint()
       ..color = const Color(0x9010B981)
@@ -1874,27 +2056,22 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0x2834D399)
       ..strokeWidth = 1.0;
 
-    final bL0 = project(const Vec3(-trackWidth, groundY, zStart));
-    final bL1 = project(const Vec3(-trackWidth, groundY, zEnd));
-    if (bL0 != null && bL1 != null) canvas.drawLine(bL0, bL1, boundaryPaint);
-
-    final bR0 = project(const Vec3(trackWidth, groundY, zStart));
-    final bR1 = project(const Vec3(trackWidth, groundY, zEnd));
-    if (bR0 != null && bR1 != null) canvas.drawLine(bR0, bR1, boundaryPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, zStart),
+        Vec3(-trackWidth, groundY, zEnd), boundaryPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, zStart),
+        Vec3(trackWidth, groundY, zEnd), boundaryPaint);
 
     for (var z = zStart; z <= zEnd; z += 5.0) {
-      final p0 = project(Vec3(-trackWidth, groundY, z));
-      final p1 = project(Vec3(trackWidth, groundY, z));
-      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, gridPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z),
+          Vec3(trackWidth, groundY, z), gridPaint);
     }
 
     final centerPaint = Paint()
       ..color = const Color(0x8010B981)
       ..strokeWidth = 2.0;
     for (var z = zStart; z <= zEnd; z += 6.0) {
-      final p0 = project(Vec3(0, groundY, z));
-      final p1 = project(Vec3(0, groundY, z + 3.0));
-      if (p0 != null && p1 != null) canvas.drawLine(p0, p1, centerPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z),
+          Vec3(0, groundY, z + 3.0), centerPaint);
     }
   }
 
