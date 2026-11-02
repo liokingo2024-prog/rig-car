@@ -89,13 +89,8 @@ class _WireframeViewerState extends State<WireframeViewer>
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     )..addListener(() {
-        if (_autoTurntable) {
-          setState(() {
-            _azimuth += 0.007;
-          });
-        }
+        if (_autoTurntable) _azimuth += 0.007;
       });
-    _animController.repeat();
   }
 
   @override
@@ -147,6 +142,15 @@ class _WireframeViewerState extends State<WireframeViewer>
     });
   }
 
+  void _toggleTurntable() {
+    setState(() => _autoTurntable = !_autoTurntable);
+    if (_autoTurntable) {
+      _animController.repeat();
+    } else {
+      _animController.stop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -185,28 +189,30 @@ class _WireframeViewerState extends State<WireframeViewer>
                 child: AnimatedBuilder(
                   animation: _animController,
                   builder: (context, _) {
-                    return CustomPaint(
-                      painter: _WireframeScenePainter(
-                        model: widget.model,
-                        detection: widget.detection,
-                        bodyNodeIndex: widget.bodyNodeIndex,
-                        selectedNodeIndex: widget.selectedNodeIndex,
-                        azimuth: _azimuth,
-                        elevation: _elevation,
-                        distance: _distance,
-                        target: _target,
-                        panX: _panX,
-                        panY: _panY,
-                        gridStyle: _gridStyle,
-                        showGrid: _showGrid,
-                        showMarkers: _showMarkers,
-                        denseWireframe: _denseWireframe,
-                        accentColor: widget.accentColor,
-                        bodyColor: widget.bodyColor,
-                        wheelColor: widget.wheelColor,
-                        wireColor: widget.wireColor,
-                        centerOfMassY: widget.centerOfMassY,
-                        pulseProgress: _animController.value,
+                    return RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _WireframeScenePainter(
+                          model: widget.model,
+                          detection: widget.detection,
+                          bodyNodeIndex: widget.bodyNodeIndex,
+                          selectedNodeIndex: widget.selectedNodeIndex,
+                          azimuth: _azimuth,
+                          elevation: _elevation,
+                          distance: _distance,
+                          target: _target,
+                          panX: _panX,
+                          panY: _panY,
+                          gridStyle: _gridStyle,
+                          showGrid: _showGrid,
+                          showMarkers: _showMarkers,
+                          denseWireframe: _denseWireframe,
+                          accentColor: widget.accentColor,
+                          bodyColor: widget.bodyColor,
+                          wheelColor: widget.wheelColor,
+                          wireColor: widget.wireColor,
+                          centerOfMassY: widget.centerOfMassY,
+                          pulseProgress: _animController.value,
+                        ),
                       ),
                     );
                   },
@@ -314,8 +320,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                     ? const Color(0xFF10B981)
                                     : const Color(0xFFBAC7CE),
                               ),
-                              onPressed: () => setState(
-                                  () => _autoTurntable = !_autoTurntable),
+                               onPressed: _toggleTurntable,
                             ),
                             const SizedBox(width: 4),
                             IconButton.filledTonal(
@@ -726,6 +731,30 @@ class _WireframeScenePainter extends CustomPainter {
   final Color wireColor;
   final double centerOfMassY;
   final double pulseProgress;
+
+  @override
+  bool shouldRepaint(covariant _WireframeScenePainter oldDelegate) {
+    return oldDelegate.model != model ||
+        oldDelegate.detection != detection ||
+        oldDelegate.bodyNodeIndex != bodyNodeIndex ||
+        oldDelegate.selectedNodeIndex != selectedNodeIndex ||
+        oldDelegate.azimuth != azimuth ||
+        oldDelegate.elevation != elevation ||
+        oldDelegate.distance != distance ||
+        oldDelegate.target != target ||
+        oldDelegate.panX != panX ||
+        oldDelegate.panY != panY ||
+        oldDelegate.gridStyle != gridStyle ||
+        oldDelegate.showGrid != showGrid ||
+        oldDelegate.showMarkers != showMarkers ||
+        oldDelegate.denseWireframe != denseWireframe ||
+        oldDelegate.accentColor != accentColor ||
+        oldDelegate.bodyColor != bodyColor ||
+        oldDelegate.wheelColor != wheelColor ||
+        oldDelegate.wireColor != wireColor ||
+        oldDelegate.centerOfMassY != centerOfMassY ||
+        oldDelegate.pulseProgress != pulseProgress;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1182,6 +1211,16 @@ class _WireframeScenePainter extends CustomPainter {
             .toSet() ??
         {};
     final selectedBodyNodeIndex = bodyNodeIndex ?? detection?.body?.nodeIndex;
+    final totalEdges = model!.instances.fold<int>(
+      0,
+      (sum, instance) => sum + instance.edges.length,
+    );
+    // Projecting every edge of a production GLB every frame is the main
+    // source of browser jank. Keep full detail for small assets and decimate
+    // only the rendered wireframe for large assets; detection still retains
+    // the complete parsed model.
+    final edgeBudget = denseWireframe ? 12000 : 6000;
+    final edgeStride = max(1, (totalEdges / edgeBudget).ceil());
 
     for (final inst in model!.instances) {
       Color edgeColor;
@@ -1208,16 +1247,13 @@ class _WireframeScenePainter extends CustomPainter {
 
       final verts = inst.worldVertices;
       final edges = inst.edges;
+      final projected = verts.map(project).toList();
 
-      final step = (!denseWireframe && edges.length > 2000)
-          ? (edges.length ~/ 2000)
-          : 1;
-
-      for (var i = 0; i < edges.length; i += step) {
+      for (var i = 0; i < edges.length; i += edgeStride) {
         final e = edges[i];
         if (e.a < verts.length && e.b < verts.length) {
-          final p0 = project(verts[e.a]);
-          final p1 = project(verts[e.b]);
+          final p0 = projected[e.a];
+          final p1 = projected[e.b];
           if (p0 != null && p1 != null) {
             canvas.drawLine(p0, p1, paint);
           }
@@ -1404,6 +1440,4 @@ class _WireframeScenePainter extends CustomPainter {
     }
   }
 
-  @override
-  bool shouldRepaint(covariant _WireframeScenePainter oldDelegate) => true;
 }

@@ -53,6 +53,29 @@ class _VehicleAxes {
   final Vec3 lateral;
 }
 
+class _BoundsAccumulator {
+  double minX = double.infinity;
+  double minY = double.infinity;
+  double minZ = double.infinity;
+  double maxX = double.negativeInfinity;
+  double maxY = double.negativeInfinity;
+  double maxZ = double.negativeInfinity;
+
+  void add(Vec3 point) {
+    minX = min(minX, point.x);
+    minY = min(minY, point.y);
+    minZ = min(minZ, point.z);
+    maxX = max(maxX, point.x);
+    maxY = max(maxY, point.y);
+    maxZ = max(maxZ, point.z);
+  }
+
+  BBox get bounds => BBox(
+        Vec3(minX, minY, minZ),
+        Vec3(maxX, maxY, maxZ),
+      );
+}
+
 class AutoDetector {
   // ── Public API ──────────────────────────────────────────────────────────
 
@@ -162,9 +185,14 @@ class AutoDetector {
 
       final named = _wheelPattern.hasMatch(node.name);
       final instance = instancesByNode[node.index];
+      final nodeBounds = instance?.worldBBox ?? _nodeWorldBounds(model, node);
+      final nodeLooksLikeWheel =
+          named || _wheelShapeScore(model, nodeBounds) > 0.0;
+      final canSplitComponents = instance != null &&
+          (nodeLooksLikeWheel || instance.worldVertices.length <= 20000);
       final componentBounds = instance == null
-          ? <BBox>[_nodeWorldBounds(model, node)]
-          : _componentBounds(instance);
+          ? <BBox>[nodeBounds]
+          : (canSplitComponents ? _componentBounds(instance) : <BBox>[nodeBounds]);
 
       for (var component = 0; component < componentBounds.length; component++) {
         final bbox = componentBounds[component];
@@ -221,16 +249,16 @@ class AutoDetector {
       if (a != b) parent[b] = a;
     }
 
-    final pointsByComponent = <int, List<Vec3>>{};
+    final boundsByComponent = <int, _BoundsAccumulator>{};
     for (var i = 0; i < instance.worldVertices.length; i++) {
-      pointsByComponent.putIfAbsent(find(i), () => []).add(
+      boundsByComponent.putIfAbsent(find(i), _BoundsAccumulator.new).add(
             instance.worldVertices[i],
           );
     }
 
     // A decimated edge list can fragment a continuous mesh into false parts.
-    if (pointsByComponent.length > 128) return [instance.worldBBox];
-    return pointsByComponent.values.map(BBox.fromPoints).toList();
+    if (boundsByComponent.length > 128) return [instance.worldBBox];
+    return boundsByComponent.values.map((accumulator) => accumulator.bounds).toList();
   }
 
   static BBox _nodeWorldBounds(ParsedModel model, SceneNode node) {
