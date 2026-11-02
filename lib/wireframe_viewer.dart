@@ -1,7 +1,9 @@
 import 'dart:math';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'fullscreen.dart';
 import 'model_data.dart';
 
 // ── 3D Wireframe Viewer ─────────────────────────────────────────────────────
@@ -10,7 +12,18 @@ import 'model_data.dart';
 // highlights detected wheels and body parts, and renders 3D markers for wheels
 // and center of mass. Supports orbit, zoom, pan, and view presets.
 
-enum CameraPreset { iso, front, side, top }
+enum CameraPreset { iso, front, back, left, right, top, bottom }
+
+enum ViewerLighting {
+  studio('Studio', Icons.lightbulb_outline_rounded),
+  daylight('Daylight', Icons.wb_sunny_outlined),
+  night('Night', Icons.nightlight_outlined),
+  flat('Flat', Icons.contrast_rounded);
+
+  const ViewerLighting(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
 
 enum GroundGridStyle {
   cad('CAD Studio', 'CAD Grid', Icons.grid_4x4_rounded),
@@ -66,6 +79,7 @@ class _WireframeViewerState extends State<WireframeViewer>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animController;
   bool _autoTurntable = false;
+  bool _isFullscreen = false;
 
   // Camera spherical coordinates
   double _azimuth = 0.785; // 45 degrees
@@ -77,20 +91,24 @@ class _WireframeViewerState extends State<WireframeViewer>
 
   bool _showMarkers = true;
   GroundGridStyle _gridStyle = GroundGridStyle.cad;
+  ViewerLighting _lighting = ViewerLighting.studio;
   bool get _showGrid => _gridStyle != GroundGridStyle.off;
   bool _invertDrag = false;
-  final bool _denseWireframe = true;
+  // Performance-first default. The full parsed model remains available for
+  // detection; only the preview is intentionally decimated.
+  final bool _denseWireframe = false;
 
   @override
   void initState() {
     super.initState();
     _resetCameraToModel();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..addListener(() {
-        if (_autoTurntable) _azimuth += 0.007;
-      });
+    _animController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 2400),
+        )..addListener(() {
+          if (_autoTurntable) _azimuth += 0.007;
+        });
   }
 
   @override
@@ -132,14 +150,28 @@ class _WireframeViewerState extends State<WireframeViewer>
         case CameraPreset.front:
           _azimuth = 3.14159; // facing -Z
           _elevation = 0.05;
-        case CameraPreset.side:
+        case CameraPreset.back:
+          _azimuth = 0.0; // facing +Z
+          _elevation = 0.05;
+        case CameraPreset.left:
+          _azimuth = -1.5708; // facing +X from the left
+          _elevation = 0.05;
+        case CameraPreset.right:
           _azimuth = 1.5708; // facing +X
           _elevation = 0.05;
         case CameraPreset.top:
           _azimuth = 0.0;
           _elevation = 1.56; // near 90 deg up
+        case CameraPreset.bottom:
+          _azimuth = 0.0;
+          _elevation = -1.35;
       }
     });
+  }
+
+  void _toggleFullscreen() {
+    toggleBrowserFullscreen();
+    setState(() => _isFullscreen = !_isFullscreen);
   }
 
   void _toggleTurntable() {
@@ -203,6 +235,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           panX: _panX,
                           panY: _panY,
                           gridStyle: _gridStyle,
+                          lighting: _lighting,
                           showGrid: _showGrid,
                           showMarkers: _showMarkers,
                           denseWireframe: _denseWireframe,
@@ -271,7 +304,9 @@ class _WireframeViewerState extends State<WireframeViewer>
                                   backgroundColor: const Color(0xFF10B981),
                                   foregroundColor: const Color(0xFF041D14),
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
                                   visualDensity: VisualDensity.compact,
                                   elevation: 3,
                                   shadowColor: const Color(0x6010B981),
@@ -280,8 +315,9 @@ class _WireframeViewerState extends State<WireframeViewer>
                                   ),
                                 ),
                                 icon: const Icon(
-                                    Icons.sports_motorsports_rounded,
-                                    size: 14),
+                                  Icons.sports_motorsports_rounded,
+                                  size: 14,
+                                ),
                                 label: const Text(
                                   'TEST DRIVE',
                                   style: TextStyle(
@@ -295,17 +331,93 @@ class _WireframeViewerState extends State<WireframeViewer>
                             ],
                             // View presets
                             _PresetButton(
-                                'ISO', () => _setPreset(CameraPreset.iso)),
+                              'ISO',
+                              () => _setPreset(CameraPreset.iso),
+                            ),
                             const SizedBox(width: 4),
                             _PresetButton(
-                                'TOP', () => _setPreset(CameraPreset.top)),
+                              'FRONT',
+                              () => _setPreset(CameraPreset.front),
+                            ),
                             const SizedBox(width: 4),
                             _PresetButton(
-                                'SIDE', () => _setPreset(CameraPreset.side)),
+                              'BACK',
+                              () => _setPreset(CameraPreset.back),
+                            ),
                             const SizedBox(width: 4),
                             _PresetButton(
-                                'FRONT', () => _setPreset(CameraPreset.front)),
+                              'LEFT',
+                              () => _setPreset(CameraPreset.left),
+                            ),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                              'RIGHT',
+                              () => _setPreset(CameraPreset.right),
+                            ),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                              'TOP',
+                              () => _setPreset(CameraPreset.top),
+                            ),
+                            const SizedBox(width: 4),
+                            _PresetButton(
+                              'BOTTOM',
+                              () => _setPreset(CameraPreset.bottom),
+                            ),
                             const SizedBox(width: 8),
+                            PopupMenuButton<ViewerLighting>(
+                              tooltip: 'Viewport lighting: ${_lighting.label}',
+                              initialValue: _lighting,
+                              onSelected: (lighting) =>
+                                  setState(() => _lighting = lighting),
+                              color: const Color(0xFF111714),
+                              itemBuilder: (context) =>
+                                  ViewerLighting.values.map((lighting) {
+                                    return PopupMenuItem<ViewerLighting>(
+                                      value: lighting,
+                                      child: Row(
+                                        children: [
+                                          Icon(lighting.icon, size: 16),
+                                          const SizedBox(width: 8),
+                                          Text(lighting.label),
+                                        ],
+                                      ),
+                                    );
+                                  }).toList(),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xC0111714),
+                                  borderRadius: BorderRadius.circular(5),
+                                  border: Border.all(
+                                    color: const Color(0xFF223127),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _lighting.icon,
+                                      size: 14,
+                                      color: const Color(0xFF34D399),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      _lighting.label.toUpperCase(),
+                                      style: const TextStyle(
+                                        fontSize: 9,
+                                        color: Color(0xFFC9D1D9),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
                             IconButton.filledTonal(
                               iconSize: 16,
                               visualDensity: VisualDensity.compact,
@@ -320,7 +432,21 @@ class _WireframeViewerState extends State<WireframeViewer>
                                     ? const Color(0xFF10B981)
                                     : const Color(0xFFBAC7CE),
                               ),
-                               onPressed: _toggleTurntable,
+                              onPressed: _toggleTurntable,
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton.filledTonal(
+                              iconSize: 16,
+                              visualDensity: VisualDensity.compact,
+                              tooltip: _isFullscreen
+                                  ? 'Exit Fullscreen'
+                                  : 'Fullscreen Viewport',
+                              icon: Icon(
+                                _isFullscreen
+                                    ? Icons.fullscreen_exit_rounded
+                                    : Icons.fullscreen_rounded,
+                              ),
+                              onPressed: _toggleFullscreen,
                             ),
                             const SizedBox(width: 4),
                             IconButton.filledTonal(
@@ -359,20 +485,11 @@ class _WireframeViewerState extends State<WireframeViewer>
             right: 12,
             child: Row(
               children: [
-                _LegendItem(
-                  color: widget.wheelColor,
-                  label: 'Wheels',
-                ),
+                _LegendItem(color: widget.wheelColor, label: 'Wheels'),
                 const SizedBox(width: 12),
-                _LegendItem(
-                  color: widget.bodyColor,
-                  label: 'Body',
-                ),
+                _LegendItem(color: widget.bodyColor, label: 'Body'),
                 const SizedBox(width: 12),
-                _LegendItem(
-                  color: widget.wireColor,
-                  label: 'Chassis / Misc',
-                ),
+                _LegendItem(color: widget.wireColor, label: 'Chassis / Misc'),
                 const Spacer(),
                 // Toggle markers
                 IconButton(
@@ -387,8 +504,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                         ? const Color(0xFF34D399)
                         : const Color(0xFF71818B),
                   ),
-                  onPressed: () =>
-                      setState(() => _showMarkers = !_showMarkers),
+                  onPressed: () => setState(() => _showMarkers = !_showMarkers),
                 ),
                 // Land Grid Style Selector (CAD, Radial Podium, Cyber Hex, Skidpad, Off)
                 PopupMenuButton<GroundGridStyle>(
@@ -422,8 +538,9 @@ class _WireframeViewerState extends State<WireframeViewer>
                             style.label,
                             style: TextStyle(
                               fontSize: 12,
-                              fontWeight:
-                                  isSel ? FontWeight.w700 : FontWeight.w500,
+                              fontWeight: isSel
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
                               color: isSel
                                   ? const Color(0xFFF0FDF4)
                                   : const Color(0xFFC9D1D9),
@@ -431,16 +548,21 @@ class _WireframeViewerState extends State<WireframeViewer>
                           ),
                           if (isSel) ...[
                             const Spacer(),
-                            const Icon(Icons.check,
-                                size: 14, color: Color(0xFF10B981)),
+                            const Icon(
+                              Icons.check,
+                              size: 14,
+                              color: Color(0xFF10B981),
+                            ),
                           ],
                         ],
                       ),
                     );
                   }).toList(),
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xC0111714),
                       borderRadius: BorderRadius.circular(5),
@@ -500,13 +622,14 @@ class _WireframeViewerState extends State<WireframeViewer>
                       ? 'Controls: Inverted (Click for Natural)'
                       : 'Controls: Natural (Click for Inverted)',
                   icon: Icon(
-                    _invertDrag ? Icons.swap_vertical_circle_rounded : Icons.swap_vertical_circle_outlined,
+                    _invertDrag
+                        ? Icons.swap_vertical_circle_rounded
+                        : Icons.swap_vertical_circle_outlined,
                     color: _invertDrag
                         ? const Color(0xFF10B981)
                         : const Color(0xFF8BA2B0),
                   ),
-                  onPressed: () =>
-                      setState(() => _invertDrag = !_invertDrag),
+                  onPressed: () => setState(() => _invertDrag = !_invertDrag),
                 ),
               ],
             ),
@@ -520,11 +643,7 @@ class _WireframeViewerState extends State<WireframeViewer>
 // ── Small UI Widgets ────────────────────────────────────────────────────────
 
 class _Badge extends StatelessWidget {
-  const _Badge({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
+  const _Badge({required this.icon, required this.label, required this.color});
 
   final IconData icon;
   final String label;
@@ -700,6 +819,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.panX,
     required this.panY,
     this.gridStyle = GroundGridStyle.cad,
+    this.lighting = ViewerLighting.studio,
     required this.showGrid,
     required this.showMarkers,
     required this.denseWireframe,
@@ -722,6 +842,7 @@ class _WireframeScenePainter extends CustomPainter {
   final double panX;
   final double panY;
   final GroundGridStyle gridStyle;
+  final ViewerLighting lighting;
   final bool showGrid;
   final bool showMarkers;
   final bool denseWireframe;
@@ -745,6 +866,7 @@ class _WireframeScenePainter extends CustomPainter {
         oldDelegate.panX != panX ||
         oldDelegate.panY != panY ||
         oldDelegate.gridStyle != gridStyle ||
+        oldDelegate.lighting != lighting ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.showMarkers != showMarkers ||
         oldDelegate.denseWireframe != denseWireframe ||
@@ -760,12 +882,19 @@ class _WireframeScenePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
 
+    final background = switch (lighting) {
+      ViewerLighting.studio => const [Color(0xFF141F27), Color(0xFF0C1318)],
+      ViewerLighting.daylight => const [Color(0xFF20384A), Color(0xFF10212D)],
+      ViewerLighting.night => const [Color(0xFF090B18), Color(0xFF02040A)],
+      ViewerLighting.flat => const [Color(0xFF111714), Color(0xFF111714)],
+    };
+
     // Background gradient
     final bgPaint = Paint()
-      ..shader = const LinearGradient(
+      ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Color(0xFF141F27), Color(0xFF0C1318)],
+        colors: background,
       ).createShader(Offset.zero & size);
     canvas.drawRect(Offset.zero & size, bgPaint);
 
@@ -848,9 +977,11 @@ class _WireframeScenePainter extends CustomPainter {
     }
 
     final sx0 = (final0[0] / final0[3] * 0.5 + 0.5) * size.width + panX;
-    final sy0 = (1.0 - (final0[1] / final0[3] * 0.5 + 0.5)) * size.height + panY;
+    final sy0 =
+        (1.0 - (final0[1] / final0[3] * 0.5 + 0.5)) * size.height + panY;
     final sx1 = (final1[0] / final1[3] * 0.5 + 0.5) * size.width + panX;
-    final sy1 = (1.0 - (final1[1] / final1[3] * 0.5 + 0.5)) * size.height + panY;
+    final sy1 =
+        (1.0 - (final1[1] / final1[3] * 0.5 + 0.5)) * size.height + panY;
 
     canvas.drawLine(Offset(sx0, sy0), Offset(sx1, sy1), paint);
   }
@@ -963,12 +1094,7 @@ class _WireframeScenePainter extends CustomPainter {
     ], shadowPaint);
   }
 
-  void _drawCadGrid(
-    Canvas canvas,
-    Mat4 viewProj,
-    Size size,
-    double groundY,
-  ) {
+  void _drawCadGrid(Canvas canvas, Mat4 viewProj, Size size, double groundY) {
     final minorGridPaint = Paint()
       ..color = const Color(0x1834D399)
       ..strokeWidth = 1.0;
@@ -988,8 +1114,9 @@ class _WireframeScenePainter extends CustomPainter {
     for (var x = -extent; x <= extent; x += step) {
       final isMajor = (x.abs() - x.abs().round()).abs() < 0.05;
       final isAxis = x.abs() < 0.05;
-      final paint =
-          isAxis ? axisZPaint : (isMajor ? majorGridPaint : minorGridPaint);
+      final paint = isAxis
+          ? axisZPaint
+          : (isMajor ? majorGridPaint : minorGridPaint);
       _drawClippedLine(
         canvas,
         viewProj,
@@ -1002,8 +1129,9 @@ class _WireframeScenePainter extends CustomPainter {
     for (var z = -extent; z <= extent; z += step) {
       final isMajor = (z.abs() - z.abs().round()).abs() < 0.05;
       final isAxis = z.abs() < 0.05;
-      final paint =
-          isAxis ? axisXPaint : (isMajor ? majorGridPaint : minorGridPaint);
+      final paint = isAxis
+          ? axisXPaint
+          : (isMajor ? majorGridPaint : minorGridPaint);
       _drawClippedLine(
         canvas,
         viewProj,
@@ -1018,14 +1146,38 @@ class _WireframeScenePainter extends CustomPainter {
     final framePaint = Paint()
       ..color = const Color(0x4010B981)
       ..strokeWidth = 1.3;
-    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, -extent),
-        Vec3(extent, groundY, -extent), framePaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(extent, groundY, -extent),
-        Vec3(extent, groundY, extent), framePaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(extent, groundY, extent),
-        Vec3(-extent, groundY, extent), framePaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, extent),
-        Vec3(-extent, groundY, -extent), framePaint);
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-extent, groundY, -extent),
+      Vec3(extent, groundY, -extent),
+      framePaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(extent, groundY, -extent),
+      Vec3(extent, groundY, extent),
+      framePaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(extent, groundY, extent),
+      Vec3(-extent, groundY, extent),
+      framePaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-extent, groundY, extent),
+      Vec3(-extent, groundY, -extent),
+      framePaint,
+    );
   }
 
   void _drawRadialGrid(
@@ -1108,12 +1260,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
   }
 
-  void _drawHexGrid(
-    Canvas canvas,
-    Mat4 viewProj,
-    Size size,
-    double groundY,
-  ) {
+  void _drawHexGrid(Canvas canvas, Mat4 viewProj, Size size, double groundY) {
     final hexPaint = Paint()
       ..color = const Color(0x2210B981)
       ..strokeWidth = 1.0;
@@ -1179,8 +1326,8 @@ class _WireframeScenePainter extends CustomPainter {
       for (var z = -extent; z < extent; z += step) {
         final isEven =
             (((x + extent) / step).round() + ((z + extent) / step).round()) %
-                    2 ==
-                0;
+                2 ==
+            0;
         final poly = [
           Vec3(x, groundY, z),
           Vec3(x + step, groundY, z),
@@ -1188,15 +1335,33 @@ class _WireframeScenePainter extends CustomPainter {
           Vec3(x, groundY, z + step),
         ];
 
-        _drawClippedPolygon(canvas, viewProj, size, poly, isEven ? fillPaintA : fillPaintB);
+        _drawClippedPolygon(
+          canvas,
+          viewProj,
+          size,
+          poly,
+          isEven ? fillPaintA : fillPaintB,
+        );
         _drawClippedPolygon(canvas, viewProj, size, poly, borderPaint);
       }
     }
 
-    _drawClippedLine(canvas, viewProj, size, Vec3(-extent, groundY, 0),
-        Vec3(extent, groundY, 0), centerCrossPaint);
-    _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, -extent),
-        Vec3(0, groundY, extent), centerCrossPaint);
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-extent, groundY, 0),
+      Vec3(extent, groundY, 0),
+      centerCrossPaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(0, groundY, -extent),
+      Vec3(0, groundY, extent),
+      centerCrossPaint,
+    );
   }
 
   void _drawModelWireframe(
@@ -1204,10 +1369,13 @@ class _WireframeScenePainter extends CustomPainter {
     Size size,
     Offset? Function(Vec3) project,
   ) {
-    final wheelNodeSet = detection?.wheels
-            .expand((w) => w.partNodeIndices.isEmpty
-                ? <int>[w.nodeIndex]
-                : w.partNodeIndices)
+    final wheelNodeSet =
+        detection?.wheels
+            .expand(
+              (w) => w.partNodeIndices.isEmpty
+                  ? <int>[w.nodeIndex]
+                  : w.partNodeIndices,
+            )
             .toSet() ??
         {};
     final selectedBodyNodeIndex = bodyNodeIndex ?? detection?.body?.nodeIndex;
@@ -1219,7 +1387,7 @@ class _WireframeScenePainter extends CustomPainter {
     // source of browser jank. Keep full detail for small assets and decimate
     // only the rendered wireframe for large assets; detection still retains
     // the complete parsed model.
-    final edgeBudget = denseWireframe ? 12000 : 6000;
+    final edgeBudget = denseWireframe ? 8000 : 3000;
     final edgeStride = max(1, (totalEdges / edgeBudget).ceil());
 
     for (final inst in model!.instances) {
@@ -1247,13 +1415,19 @@ class _WireframeScenePainter extends CustomPainter {
 
       final verts = inst.worldVertices;
       final edges = inst.edges;
-      final projected = verts.map(project).toList();
+      if (verts.isEmpty || edges.isEmpty) continue;
+      // Do not project vertices that are not used by the sampled edge set.
+      // Large GLBs often contain hundreds of thousands of vertices but only a
+      // few thousand edges are needed for the interactive preview.
+      final projected = <int, Offset?>{};
+      Offset? projectedAt(int index) =>
+          projected.putIfAbsent(index, () => project(verts[index]));
 
       for (var i = 0; i < edges.length; i += edgeStride) {
         final e = edges[i];
         if (e.a < verts.length && e.b < verts.length) {
-          final p0 = projected[e.a];
-          final p1 = projected[e.b];
+          final p0 = projectedAt(e.a);
+          final p1 = projectedAt(e.b);
           if (p0 != null && p1 != null) {
             canvas.drawLine(p0, p1, paint);
           }
@@ -1328,9 +1502,9 @@ class _WireframeScenePainter extends CustomPainter {
     // Four procedural wheels
     final wheelCenters = [
       const Vec3(-0.95, 0.35, -1.2), // FL
-      const Vec3(0.95, 0.35, -1.2),  // FR
-      const Vec3(-0.95, 0.35, 1.2),  // RL
-      const Vec3(0.95, 0.35, 1.2),   // RR
+      const Vec3(0.95, 0.35, -1.2), // FR
+      const Vec3(-0.95, 0.35, 1.2), // RL
+      const Vec3(0.95, 0.35, 1.2), // RR
     ];
 
     for (final wc in wheelCenters) {
@@ -1350,12 +1524,8 @@ class _WireframeScenePainter extends CustomPainter {
       final a0 = i * 2 * pi / segments;
       final a1 = (i + 1) * 2 * pi / segments;
       // Outer rim
-      final p0 = project(
-        center + Vec3(0, radius * sin(a0), radius * cos(a0)),
-      );
-      final p1 = project(
-        center + Vec3(0, radius * sin(a1), radius * cos(a1)),
-      );
+      final p0 = project(center + Vec3(0, radius * sin(a0), radius * cos(a0)));
+      final p1 = project(center + Vec3(0, radius * sin(a1), radius * cos(a1)));
       if (p0 != null && p1 != null) canvas.drawLine(p0, p1, paint);
 
       // Spokes
@@ -1366,11 +1536,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
   }
 
-  void _drawMarkers(
-    Canvas canvas,
-    Size size,
-    Offset? Function(Vec3) project,
-  ) {
+  void _drawMarkers(Canvas canvas, Size size, Offset? Function(Vec3) project) {
     final wheels = detection?.wheels ?? [];
 
     for (final w in wheels) {
@@ -1408,10 +1574,8 @@ class _WireframeScenePainter extends CustomPainter {
           backgroundColor: Color(0xD017232B),
         ),
       );
-      final tp = TextPainter(
-        text: span,
-        textDirection: TextDirection.ltr,
-      )..layout();
+      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
+        ..layout();
       tp.paint(canvas, pos + const Offset(10, -7));
     }
 
@@ -1432,12 +1596,9 @@ class _WireframeScenePainter extends CustomPainter {
           backgroundColor: Color(0xD017232B),
         ),
       );
-      final tp = TextPainter(
-        text: span,
-        textDirection: TextDirection.ltr,
-      )..layout();
+      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
+        ..layout();
       tp.paint(canvas, comPos + const Offset(8, -6));
     }
   }
-
 }

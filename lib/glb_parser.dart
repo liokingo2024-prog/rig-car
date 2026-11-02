@@ -15,7 +15,10 @@ class GlbParser {
   static const _chunkBin = 0x004E4942;
 
   /// Maximum edges to keep per mesh primitive to prevent OOM on huge models.
-  static const _maxEdgesPerPrimitive = 60000;
+  // The viewport is an interactive wireframe preview, not a mesh editor.
+  // Capping sampled triangle edges keeps browser parsing and memory bounded
+  // for production GLBs while preserving all vertex positions for detection.
+  static const _maxEdgesPerPrimitive = 16000;
 
   // ── Public API ──────────────────────────────────────────────────────────
 
@@ -43,8 +46,9 @@ class GlbParser {
       if (offset + chunkLen > bytes.length) break;
 
       if (chunkType == _chunkJson) {
-        json = jsonDecode(utf8.decode(bytes.sublist(offset, offset + chunkLen)))
-            as Map<String, dynamic>;
+        json = jsonDecode(
+          utf8.decode(bytes.sublist(offset, offset + chunkLen)),
+        ) as Map<String, dynamic>;
       } else if (chunkType == _chunkBin) {
         bin = bytes.sublist(offset, offset + chunkLen);
       }
@@ -97,17 +101,20 @@ class GlbParser {
         local = Mat4.fromTRS(t, r, s);
       }
 
-      nodes.add(SceneNode(
-        index: i,
-        name: n['name'] as String? ?? 'Node_$i',
-        localTransform: local,
-        meshIndex: n['mesh'] as int?,
-        childIndices: (n['children'] as List<dynamic>?)
-                ?.map((e) => e as int)
-                .toList() ??
-            const [],
-        parentIndex: parentMap[i],
-      ));
+      nodes.add(
+        SceneNode(
+          index: i,
+          name: n['name'] as String? ?? 'Node_$i',
+          localTransform: local,
+          meshIndex: n['mesh'] as int?,
+          childIndices:
+              (n['children'] as List<dynamic>?)
+                  ?.map((e) => e as int)
+                  .toList() ??
+              const [],
+          parentIndex: parentMap[i],
+        ),
+      );
     }
 
     // ── Compute world transforms ────────────────────────────────────────
@@ -129,11 +136,13 @@ class GlbParser {
         if (posIdx == null) continue;
 
         final vOffset = allVerts.length;
-        allVerts.addAll(_readVec3Accessor(
-          jsonAccessors[posIdx] as Map<String, dynamic>,
-          jsonBufferViews,
-          bin,
-        ));
+        allVerts.addAll(
+          _readVec3Accessor(
+            jsonAccessors[posIdx] as Map<String, dynamic>,
+            jsonBufferViews,
+            bin,
+          ),
+        );
 
         final idxIdx = prim['indices'] as int?;
         if (idxIdx != null) {
@@ -157,13 +166,15 @@ class GlbParser {
         }
       }
 
-      meshes.add(MeshData(
-        index: mi,
-        name: m['name'] as String? ?? 'Mesh_$mi',
-        vertices: allVerts,
-        edges: allEdges.toList(),
-        bbox: BBox.fromPoints(allVerts),
-      ));
+      meshes.add(
+        MeshData(
+          index: mi,
+          name: m['name'] as String? ?? 'Mesh_$mi',
+          vertices: allVerts,
+          edges: allEdges.toList(),
+          bbox: BBox.fromPoints(allVerts),
+        ),
+      );
     }
 
     // ── Build mesh instances (world-space) ──────────────────────────────
@@ -175,15 +186,19 @@ class GlbParser {
       final mesh = meshes[mi];
       final wt = node.worldTransform;
 
-      final worldVerts = mesh.vertices.map((v) => wt.transformPoint(v)).toList();
+      final worldVerts = mesh.vertices
+          .map((v) => wt.transformPoint(v))
+          .toList();
 
-      instances.add(MeshInstance(
-        nodeIndex: node.index,
-        meshIndex: mi,
-        worldVertices: worldVerts,
-        edges: mesh.edges,
-        worldBBox: BBox.fromPoints(worldVerts),
-      ));
+      instances.add(
+        MeshInstance(
+          nodeIndex: node.index,
+          meshIndex: mi,
+          worldVertices: worldVerts,
+          edges: mesh.edges,
+          worldBBox: BBox.fromPoints(worldVerts),
+        ),
+      );
     }
 
     // ── Root nodes ──────────────────────────────────────────────────────
@@ -191,13 +206,17 @@ class GlbParser {
     final scenes = gltf['scenes'] as List<dynamic>?;
     List<int> roots;
     if (scenes != null && sceneIdx < scenes.length) {
-      roots = ((scenes[sceneIdx] as Map<String, dynamic>)['nodes']
+      roots =
+          ((scenes[sceneIdx] as Map<String, dynamic>)['nodes']
                   as List<dynamic>?)
               ?.map((e) => e as int)
               .toList() ??
           [];
     } else {
-      roots = [for (var i = 0; i < nodes.length; i++) if (nodes[i].parentIndex == null) i];
+      roots = [
+        for (var i = 0; i < nodes.length; i++)
+          if (nodes[i].parentIndex == null) i,
+      ];
     }
 
     // ── Overall bounding box ────────────────────────────────────────────
@@ -258,11 +277,13 @@ class GlbParser {
     for (var i = 0; i < count; i++) {
       final o = byteOffset + i * byteStride;
       if (o + 12 > bin.length) break;
-      result.add(Vec3(
-        bd.getFloat32(o, Endian.little),
-        bd.getFloat32(o + 4, Endian.little),
-        bd.getFloat32(o + 8, Endian.little),
-      ));
+      result.add(
+        Vec3(
+          bd.getFloat32(o, Endian.little),
+          bd.getFloat32(o + 4, Endian.little),
+          bd.getFloat32(o + 8, Endian.little),
+        ),
+      );
     }
     return result;
   }

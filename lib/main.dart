@@ -200,10 +200,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         // This gives the viewport and exported Godot rig one stable vehicle
         // coordinate system regardless of whether the source used mm, cm, or
         // arbitrary units.
-        final parsed = GlbParser.parse(
-          picked.name,
-          picked.bytes,
-        ).normalizedForRigging();
+        final parsed = GlbParser.parse(picked.name, picked.bytes);
+        parsed.normalizeForRiggingInPlace();
         final detection = AutoDetector.detect(parsed);
 
         setState(() {

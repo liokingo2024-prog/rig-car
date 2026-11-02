@@ -306,9 +306,9 @@ class MeshInstance {
   final int meshIndex;
   final List<Vec3> worldVertices;
   final List<Edge> edges;
-  final BBox worldBBox;
+  BBox worldBBox;
 
-  const MeshInstance({
+  MeshInstance({
     required this.nodeIndex,
     required this.meshIndex,
     required this.worldVertices,
@@ -323,9 +323,9 @@ class ParsedModel {
   final List<MeshData> meshes;
   final List<MeshInstance> instances;
   final List<int> rootNodeIndices;
-  final BBox worldBBox;
+  BBox worldBBox;
 
-  const ParsedModel({
+  ParsedModel({
     required this.fileName,
     required this.nodes,
     required this.meshes,
@@ -355,6 +355,9 @@ class ParsedModel {
       -worldBBox.lo.y * scale,
       -worldBBox.center.z * scale,
     );
+    if ((scale - 1).abs() < 0.0001 && offset.lengthSquared < 0.0001) {
+      return this;
+    }
     final normalization = Mat4.uniformScaleTranslate(scale, offset);
     Vec3 normalizePoint(Vec3 point) => normalization.transformPoint(point);
 
@@ -393,6 +396,44 @@ class ParsedModel {
       worldBBox: BBox.union(
         normalizedInstances.map((instance) => instance.worldBBox).toList(),
       ),
+    );
+  }
+
+  /// Normalizes this parsed model without allocating a second full copy of
+  /// every world vertex. This is the upload path used by the web workbench.
+  void normalizeForRiggingInPlace({double targetFootprint = 4.2}) {
+    if (instances.isEmpty || targetFootprint <= 0) return;
+
+    final size = worldBBox.size;
+    final horizontal = max(size.x.abs(), size.z.abs());
+    if (horizontal < 1e-9) return;
+
+    final scale = targetFootprint / horizontal;
+    final offset = Vec3(
+      -worldBBox.center.x * scale,
+      -worldBBox.lo.y * scale,
+      -worldBBox.center.z * scale,
+    );
+    if ((scale - 1).abs() < 0.0001 && offset.lengthSquared < 0.0001) {
+      return;
+    }
+
+    final normalization = Mat4.uniformScaleTranslate(scale, offset);
+    for (final node in nodes) {
+      node.worldTransform = normalization * node.worldTransform;
+    }
+    for (final instance in instances) {
+      for (var i = 0; i < instance.worldVertices.length; i++) {
+        instance.worldVertices[i] = normalization.transformPoint(
+          instance.worldVertices[i],
+        );
+      }
+      instance.worldBBox = instance.worldVertices.isEmpty
+          ? _normalizeBounds(instance.worldBBox, normalization.transformPoint)
+          : BBox.fromPoints(instance.worldVertices);
+    }
+    worldBBox = BBox.union(
+      instances.map((instance) => instance.worldBBox).toList(),
     );
   }
 

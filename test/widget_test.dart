@@ -388,6 +388,9 @@ void main() {
       expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
       expect(find.text('Procedural 3D Rig'), findsOneWidget);
       expect(find.byTooltip('Auto-rig vehicle'), findsOneWidget);
+      expect(find.text('BACK'), findsOneWidget);
+      expect(find.byTooltip('Viewport lighting: Studio'), findsOneWidget);
+      expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
     });
 
     testWidgets('switches between workflow steps in workbench', (tester) async {
