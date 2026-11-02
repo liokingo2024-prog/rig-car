@@ -283,6 +283,10 @@ class DetectedWheel {
   final Vec3 worldPosition;
   final double confidence;
   final int? meshIndex;
+  /// All mesh nodes grouped into this wheel assembly. A wheel may contain
+  /// separate tire, rim, hub, and brake meshes.
+  final List<int> partNodeIndices;
+  final List<String> partIds;
   String axle; // 'front' | 'rear'
   String side; // 'left' | 'right'
 
@@ -292,9 +296,15 @@ class DetectedWheel {
     required this.worldPosition,
     required this.confidence,
     this.meshIndex,
+    this.partNodeIndices = const [],
+    this.partIds = const [],
     this.axle = '',
     this.side = '',
   });
+
+  int get partCount => partIds.isNotEmpty
+      ? partIds.length
+      : (partNodeIndices.isEmpty ? 1 : partNodeIndices.length);
 
   String get label =>
       '${axle.isNotEmpty ? axle[0].toUpperCase() + axle.substring(1) : '?'} '
@@ -348,6 +358,7 @@ class RigConfig {
     required this.frontTraction,
     required this.rearTraction,
     this.wheelPositions,
+    this.bodyNodeName,
   });
 
   final String modelName;
@@ -366,6 +377,9 @@ class RigConfig {
   /// If set, contains [FL, FR, RL, RR] world positions from auto-detection.
   final List<Vec3>? wheelPositions;
 
+  /// The confirmed body node from the imported model, when available.
+  final String? bodyNodeName;
+
   Vec3 _wp(int i, Vec3 fallback) =>
       wheelPositions != null && i < wheelPositions!.length
           ? wheelPositions![i]
@@ -382,6 +396,7 @@ class RigConfig {
           'center_of_mass_y': centerOfMass,
           'drive': drive,
         },
+        if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
         'wheels': {
           'front': {
             'use_as_steering': frontSteering,

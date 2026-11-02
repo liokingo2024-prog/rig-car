@@ -35,6 +35,7 @@ class WireframeViewer extends StatefulWidget {
     super.key,
     required this.model,
     required this.detection,
+    this.bodyNodeIndex,
     this.selectedNodeIndex,
     this.onNodeSelected,
     this.accentColor = const Color(0xFF10B981),
@@ -47,6 +48,7 @@ class WireframeViewer extends StatefulWidget {
 
   final ParsedModel? model;
   final DetectionResult? detection;
+  final int? bodyNodeIndex;
   final int? selectedNodeIndex;
   final ValueChanged<int>? onNodeSelected;
   final Color accentColor;
@@ -187,6 +189,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                       painter: _WireframeScenePainter(
                         model: widget.model,
                         detection: widget.detection,
+                        bodyNodeIndex: widget.bodyNodeIndex,
                         selectedNodeIndex: widget.selectedNodeIndex,
                         azimuth: _azimuth,
                         elevation: _elevation,
@@ -683,6 +686,7 @@ class _WireframeScenePainter extends CustomPainter {
   const _WireframeScenePainter({
     required this.model,
     required this.detection,
+    this.bodyNodeIndex,
     required this.selectedNodeIndex,
     required this.azimuth,
     required this.elevation,
@@ -704,6 +708,7 @@ class _WireframeScenePainter extends CustomPainter {
 
   final ParsedModel? model;
   final DetectionResult? detection;
+  final int? bodyNodeIndex;
   final int? selectedNodeIndex;
   final double azimuth;
   final double elevation;
@@ -1170,9 +1175,13 @@ class _WireframeScenePainter extends CustomPainter {
     Size size,
     Offset? Function(Vec3) project,
   ) {
-    final wheelNodeSet =
-        detection?.wheels.map((w) => w.nodeIndex).toSet() ?? {};
-    final bodyNodeIndex = detection?.body?.nodeIndex;
+    final wheelNodeSet = detection?.wheels
+            .expand((w) => w.partNodeIndices.isEmpty
+                ? <int>[w.nodeIndex]
+                : w.partNodeIndices)
+            .toSet() ??
+        {};
+    final selectedBodyNodeIndex = bodyNodeIndex ?? detection?.body?.nodeIndex;
 
     for (final inst in model!.instances) {
       Color edgeColor;
@@ -1184,7 +1193,7 @@ class _WireframeScenePainter extends CustomPainter {
       } else if (wheelNodeSet.contains(inst.nodeIndex)) {
         edgeColor = wheelColor;
         strokeWidth = 1.3;
-      } else if (inst.nodeIndex == bodyNodeIndex) {
+      } else if (inst.nodeIndex == selectedBodyNodeIndex) {
         edgeColor = bodyColor;
         strokeWidth = 1.1;
       } else {

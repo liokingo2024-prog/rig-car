@@ -143,6 +143,96 @@ void main() {
       expect(result.body?.nodeName, 'Car_Body');
     });
 
+    test('Merges tire and rim parts into four wheel assemblies', () {
+      final wheelPositions = const [
+        Vec3(-0.8, 0.3, -1.2),
+        Vec3(0.8, 0.3, -1.2),
+        Vec3(-0.8, 0.3, 1.2),
+        Vec3(0.8, 0.3, 1.2),
+      ];
+      final nodes = <SceneNode>[
+        SceneNode(
+          index: 0,
+          name: 'Root',
+          localTransform: Mat4.identity(),
+          meshIndex: null,
+          childIndices: [1, for (var i = 0; i < 8; i++) i + 2],
+          parentIndex: null,
+        ),
+        SceneNode(
+          index: 1,
+          name: 'Car_Body',
+          localTransform: Mat4.identity(),
+          meshIndex: 0,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+      ];
+      final instances = <MeshInstance>[];
+      final bodyMesh = MeshData(
+        index: 0,
+        name: 'BodyMesh',
+        vertices: const [Vec3(-1, 0, -2), Vec3(1, 1.5, 2)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1.5, 2)),
+      );
+      final wheelMesh = MeshData(
+        index: 1,
+        name: 'WheelPartMesh',
+        vertices: const [Vec3(-0.15, -0.35, -0.35), Vec3(0.15, 0.35, 0.35)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.15, -0.35, -0.35), Vec3(0.15, 0.35, 0.35)),
+      );
+      instances.add(MeshInstance(
+        nodeIndex: 1,
+        meshIndex: 0,
+        worldVertices: bodyMesh.vertices,
+        edges: bodyMesh.edges,
+        worldBBox: bodyMesh.bbox,
+      ));
+
+      var nodeIndex = 2;
+      for (var wheel = 0; wheel < wheelPositions.length; wheel++) {
+        for (final part in ['Tire', 'Rim']) {
+          final position = wheelPositions[wheel];
+          final node = SceneNode(
+            index: nodeIndex,
+            name: 'Wheel_${wheel}_$part',
+            localTransform: Mat4.fromTRS(position, Quat.identity, Vec3.one),
+            meshIndex: 1,
+            childIndices: [],
+            parentIndex: 0,
+          );
+          nodes.add(node);
+          instances.add(MeshInstance(
+            nodeIndex: nodeIndex,
+            meshIndex: 1,
+            worldVertices: wheelMesh.vertices
+                .map(node.localTransform.transformPoint)
+                .toList(),
+            edges: wheelMesh.edges,
+            worldBBox: BBox.fromPoints(wheelMesh.vertices
+                .map(node.localTransform.transformPoint)
+                .toList()),
+          ));
+          nodeIndex++;
+        }
+      }
+
+      final result = AutoDetector.detect(ParsedModel(
+        fileName: 'multi_part_car.glb',
+        nodes: nodes,
+        meshes: [bodyMesh, wheelMesh],
+        instances: instances,
+        rootNodeIndices: [0],
+        worldBBox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1.5, 2)),
+      ));
+
+      expect(result.wheels.length, 4);
+      expect(result.wheels.every((wheel) => wheel.partCount == 2), isTrue);
+      expect(result.body?.nodeName, 'Car_Body');
+    });
+
     test('RigConfig exports real wheel coordinates', () {
       const config = RigConfig(
         modelName: 'race_car.glb',

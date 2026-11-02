@@ -105,6 +105,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
   DetectionResult? _detection;
+  int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
 
   // Drivetrain & physics
@@ -200,6 +201,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         setState(() {
           _parsedModel = parsed;
           _detection = detection;
+          _selectedBodyNodeIndex = detection.body?.nodeIndex;
           _drive = detection.suggestedDrive;
 
           // Find preset matching suggestion
@@ -268,7 +270,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _assignedWheels[slot] = DetectedWheel(
         nodeIndex: node.index,
         nodeName: node.name,
-        worldPosition: node.worldTransform.translation,
+        worldPosition: AutoDetector.worldCenterForNode(_parsedModel!, node),
         confidence: 1.0, // Human confirmed
         meshIndex: node.meshIndex,
         axle: axle,
@@ -276,6 +278,47 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       );
       _selectedNodeIndex = node.index;
     });
+  }
+
+  void _selectBody(int? nodeIndex) {
+    if (nodeIndex == null || _parsedModel == null) return;
+    setState(() => _selectedBodyNodeIndex = nodeIndex);
+  }
+
+  bool get _hasFourDistinctWheelAssignments {
+    final assignments = ['FL', 'FR', 'RL', 'RR']
+        .map((slot) => _assignedWheels[slot])
+        .toList();
+    if (assignments.any((wheel) => wheel == null)) return false;
+
+    final wheels = assignments.cast<DetectedWheel>();
+    final partIds = wheels
+        .expand((wheel) => wheel.partIds.isNotEmpty
+            ? wheel.partIds
+            : (wheel.partNodeIndices.isEmpty
+                ? <String>['node:${wheel.nodeIndex}']
+                : wheel.partNodeIndices.map((index) => 'node:$index')))
+        .toSet();
+    if (partIds.length < 4) return false;
+
+    for (var i = 0; i < wheels.length; i++) {
+      for (var j = i + 1; j < wheels.length; j++) {
+        if ((wheels[i].worldPosition - wheels[j].worldPosition).length < 0.01) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  String? get _exportBlockReason {
+    if (!_hasFourDistinctWheelAssignments) {
+      return 'Confirm four different wheel assemblies before exporting.';
+    }
+    if (_parsedModel != null && _selectedBodyNodeIndex == null) {
+      return 'Select the car body before exporting.';
+    }
+    return null;
   }
 
   void _showMessage(String message) {
@@ -320,10 +363,20 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       frontTraction: _frontTraction,
       rearTraction: _rearTraction,
       wheelPositions: wheelPositions,
+      bodyNodeName: _parsedModel == null || _selectedBodyNodeIndex == null
+          ? null
+          : _parsedModel!.nodes[_selectedBodyNodeIndex!].name,
     );
   }
 
   Future<void> _exportGodotFiles() async {
+    final blockReason = _exportBlockReason;
+    if (blockReason != null) {
+      _showMessage(blockReason);
+      if (_parsedModel != null) _selectStep(2);
+      return;
+    }
+
     final config = _config;
     await downloadTextFile(
       'rig_car_config.json',
@@ -512,9 +565,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             // 3D Viewport stays anchored and fills available height
                                             Expanded(
                                               child: WireframeViewer(
-                                                model: _parsedModel,
-                                                detection: _detection,
-                                                selectedNodeIndex:
+                                                 model: _parsedModel,
+                                                 detection: _detection,
+                                                 bodyNodeIndex:
+                                                     _selectedBodyNodeIndex,
+                                                 selectedNodeIndex:
                                                     _selectedNodeIndex,
                                                 onNodeSelected: (idx) {
                                                   setState(() =>
@@ -556,9 +611,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             SizedBox(
                                               height: 380,
                                               child: WireframeViewer(
-                                                model: _parsedModel,
-                                                detection: _detection,
-                                                selectedNodeIndex:
+                                                 model: _parsedModel,
+                                                 detection: _detection,
+                                                 bodyNodeIndex:
+                                                     _selectedBodyNodeIndex,
+                                                 selectedNodeIndex:
                                                     _selectedNodeIndex,
                                                 onNodeSelected: (idx) {
                                                   setState(() =>
@@ -595,6 +652,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       modelName: _modelName,
       parsedModel: _parsedModel,
       detection: _detection,
+      selectedBodyNodeIndex: _selectedBodyNodeIndex,
       assignedWheels: _assignedWheels,
       drive: _drive,
       mass: _mass,
@@ -608,6 +666,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       rearTraction: _rearTraction,
       onPickModel: _pickModel,
       onReassignWheel: _reassignWheel,
+      onSelectBody: _selectBody,
       onPresetChanged: (value) {
         setState(() => _preset = value);
       },
@@ -642,6 +701,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         setState(() => _rearTraction = value);
       },
       onExport: _exportGodotFiles,
+      canExport: _exportBlockReason == null,
+      exportBlockReason: _exportBlockReason,
       onStepSelected: _selectStep,
       onTestDrive: _enterTestDrive,
     );
@@ -1050,6 +1111,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.modelName,
     required this.parsedModel,
     required this.detection,
+    required this.selectedBodyNodeIndex,
     required this.assignedWheels,
     required this.drive,
     required this.mass,
@@ -1063,6 +1125,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.rearTraction,
     required this.onPickModel,
     required this.onReassignWheel,
+    required this.onSelectBody,
     required this.onPresetChanged,
     required this.onDriveChanged,
     required this.onMassChanged,
@@ -1075,6 +1138,8 @@ class _InspectorPanel extends StatelessWidget {
     required this.onFrontTractionChanged,
     required this.onRearTractionChanged,
     required this.onExport,
+    required this.canExport,
+    required this.exportBlockReason,
     required this.onStepSelected,
     required this.onTestDrive,
   });
@@ -1084,6 +1149,7 @@ class _InspectorPanel extends StatelessWidget {
   final String modelName;
   final ParsedModel? parsedModel;
   final DetectionResult? detection;
+  final int? selectedBodyNodeIndex;
   final Map<String, DetectedWheel?> assignedWheels;
   final String drive;
   final double mass;
@@ -1097,6 +1163,7 @@ class _InspectorPanel extends StatelessWidget {
   final bool rearTraction;
   final VoidCallback onPickModel;
   final void Function(String slot, int? nodeIndex) onReassignWheel;
+  final ValueChanged<int?> onSelectBody;
   final ValueChanged<RigPreset> onPresetChanged;
   final ValueChanged<String> onDriveChanged;
   final ValueChanged<double> onMassChanged;
@@ -1109,6 +1176,8 @@ class _InspectorPanel extends StatelessWidget {
   final ValueChanged<bool> onFrontTractionChanged;
   final ValueChanged<bool> onRearTractionChanged;
   final VoidCallback onExport;
+  final bool canExport;
+  final String? exportBlockReason;
   final ValueChanged<int> onStepSelected;
   final VoidCallback onTestDrive;
 
@@ -1141,8 +1210,10 @@ class _InspectorPanel extends StatelessWidget {
           2 => _ReviewRigInspector(
               parsedModel: parsedModel,
               detection: detection,
+              selectedBodyNodeIndex: selectedBodyNodeIndex,
               assignedWheels: assignedWheels,
               onReassignWheel: onReassignWheel,
+              onSelectBody: onSelectBody,
               drive: drive,
               onDriveChanged: onDriveChanged,
               frontSteering: frontSteering,
@@ -1169,7 +1240,11 @@ class _InspectorPanel extends StatelessWidget {
               onNextStep: () => onStepSelected(4),
               onTestDrive: onTestDrive,
             ),
-          4 => _ExportInspector(onExport: onExport),
+          4 => _ExportInspector(
+              onExport: onExport,
+              canExport: canExport,
+              blockReason: exportBlockReason,
+            ),
           _ => _TestDriveLauncherInspector(onLaunch: onTestDrive),
         },
       ],
@@ -1314,6 +1389,27 @@ class _UploadScanInspector extends StatelessWidget {
                   value: detection!.suggestedPreset,
                   isGood: true,
                 ),
+                for (final warning in detection!.warnings) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 14, color: Color(0xFFFBBF24)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          warning,
+                          style: const TextStyle(
+                            color: Color(0xFFFDE68A),
+                            fontSize: 10,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
@@ -1364,8 +1460,10 @@ class _ReviewRigInspector extends StatelessWidget {
   const _ReviewRigInspector({
     required this.parsedModel,
     required this.detection,
+    required this.selectedBodyNodeIndex,
     required this.assignedWheels,
     required this.onReassignWheel,
+    required this.onSelectBody,
     required this.drive,
     required this.onDriveChanged,
     required this.frontSteering,
@@ -1381,8 +1479,10 @@ class _ReviewRigInspector extends StatelessWidget {
 
   final ParsedModel? parsedModel;
   final DetectionResult? detection;
+  final int? selectedBodyNodeIndex;
   final Map<String, DetectedWheel?> assignedWheels;
   final void Function(String slot, int? nodeIndex) onReassignWheel;
+  final ValueChanged<int?> onSelectBody;
   final String drive;
   final ValueChanged<String> onDriveChanged;
   final bool frontSteering;
@@ -1418,6 +1518,49 @@ class _ReviewRigInspector extends StatelessWidget {
                   wheel: assignedWheels[slot],
                   availableNodes: meshNodes,
                   onSelected: (nodeIdx) => onReassignWheel(slot, nodeIdx),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _PanelTitle(
+                icon: Icons.directions_car_filled_rounded,
+                title: 'Body Assignment',
+                subtitle: 'Confirm the mesh used as the vehicle body',
+              ),
+              const SizedBox(height: 12),
+              if (meshNodes.isEmpty)
+                const Text(
+                  'No mesh nodes found in the imported model.',
+                  style: TextStyle(color: Color(0xFFE86F6F), fontSize: 11),
+                )
+              else
+                DropdownButtonFormField<int>(
+                  initialValue: meshNodes.any(
+                          (node) => node.index == selectedBodyNodeIndex)
+                      ? selectedBodyNodeIndex
+                      : null,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Car body mesh',
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: meshNodes.map((node) {
+                    return DropdownMenuItem<int>(
+                      value: node.index,
+                      child: Text(
+                        node.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: onSelectBody,
                 ),
             ],
           ),
@@ -1777,8 +1920,14 @@ class _TestDriveLauncherInspector extends StatelessWidget {
 // ── Step 4: Export Inspector ────────────────────────────────────────────────
 
 class _ExportInspector extends StatelessWidget {
-  const _ExportInspector({required this.onExport});
+  const _ExportInspector({
+    required this.onExport,
+    required this.canExport,
+    required this.blockReason,
+  });
   final VoidCallback onExport;
+  final bool canExport;
+  final String? blockReason;
 
   @override
   Widget build(BuildContext context) {
@@ -1807,11 +1956,41 @@ class _ExportInspector extends StatelessWidget {
             name: 'rig_car_config.json',
             detail: 'Editable rig settings & telemetry',
           ),
+          if (!canExport) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2B1F12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF7A5522)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      color: Color(0xFFFBBF24), size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      blockReason ?? 'Review the wheel and body assignments.',
+                      style: const TextStyle(
+                        color: Color(0xFFFDE68A),
+                        fontSize: 11,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: onExport,
+              onPressed: canExport ? onExport : null,
               icon: const Icon(Icons.file_download_outlined, size: 18),
               label: const Text('Download Godot Rig Files'),
               style: FilledButton.styleFrom(
