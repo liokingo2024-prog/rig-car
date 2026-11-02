@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
@@ -27,6 +29,54 @@ void main() {
       const p = Vec3(0, 0, 0);
       final clip = vp.transformClip(p);
       expect(clip[3] > 0, isTrue); // In front of camera
+    });
+
+    test('normalizes imported vehicle units and origin', () {
+      final mesh = MeshData(
+        index: 0,
+        name: 'CarMesh',
+        vertices: const [Vec3(-100, 20, -200), Vec3(100, 120, 200)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-100, 20, -200), Vec3(100, 120, 200)),
+      );
+      final model = ParsedModel(
+        fileName: 'millimeter_car.glb',
+        nodes: [
+          SceneNode(
+            index: 0,
+            name: 'Car_Body',
+            localTransform: Mat4.identity(),
+            meshIndex: 0,
+            childIndices: const [],
+            parentIndex: null,
+            worldTransform: Mat4.identity(),
+          ),
+        ],
+        meshes: [mesh],
+        instances: [
+          MeshInstance(
+            nodeIndex: 0,
+            meshIndex: 0,
+            worldVertices: mesh.vertices,
+            edges: mesh.edges,
+            worldBBox: mesh.bbox,
+          ),
+        ],
+        rootNodeIndices: const [0],
+        worldBBox: mesh.bbox,
+      );
+
+      final normalized = model.normalizedForRigging();
+      expect(
+        max(
+          normalized.worldBBox.size.x.abs(),
+          normalized.worldBBox.size.z.abs(),
+        ),
+        closeTo(4.2, 1e-9),
+      );
+      expect(normalized.worldBBox.center.x, closeTo(0, 1e-9));
+      expect(normalized.worldBBox.center.z, closeTo(0, 1e-9));
+      expect(normalized.worldBBox.lo.y, closeTo(0, 1e-9));
     });
   });
 
@@ -183,13 +233,15 @@ void main() {
         edges: [Edge(0, 1)],
         bbox: const BBox(Vec3(-0.15, -0.35, -0.35), Vec3(0.15, 0.35, 0.35)),
       );
-      instances.add(MeshInstance(
-        nodeIndex: 1,
-        meshIndex: 0,
-        worldVertices: bodyMesh.vertices,
-        edges: bodyMesh.edges,
-        worldBBox: bodyMesh.bbox,
-      ));
+      instances.add(
+        MeshInstance(
+          nodeIndex: 1,
+          meshIndex: 0,
+          worldVertices: bodyMesh.vertices,
+          edges: bodyMesh.edges,
+          worldBBox: bodyMesh.bbox,
+        ),
+      );
 
       var nodeIndex = 2;
       for (var wheel = 0; wheel < wheelPositions.length; wheel++) {
@@ -204,29 +256,35 @@ void main() {
             parentIndex: 0,
           );
           nodes.add(node);
-          instances.add(MeshInstance(
-            nodeIndex: nodeIndex,
-            meshIndex: 1,
-            worldVertices: wheelMesh.vertices
-                .map(node.localTransform.transformPoint)
-                .toList(),
-            edges: wheelMesh.edges,
-            worldBBox: BBox.fromPoints(wheelMesh.vertices
-                .map(node.localTransform.transformPoint)
-                .toList()),
-          ));
+          instances.add(
+            MeshInstance(
+              nodeIndex: nodeIndex,
+              meshIndex: 1,
+              worldVertices: wheelMesh.vertices
+                  .map(node.localTransform.transformPoint)
+                  .toList(),
+              edges: wheelMesh.edges,
+              worldBBox: BBox.fromPoints(
+                wheelMesh.vertices
+                    .map(node.localTransform.transformPoint)
+                    .toList(),
+              ),
+            ),
+          );
           nodeIndex++;
         }
       }
 
-      final result = AutoDetector.detect(ParsedModel(
-        fileName: 'multi_part_car.glb',
-        nodes: nodes,
-        meshes: [bodyMesh, wheelMesh],
-        instances: instances,
-        rootNodeIndices: [0],
-        worldBBox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1.5, 2)),
-      ));
+      final result = AutoDetector.detect(
+        ParsedModel(
+          fileName: 'multi_part_car.glb',
+          nodes: nodes,
+          meshes: [bodyMesh, wheelMesh],
+          instances: instances,
+          rootNodeIndices: [0],
+          worldBBox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1.5, 2)),
+        ),
+      );
 
       expect(result.wheels.length, 4);
       expect(result.wheels.every((wheel) => wheel.partCount == 2), isTrue);
@@ -289,8 +347,9 @@ void main() {
       expect(find.text('Rig Your Car'), findsWidgets);
     });
 
-    testWidgets('navigates from home screen to workbench via "Rig Your Car"',
-        (tester) async {
+    testWidgets('navigates from home screen to workbench via "Rig Your Car"', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -313,8 +372,9 @@ void main() {
   });
 
   group('UI Workbench Flow', () {
-    testWidgets('renders workbench shell and 3D wireframe viewer',
-        (tester) async {
+    testWidgets('renders workbench shell and 3D wireframe viewer', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -327,6 +387,7 @@ void main() {
       expect(find.text('CAR RIGGER'), findsOneWidget);
       expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
       expect(find.text('Procedural 3D Rig'), findsOneWidget);
+      expect(find.byTooltip('Auto-rig vehicle'), findsOneWidget);
     });
 
     testWidgets('switches between workflow steps in workbench', (tester) async {
@@ -481,17 +542,16 @@ void main() {
   });
 
   group('Interactive Test Drive Simulation Mode', () {
-    testWidgets('renders TestDriveViewport with Godot racing HUD',
-        (tester) async {
+    testWidgets('renders TestDriveViewport with Godot racing HUD', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: true),
-        ),
+        const MaterialApp(home: RigWorkbenchPage(startInTestDrive: true)),
       );
       await tester.pump(const Duration(milliseconds: 100));
 
@@ -509,17 +569,16 @@ void main() {
       expect(find.text('TEST DRIVE'), findsWidgets);
     });
 
-    testWidgets('toggles Test Drive mode from workbench topbar button',
-        (tester) async {
+    testWidgets('toggles Test Drive mode from workbench topbar button', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: false),
-        ),
+        const MaterialApp(home: RigWorkbenchPage(startInTestDrive: false)),
       );
       await tester.pump(const Duration(milliseconds: 100));
 
@@ -532,41 +591,45 @@ void main() {
       expect(find.text('GODOT 4 VEHICLE SIMULATOR'), findsOneWidget);
     });
 
-    testWidgets('toggles natural and inverted controls in 3D wireframe viewer',
-        (tester) async {
+    testWidgets(
+      'toggles natural and inverted controls in 3D wireframe viewer',
+      (tester) async {
+        tester.view.physicalSize = const Size(1280, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await tester.pumpWidget(
+          const MaterialApp(home: RigWorkbenchPage(startInTestDrive: false)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // Find invert controls toggle button by tooltip
+        final invertButton = find.byTooltip(
+          'Controls: Natural (Click for Inverted)',
+        );
+        expect(invertButton, findsOneWidget);
+
+        await tester.tap(invertButton);
+        await tester.pump();
+
+        expect(
+          find.byTooltip('Controls: Inverted (Click for Natural)'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('cycles and switches land grid styles in 3D wireframe viewer', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: false),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // Find invert controls toggle button by tooltip
-      final invertButton = find.byTooltip('Controls: Natural (Click for Inverted)');
-      expect(invertButton, findsOneWidget);
-
-      await tester.tap(invertButton);
-      await tester.pump();
-
-      expect(find.byTooltip('Controls: Inverted (Click for Natural)'), findsOneWidget);
-    });
-
-    testWidgets('cycles and switches land grid styles in 3D wireframe viewer',
-        (tester) async {
-      tester.view.physicalSize = const Size(1280, 800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: false),
-        ),
+        const MaterialApp(home: RigWorkbenchPage(startInTestDrive: false)),
       );
       await tester.pump(const Duration(milliseconds: 100));
 
@@ -584,38 +647,41 @@ void main() {
     });
 
     testWidgets(
-        'renders TestDriveViewport with Day Bright lighting and asphalt track selector',
-        (tester) async {
+      'renders TestDriveViewport with Day Bright lighting and asphalt track selector',
+      (tester) async {
+        tester.view.physicalSize = const Size(1280, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await tester.pumpWidget(
+          const MaterialApp(home: RigWorkbenchPage(startInTestDrive: true)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('Day'), findsOneWidget);
+        expect(find.text('Circuit'), findsOneWidget);
+        expect(
+          find.byTooltip('Environment Lighting: Day Bright'),
+          findsOneWidget,
+        );
+        expect(
+          find.byTooltip('Track Surface: Circuit Asphalt'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('toggles fullscreen mode in TestDriveViewport with button', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: true),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(find.text('Day'), findsOneWidget);
-      expect(find.text('Circuit'), findsOneWidget);
-      expect(find.byTooltip('Environment Lighting: Day Bright'), findsOneWidget);
-      expect(find.byTooltip('Track Surface: Circuit Asphalt'), findsOneWidget);
-    });
-
-    testWidgets(
-        'toggles fullscreen mode in TestDriveViewport with button',
-        (tester) async {
-      tester.view.physicalSize = const Size(1280, 800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RigWorkbenchPage(startInTestDrive: true),
-        ),
+        const MaterialApp(home: RigWorkbenchPage(startInTestDrive: true)),
       );
       await tester.pump(const Duration(milliseconds: 100));
 

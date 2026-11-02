@@ -16,11 +16,8 @@ class Vec3 {
   Vec3 operator -() => Vec3(-x, -y, -z);
 
   double dot(Vec3 o) => x * o.x + y * o.y + z * o.z;
-  Vec3 cross(Vec3 o) => Vec3(
-        y * o.z - z * o.y,
-        z * o.x - x * o.z,
-        x * o.y - y * o.x,
-      );
+  Vec3 cross(Vec3 o) =>
+      Vec3(y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x);
 
   double get length => sqrt(x * x + y * y + z * z);
   double get lengthSquared => x * x + y * y + z * z;
@@ -31,19 +28,14 @@ class Vec3 {
     return this * (1.0 / len);
   }
 
-  Vec3 min(Vec3 o) => Vec3(
-        x < o.x ? x : o.x,
-        y < o.y ? y : o.y,
-        z < o.z ? z : o.z,
-      );
-  Vec3 max(Vec3 o) => Vec3(
-        x > o.x ? x : o.x,
-        y > o.y ? y : o.y,
-        z > o.z ? z : o.z,
-      );
+  Vec3 min(Vec3 o) =>
+      Vec3(x < o.x ? x : o.x, y < o.y ? y : o.y, z < o.z ? z : o.z);
+  Vec3 max(Vec3 o) =>
+      Vec3(x > o.x ? x : o.x, y > o.y ? y : o.y, z > o.z ? z : o.z);
 
   @override
-  String toString() => 'Vec3(${x.toStringAsFixed(3)}, '
+  String toString() =>
+      'Vec3(${x.toStringAsFixed(3)}, '
       '${y.toStringAsFixed(3)}, ${z.toStringAsFixed(3)})';
 }
 
@@ -58,10 +50,22 @@ class Quat {
     final xy = x * y, xz = x * z, yz = y * z;
     final wx = w * x, wy = w * y, wz = w * z;
     return Mat4(<double>[
-      1 - 2 * (yy + zz), 2 * (xy + wz), 2 * (xz - wy), 0,
-      2 * (xy - wz), 1 - 2 * (xx + zz), 2 * (yz + wx), 0,
-      2 * (xz + wy), 2 * (yz - wx), 1 - 2 * (xx + yy), 0,
-      0, 0, 0, 1,
+      1 - 2 * (yy + zz),
+      2 * (xy + wz),
+      2 * (xz - wy),
+      0,
+      2 * (xy - wz),
+      1 - 2 * (xx + zz),
+      2 * (yz + wx),
+      0,
+      2 * (xz + wy),
+      2 * (yz - wx),
+      1 - 2 * (xx + yy),
+      0,
+      0,
+      0,
+      0,
+      1,
     ]);
   }
 }
@@ -73,6 +77,25 @@ class Mat4 {
 
   static Mat4 identity() =>
       Mat4([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+  static Mat4 uniformScaleTranslate(double scale, Vec3 offset) => Mat4([
+    scale,
+    0,
+    0,
+    0,
+    0,
+    scale,
+    0,
+    0,
+    0,
+    0,
+    scale,
+    0,
+    offset.x,
+    offset.y,
+    offset.z,
+    1,
+  ]);
 
   Vec3 get translation => Vec3(m[12], m[13], m[14]);
 
@@ -88,11 +111,11 @@ class Mat4 {
 
   /// Returns clip-space `[x, y, z, w]` without perspective divide.
   Float64List transformClip(Vec3 v) => Float64List.fromList([
-        m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12],
-        m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13],
-        m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14],
-        m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15],
-      ]);
+    m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12],
+    m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13],
+    m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14],
+    m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15],
+  ]);
 
   Mat4 operator *(Mat4 o) {
     final r = List<double>.filled(16, 0.0);
@@ -111,10 +134,22 @@ class Mat4 {
   static Mat4 fromTRS(Vec3 t, Quat r, Vec3 s) {
     final rot = r.toRotationMatrix();
     return Mat4([
-      rot.m[0] * s.x, rot.m[1] * s.x, rot.m[2] * s.x, 0,
-      rot.m[4] * s.y, rot.m[5] * s.y, rot.m[6] * s.y, 0,
-      rot.m[8] * s.z, rot.m[9] * s.z, rot.m[10] * s.z, 0,
-      t.x, t.y, t.z, 1,
+      rot.m[0] * s.x,
+      rot.m[1] * s.x,
+      rot.m[2] * s.x,
+      0,
+      rot.m[4] * s.y,
+      rot.m[5] * s.y,
+      rot.m[6] * s.y,
+      0,
+      rot.m[8] * s.z,
+      rot.m[9] * s.z,
+      rot.m[10] * s.z,
+      0,
+      t.x,
+      t.y,
+      t.z,
+      1,
     ]);
   }
 
@@ -123,10 +158,22 @@ class Mat4 {
     final r = f.cross(upHint).normalized;
     final u = r.cross(f);
     return Mat4([
-      r.x, u.x, -f.x, 0,
-      r.y, u.y, -f.y, 0,
-      r.z, u.z, -f.z, 0,
-      -r.dot(eye), -u.dot(eye), f.dot(eye), 1,
+      r.x,
+      u.x,
+      -f.x,
+      0,
+      r.y,
+      u.y,
+      -f.y,
+      0,
+      r.z,
+      u.z,
+      -f.z,
+      0,
+      -r.dot(eye),
+      -u.dot(eye),
+      f.dot(eye),
+      1,
     ]);
   }
 
@@ -134,10 +181,22 @@ class Mat4 {
     final f = 1.0 / tan(fovY / 2);
     final nf = 1.0 / (near - far);
     return Mat4([
-      f / aspect, 0, 0, 0,
-      0, f, 0, 0,
-      0, 0, (far + near) * nf, -1,
-      0, 0, 2 * far * near * nf, 0,
+      f / aspect,
+      0,
+      0,
+      0,
+      0,
+      f,
+      0,
+      0,
+      0,
+      0,
+      (far + near) * nf,
+      -1,
+      0,
+      0,
+      2 * far * near * nf,
+      0,
     ]);
   }
 }
@@ -151,8 +210,11 @@ class BBox {
 
   static const empty = BBox(
     Vec3(double.infinity, double.infinity, double.infinity),
-    Vec3(double.negativeInfinity, double.negativeInfinity,
-        double.negativeInfinity),
+    Vec3(
+      double.negativeInfinity,
+      double.negativeInfinity,
+      double.negativeInfinity,
+    ),
   );
 
   Vec3 get center => (lo + hi) * 0.5;
@@ -183,9 +245,7 @@ class BBox {
 /// A directed edge stored with ordered indices for deduplication.
 class Edge {
   final int a, b;
-  Edge(int v0, int v1)
-      : a = v0 < v1 ? v0 : v1,
-        b = v0 < v1 ? v1 : v0;
+  Edge(int v0, int v1) : a = v0 < v1 ? v0 : v1, b = v0 < v1 ? v1 : v0;
 
   @override
   bool operator ==(Object other) =>
@@ -273,6 +333,82 @@ class ParsedModel {
     required this.rootNodeIndices,
     required this.worldBBox,
   });
+
+  /// Returns a normalized copy for rigging and viewport display.
+  ///
+  /// Imported assets commonly use millimeters, centimeters, or arbitrary
+  /// authoring units. This maps the largest horizontal vehicle dimension to
+  /// [targetFootprint] meters, centers X/Z on the origin, and places the
+  /// lowest geometry on Y=0. Local mesh data stays untouched; world-space
+  /// nodes and instances are transformed together so detection, rendering,
+  /// manual assignment, and Godot export use the same coordinates.
+  ParsedModel normalizedForRigging({double targetFootprint = 4.2}) {
+    if (instances.isEmpty || targetFootprint <= 0) return this;
+
+    final size = worldBBox.size;
+    final horizontal = max(size.x.abs(), size.z.abs());
+    if (horizontal < 1e-9) return this;
+
+    final scale = targetFootprint / horizontal;
+    final offset = Vec3(
+      -worldBBox.center.x * scale,
+      -worldBBox.lo.y * scale,
+      -worldBBox.center.z * scale,
+    );
+    final normalization = Mat4.uniformScaleTranslate(scale, offset);
+    Vec3 normalizePoint(Vec3 point) => normalization.transformPoint(point);
+
+    final normalizedNodes = nodes.map((node) {
+      return SceneNode(
+        index: node.index,
+        name: node.name,
+        localTransform: node.localTransform,
+        meshIndex: node.meshIndex,
+        childIndices: node.childIndices,
+        parentIndex: node.parentIndex,
+        worldTransform: normalization * node.worldTransform,
+      );
+    }).toList();
+
+    final normalizedInstances = instances.map((instance) {
+      final vertices = instance.worldVertices.map(normalizePoint).toList();
+      final bounds = vertices.isEmpty
+          ? _normalizeBounds(instance.worldBBox, normalizePoint)
+          : BBox.fromPoints(vertices);
+      return MeshInstance(
+        nodeIndex: instance.nodeIndex,
+        meshIndex: instance.meshIndex,
+        worldVertices: vertices,
+        edges: instance.edges,
+        worldBBox: bounds,
+      );
+    }).toList();
+
+    return ParsedModel(
+      fileName: fileName,
+      nodes: normalizedNodes,
+      meshes: meshes,
+      instances: normalizedInstances,
+      rootNodeIndices: rootNodeIndices,
+      worldBBox: BBox.union(
+        normalizedInstances.map((instance) => instance.worldBBox).toList(),
+      ),
+    );
+  }
+
+  static BBox _normalizeBounds(BBox bounds, Vec3 Function(Vec3) transform) {
+    final corners = [
+      Vec3(bounds.lo.x, bounds.lo.y, bounds.lo.z),
+      Vec3(bounds.hi.x, bounds.lo.y, bounds.lo.z),
+      Vec3(bounds.lo.x, bounds.hi.y, bounds.lo.z),
+      Vec3(bounds.lo.x, bounds.lo.y, bounds.hi.z),
+      Vec3(bounds.hi.x, bounds.hi.y, bounds.lo.z),
+      Vec3(bounds.hi.x, bounds.lo.y, bounds.hi.z),
+      Vec3(bounds.lo.x, bounds.hi.y, bounds.hi.z),
+      Vec3(bounds.hi.x, bounds.hi.y, bounds.hi.z),
+    ];
+    return BBox.fromPoints(corners.map(transform).toList());
+  }
 }
 
 // ── Auto-detection Results ──────────────────────────────────────────────────
@@ -283,6 +419,7 @@ class DetectedWheel {
   final Vec3 worldPosition;
   final double confidence;
   final int? meshIndex;
+
   /// All mesh nodes grouped into this wheel assembly. A wheel may contain
   /// separate tire, rim, hub, and brake meshes.
   final List<int> partNodeIndices;
@@ -382,34 +519,34 @@ class RigConfig {
 
   Vec3 _wp(int i, Vec3 fallback) =>
       wheelPositions != null && i < wheelPositions!.length
-          ? wheelPositions![i]
-          : fallback;
+      ? wheelPositions![i]
+      : fallback;
 
   Map<String, Object> toJson() => {
-        'format': 'rig-car.godot.vehicle-body-3d/v1',
-        'model': modelName,
-        'preset': presetName,
-        'godot': {'root_node': 'VehicleBody3D', 'wheel_node': 'VehicleWheel3D'},
-        'vehicle_body': {
-          'mass': mass,
-          'engine_force': engineForce,
-          'center_of_mass_y': centerOfMass,
-          'drive': drive,
-        },
-        if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
-        'wheels': {
-          'front': {
-            'use_as_steering': frontSteering,
-            'use_as_traction': frontTraction,
-          },
-          'rear': {
-            'use_as_steering': rearSteering,
-            'use_as_traction': rearTraction,
-            'wheel_friction_slip': grip,
-            'suspension_stiffness': suspension,
-          },
-        },
-      };
+    'format': 'rig-car.godot.vehicle-body-3d/v1',
+    'model': modelName,
+    'preset': presetName,
+    'godot': {'root_node': 'VehicleBody3D', 'wheel_node': 'VehicleWheel3D'},
+    'vehicle_body': {
+      'mass': mass,
+      'engine_force': engineForce,
+      'center_of_mass_y': centerOfMass,
+      'drive': drive,
+    },
+    if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
+    'wheels': {
+      'front': {
+        'use_as_steering': frontSteering,
+        'use_as_traction': frontTraction,
+      },
+      'rear': {
+        'use_as_steering': rearSteering,
+        'use_as_traction': rearTraction,
+        'wheel_friction_slip': grip,
+        'suspension_stiffness': suspension,
+      },
+    },
+  };
 
   String toGdScript() =>
       '''extends VehicleBody3D

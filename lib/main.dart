@@ -28,15 +28,16 @@ class RigCarApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF090D0B),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF10B981),
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: const Color(0xFF10B981),
-          onPrimary: Colors.white,
-          surface: const Color(0xFF111714),
-          onSurface: ink,
-        ),
+        colorScheme:
+            ColorScheme.fromSeed(
+              seedColor: const Color(0xFF10B981),
+              brightness: Brightness.dark,
+            ).copyWith(
+              primary: const Color(0xFF10B981),
+              onPrimary: Colors.white,
+              surface: const Color(0xFF111714),
+              onSurface: ink,
+            ),
         fontFamily: 'Arial',
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -195,7 +196,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       });
 
       if (picked.bytes.isNotEmpty) {
-        final parsed = GlbParser.parse(picked.name, picked.bytes);
+        // Normalize imported authoring units before detection and rendering.
+        // This gives the viewport and exported Godot rig one stable vehicle
+        // coordinate system regardless of whether the source used mm, cm, or
+        // arbitrary units.
+        final parsed = GlbParser.parse(
+          picked.name,
+          picked.bytes,
+        ).normalizedForRigging();
         final detection = AutoDetector.detect(parsed);
 
         setState(() {
@@ -213,8 +221,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
           // Estimate mass from volume
           final size = parsed.worldBBox.size;
-          final vol = (size.x.abs() * size.y.abs() * size.z.abs())
-              .clamp(2.0, 30.0);
+          final vol = (size.x.abs() * size.y.abs() * size.z.abs()).clamp(
+            2.0,
+            30.0,
+          );
           _mass = (vol * 140.0).clamp(600.0, 2800.0).roundToDouble();
 
           // Map detected wheels
@@ -225,8 +235,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         });
 
         _showMessage(
-          'Model parsed: ${parsed.nodes.length} nodes, '
-          '${detection.wheels.length}/4 wheels detected',
+          'Model normalized and auto-rigged: ${detection.wheels.length}/4 '
+          'wheels detected',
         );
       } else {
         _showMessage('Loaded ${picked.name} (procedural fallback)');
@@ -236,6 +246,27 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
   }
 
+  void _autoRigModel() {
+    final model = _parsedModel;
+    if (model == null) {
+      _pickModel();
+      return;
+    }
+
+    final detection = AutoDetector.detect(model);
+    setState(() {
+      _detection = detection;
+      _selectedBodyNodeIndex = detection.body?.nodeIndex;
+      _drive = detection.suggestedDrive;
+      _mapDetectedWheels(detection.wheels);
+      _activeStep = 2;
+    });
+    _showMessage(
+      'Auto-rig complete: ${detection.wheels.length}/4 wheels detected. '
+      'Review assignments before export.',
+    );
+  }
+
   void _mapDetectedWheels(List<DetectedWheel> wheels) {
     _assignedWheels['FL'] = null;
     _assignedWheels['FR'] = null;
@@ -243,7 +274,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     _assignedWheels['RR'] = null;
 
     for (final w in wheels) {
-      final key = '${w.axle == 'front' ? 'F' : 'R'}${w.side == 'left' ? 'L' : 'R'}';
+      final key =
+          '${w.axle == 'front' ? 'F' : 'R'}${w.side == 'left' ? 'L' : 'R'}';
       if (_assignedWheels.containsKey(key) && _assignedWheels[key] == null) {
         _assignedWheels[key] = w;
       }
@@ -286,18 +318,23 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 
   bool get _hasFourDistinctWheelAssignments {
-    final assignments = ['FL', 'FR', 'RL', 'RR']
-        .map((slot) => _assignedWheels[slot])
-        .toList();
+    final assignments = [
+      'FL',
+      'FR',
+      'RL',
+      'RR',
+    ].map((slot) => _assignedWheels[slot]).toList();
     if (assignments.any((wheel) => wheel == null)) return false;
 
     final wheels = assignments.cast<DetectedWheel>();
     final partIds = wheels
-        .expand((wheel) => wheel.partIds.isNotEmpty
-            ? wheel.partIds
-            : (wheel.partNodeIndices.isEmpty
-                ? <String>['node:${wheel.nodeIndex}']
-                : wheel.partNodeIndices.map((index) => 'node:$index')))
+        .expand(
+          (wheel) => wheel.partIds.isNotEmpty
+              ? wheel.partIds
+              : (wheel.partNodeIndices.isEmpty
+                    ? <String>['node:${wheel.nodeIndex}']
+                    : wheel.partNodeIndices.map((index) => 'node:$index')),
+        )
         .toSet();
     if (partIds.length < 4) return false;
 
@@ -458,8 +495,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       detection: _detection,
       accentColor: _preset.accent,
       isFullscreen: isFullscreen,
-      onToggleFullscreen: (full) =>
-          setState(() => _isDriveFullscreen = full),
+      onToggleFullscreen: (full) => setState(() => _isDriveFullscreen = full),
       onExit: _exitTestDrive,
     );
 
@@ -497,6 +533,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
               if (!desktop)
                 _MobileHeader(
                   onExport: _exportGodotFiles,
+                  onAutoRig: _autoRigModel,
                   isTestDrive: _isTestDriveMode,
                   onToggleTestDrive: () {
                     if (_isTestDriveMode) {
@@ -524,6 +561,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                             _DesktopTopbar(
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
+                              onAutoRig: _autoRigModel,
                               wheelsCount: _detection?.wheels.length ?? 0,
                               isTestDrive: _isTestDriveMode,
                               onToggleTestDrive: () {
@@ -551,86 +589,90 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                     child: _buildTestDriveViewport(),
                                   )
                                 : (tablet && desktop
-                                    ? Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          24,
-                                          20,
-                                          24,
-                                          20,
-                                        ),
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
-                                            // 3D Viewport stays anchored and fills available height
-                                            Expanded(
-                                              child: WireframeViewer(
-                                                 model: _parsedModel,
-                                                 detection: _detection,
-                                                 bodyNodeIndex:
-                                                     _selectedBodyNodeIndex,
-                                                 selectedNodeIndex:
-                                                    _selectedNodeIndex,
-                                                onNodeSelected: (idx) {
-                                                  setState(() =>
-                                                      _selectedNodeIndex = idx);
-                                                },
-                                                accentColor: _preset.accent,
-                                                centerOfMassY: _centerOfMass,
-                                                onTestDrive: _enterTestDrive,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 18),
-                                            // Right side inspector panel with independent scroll
-                                            SizedBox(
-                                              width: 380,
-                                              child: Scrollbar(
-                                                thumbVisibility: true,
-                                                child: SingleChildScrollView(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                    right: 8,
-                                                    bottom: 24,
-                                                  ),
-                                                  child: _buildInspector(),
+                                      ? Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            24,
+                                            20,
+                                            24,
+                                            20,
+                                          ),
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              // 3D Viewport stays anchored and fills available height
+                                              Expanded(
+                                                child: WireframeViewer(
+                                                  model: _parsedModel,
+                                                  detection: _detection,
+                                                  bodyNodeIndex:
+                                                      _selectedBodyNodeIndex,
+                                                  selectedNodeIndex:
+                                                      _selectedNodeIndex,
+                                                  onNodeSelected: (idx) {
+                                                    setState(
+                                                      () => _selectedNodeIndex =
+                                                          idx,
+                                                    );
+                                                  },
+                                                  accentColor: _preset.accent,
+                                                  centerOfMassY: _centerOfMass,
+                                                  onTestDrive: _enterTestDrive,
                                                 ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                    : SingleChildScrollView(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          16,
-                                          16,
-                                          28,
-                                        ),
-                                        child: Column(
-                                          children: [
-                                            SizedBox(
-                                              height: 380,
-                                              child: WireframeViewer(
-                                                 model: _parsedModel,
-                                                 detection: _detection,
-                                                 bodyNodeIndex:
-                                                     _selectedBodyNodeIndex,
-                                                 selectedNodeIndex:
-                                                    _selectedNodeIndex,
-                                                onNodeSelected: (idx) {
-                                                  setState(() =>
-                                                      _selectedNodeIndex = idx);
-                                                },
-                                                accentColor: _preset.accent,
-                                                centerOfMassY: _centerOfMass,
-                                                onTestDrive: _enterTestDrive,
+                                              const SizedBox(width: 18),
+                                              // Right side inspector panel with independent scroll
+                                              SizedBox(
+                                                width: 380,
+                                                child: Scrollbar(
+                                                  thumbVisibility: true,
+                                                  child: SingleChildScrollView(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          right: 8,
+                                                          bottom: 24,
+                                                        ),
+                                                    child: _buildInspector(),
+                                                  ),
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(height: 16),
-                                            _buildInspector(),
-                                          ],
-                                        ),
-                                      )),
+                                            ],
+                                          ),
+                                        )
+                                      : SingleChildScrollView(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            16,
+                                            16,
+                                            28,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              SizedBox(
+                                                height: 380,
+                                                child: WireframeViewer(
+                                                  model: _parsedModel,
+                                                  detection: _detection,
+                                                  bodyNodeIndex:
+                                                      _selectedBodyNodeIndex,
+                                                  selectedNodeIndex:
+                                                      _selectedNodeIndex,
+                                                  onNodeSelected: (idx) {
+                                                    setState(
+                                                      () => _selectedNodeIndex =
+                                                          idx,
+                                                    );
+                                                  },
+                                                  accentColor: _preset.accent,
+                                                  centerOfMassY: _centerOfMass,
+                                                  onTestDrive: _enterTestDrive,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              _buildInspector(),
+                                            ],
+                                          ),
+                                        )),
                           ),
                         ],
                       ),
@@ -665,6 +707,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       frontTraction: _frontTraction,
       rearTraction: _rearTraction,
       onPickModel: _pickModel,
+      onAutoRig: _autoRigModel,
       onReassignWheel: _reassignWheel,
       onSelectBody: _selectBody,
       onPresetChanged: (value) {
@@ -758,7 +801,11 @@ class _DesktopSidebar extends StatelessWidget {
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.arrow_back_rounded, size: 14, color: Color(0xFF34D399)),
+                  Icon(
+                    Icons.arrow_back_rounded,
+                    size: 14,
+                    color: Color(0xFF34D399),
+                  ),
                   SizedBox(width: 8),
                   Text(
                     'Fleet Library',
@@ -869,6 +916,7 @@ class _DesktopTopbar extends StatelessWidget {
   const _DesktopTopbar({
     required this.modelName,
     required this.onExport,
+    required this.onAutoRig,
     required this.wheelsCount,
     required this.isTestDrive,
     required this.onToggleTestDrive,
@@ -876,6 +924,7 @@ class _DesktopTopbar extends StatelessWidget {
 
   final String modelName;
   final VoidCallback onExport;
+  final VoidCallback onAutoRig;
   final int wheelsCount;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
@@ -893,7 +942,11 @@ class _DesktopTopbar extends StatelessWidget {
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF86978C)),
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+              size: 18,
+              color: Color(0xFF86978C),
+            ),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -956,6 +1009,14 @@ class _DesktopTopbar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 14),
+          IconButton.filledTonal(
+            onPressed: onAutoRig,
+            tooltip: 'Auto-rig vehicle',
+            icon: const Icon(Icons.auto_awesome_rounded, size: 17),
+            color: const Color(0xFF10B981),
+            visualDensity: VisualDensity.compact,
+          ),
+          const SizedBox(width: 8),
           FilledButton.icon(
             onPressed: onToggleTestDrive,
             icon: Icon(
@@ -975,13 +1036,13 @@ class _DesktopTopbar extends StatelessWidget {
               backgroundColor: isTestDrive
                   ? const Color(0xFF1A231E)
                   : const Color(0xFF10B981),
-              foregroundColor:
-                  isTestDrive ? const Color(0xFFF0FDF4) : const Color(0xFF062319),
+              foregroundColor: isTestDrive
+                  ? const Color(0xFFF0FDF4)
+                  : const Color(0xFF062319),
               side: isTestDrive
                   ? const BorderSide(color: Color(0xFF223127))
                   : null,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(6),
               ),
@@ -1009,10 +1070,12 @@ class _DesktopTopbar extends StatelessWidget {
 class _MobileHeader extends StatelessWidget {
   const _MobileHeader({
     required this.onExport,
+    required this.onAutoRig,
     required this.isTestDrive,
     required this.onToggleTestDrive,
   });
   final VoidCallback onExport;
+  final VoidCallback onAutoRig;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
 
@@ -1028,7 +1091,11 @@ class _MobileHeader extends StatelessWidget {
         children: [
           IconButton(
             tooltip: 'Back to Fleet Library',
-            icon: const Icon(Icons.arrow_back_rounded, size: 18, color: Color(0xFF86978C)),
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+              size: 18,
+              color: Color(0xFF86978C),
+            ),
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -1042,6 +1109,14 @@ class _MobileHeader extends StatelessWidget {
           const SizedBox(width: 6),
           const _Brand(),
           const Spacer(),
+          IconButton(
+            onPressed: onAutoRig,
+            tooltip: 'Auto-rig vehicle',
+            icon: const Icon(
+              Icons.auto_awesome_rounded,
+              color: Color(0xFF10B981),
+            ),
+          ),
           IconButton(
             onPressed: onToggleTestDrive,
             tooltip: isTestDrive ? 'Return to Workbench' : 'Test Drive Mode',
@@ -1124,6 +1199,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.frontTraction,
     required this.rearTraction,
     required this.onPickModel,
+    required this.onAutoRig,
     required this.onReassignWheel,
     required this.onSelectBody,
     required this.onPresetChanged,
@@ -1162,6 +1238,7 @@ class _InspectorPanel extends StatelessWidget {
   final bool frontTraction;
   final bool rearTraction;
   final VoidCallback onPickModel;
+  final VoidCallback onAutoRig;
   final void Function(String slot, int? nodeIndex) onReassignWheel;
   final ValueChanged<int?> onSelectBody;
   final ValueChanged<RigPreset> onPresetChanged;
@@ -1199,52 +1276,53 @@ class _InspectorPanel extends StatelessWidget {
         const SizedBox(height: 14),
         switch (activeStep) {
           1 => _UploadScanInspector(
-              modelName: modelName,
-              parsedModel: parsedModel,
-              detection: detection,
-              preset: preset,
-              onPickModel: onPickModel,
-              onPresetChanged: onPresetChanged,
-              onNextStep: () => onStepSelected(2),
-            ),
+            modelName: modelName,
+            parsedModel: parsedModel,
+            detection: detection,
+            preset: preset,
+            onPickModel: onPickModel,
+            onAutoRig: onAutoRig,
+            onPresetChanged: onPresetChanged,
+            onNextStep: () => onStepSelected(2),
+          ),
           2 => _ReviewRigInspector(
-              parsedModel: parsedModel,
-              detection: detection,
-              selectedBodyNodeIndex: selectedBodyNodeIndex,
-              assignedWheels: assignedWheels,
-              onReassignWheel: onReassignWheel,
-              onSelectBody: onSelectBody,
-              drive: drive,
-              onDriveChanged: onDriveChanged,
-              frontSteering: frontSteering,
-              rearSteering: rearSteering,
-              frontTraction: frontTraction,
-              rearTraction: rearTraction,
-              onFrontSteeringChanged: onFrontSteeringChanged,
-              onRearSteeringChanged: onRearSteeringChanged,
-              onFrontTractionChanged: onFrontTractionChanged,
-              onRearTractionChanged: onRearTractionChanged,
-              onNextStep: () => onStepSelected(3),
-            ),
+            parsedModel: parsedModel,
+            detection: detection,
+            selectedBodyNodeIndex: selectedBodyNodeIndex,
+            assignedWheels: assignedWheels,
+            onReassignWheel: onReassignWheel,
+            onSelectBody: onSelectBody,
+            drive: drive,
+            onDriveChanged: onDriveChanged,
+            frontSteering: frontSteering,
+            rearSteering: rearSteering,
+            frontTraction: frontTraction,
+            rearTraction: rearTraction,
+            onFrontSteeringChanged: onFrontSteeringChanged,
+            onRearSteeringChanged: onRearSteeringChanged,
+            onFrontTractionChanged: onFrontTractionChanged,
+            onRearTractionChanged: onRearTractionChanged,
+            onNextStep: () => onStepSelected(3),
+          ),
           3 => _PhysicsInspector(
-              mass: mass,
-              engineForce: engineForce,
-              grip: grip,
-              suspension: suspension,
-              centerOfMass: centerOfMass,
-              onMassChanged: onMassChanged,
-              onEngineForceChanged: onEngineForceChanged,
-              onGripChanged: onGripChanged,
-              onSuspensionChanged: onSuspensionChanged,
-              onCenterOfMassChanged: onCenterOfMassChanged,
-              onNextStep: () => onStepSelected(4),
-              onTestDrive: onTestDrive,
-            ),
+            mass: mass,
+            engineForce: engineForce,
+            grip: grip,
+            suspension: suspension,
+            centerOfMass: centerOfMass,
+            onMassChanged: onMassChanged,
+            onEngineForceChanged: onEngineForceChanged,
+            onGripChanged: onGripChanged,
+            onSuspensionChanged: onSuspensionChanged,
+            onCenterOfMassChanged: onCenterOfMassChanged,
+            onNextStep: () => onStepSelected(4),
+            onTestDrive: onTestDrive,
+          ),
           4 => _ExportInspector(
-              onExport: onExport,
-              canExport: canExport,
-              blockReason: exportBlockReason,
-            ),
+            onExport: onExport,
+            canExport: canExport,
+            blockReason: exportBlockReason,
+          ),
           _ => _TestDriveLauncherInspector(onLaunch: onTestDrive),
         },
       ],
@@ -1261,6 +1339,7 @@ class _UploadScanInspector extends StatelessWidget {
     required this.detection,
     required this.preset,
     required this.onPickModel,
+    required this.onAutoRig,
     required this.onPresetChanged,
     required this.onNextStep,
   });
@@ -1270,6 +1349,7 @@ class _UploadScanInspector extends StatelessWidget {
   final DetectionResult? detection;
   final RigPreset preset;
   final VoidCallback onPickModel;
+  final VoidCallback onAutoRig;
   final ValueChanged<RigPreset> onPresetChanged;
   final VoidCallback onNextStep;
 
@@ -1339,14 +1419,31 @@ class _UploadScanInspector extends StatelessWidget {
                       FilledButton.icon(
                         onPressed: onPickModel,
                         icon: const Icon(Icons.file_open_rounded, size: 16),
-                        label: Text(parsedModel != null
-                            ? 'Choose another model'
-                            : 'Upload & Auto-Scan'),
+                        label: Text(
+                          parsedModel != null
+                              ? 'Choose another model'
+                              : 'Upload & Auto-Scan',
+                        ),
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF10B981),
                           foregroundColor: const Color(0xFF041D14),
                         ),
                       ),
+                      if (parsedModel != null) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: onAutoRig,
+                          icon: const Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 16,
+                          ),
+                          label: const Text('AUTO-RIG VEHICLE'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF34D399),
+                            side: const BorderSide(color: Color(0xFF10B981)),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1394,8 +1491,11 @@ class _UploadScanInspector extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          size: 14, color: Color(0xFFFBBF24)),
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        size: 14,
+                        color: Color(0xFFFBBF24),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -1540,15 +1640,19 @@ class _ReviewRigInspector extends StatelessWidget {
                 )
               else
                 DropdownButtonFormField<int>(
-                  initialValue: meshNodes.any(
-                          (node) => node.index == selectedBodyNodeIndex)
+                  initialValue:
+                      meshNodes.any(
+                        (node) => node.index == selectedBodyNodeIndex,
+                      )
                       ? selectedBodyNodeIndex
                       : null,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Car body mesh',
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                   ),
                   items: meshNodes.map((node) {
                     return DropdownMenuItem<int>(
@@ -1723,8 +1827,10 @@ class _WheelAssignmentTile extends StatelessWidget {
               initialValue: wheel?.nodeIndex,
               isExpanded: true,
               decoration: const InputDecoration(
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
               ),
               items: availableNodes.map((node) {
                 final pos = node.worldTransform.translation;
@@ -1969,8 +2075,11 @@ class _ExportInspector extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.warning_amber_rounded,
-                      color: Color(0xFFFBBF24), size: 16),
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Color(0xFFFBBF24),
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -2466,7 +2575,11 @@ class _Brand extends StatelessWidget {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: const Color(0xFF223127)),
           ),
-          child: const Icon(Icons.tune_rounded, color: Color(0xFF10B981), size: 16),
+          child: const Icon(
+            Icons.tune_rounded,
+            color: Color(0xFF10B981),
+            size: 16,
+          ),
         ),
         const SizedBox(width: 8),
         const Text(
@@ -2536,19 +2649,17 @@ class WorkflowStep {
 const workflowSteps = [
   WorkflowStep(number: 1, title: 'Upload & Scan', subtitle: 'Auto-detect GLB'),
   WorkflowStep(
-      number: 2, title: 'Review Rig', subtitle: 'Human-assist markers'),
-  WorkflowStep(
-      number: 3, title: 'Tune physics', subtitle: 'Mass & suspension'),
+    number: 2,
+    title: 'Review Rig',
+    subtitle: 'Human-assist markers',
+  ),
+  WorkflowStep(number: 3, title: 'Tune physics', subtitle: 'Mass & suspension'),
   WorkflowStep(
     number: 4,
     title: 'Export to Godot',
     subtitle: 'Scene + script + config',
   ),
-  WorkflowStep(
-    number: 5,
-    title: 'Test Drive',
-    subtitle: 'Godot 4 simulator',
-  ),
+  WorkflowStep(number: 5, title: 'Test Drive', subtitle: 'Godot 4 simulator'),
 ];
 
 const presets = [
