@@ -1051,7 +1051,7 @@ class _WireframeScenePainter extends CustomPainter {
     // ── 2. Draw Model Preview ────────────────────────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
       if (renderMode != ViewerRenderMode.wireframe) {
-        _drawModelSolid(canvas, size, viewProj, projectPoint, eye);
+        _drawModelSolid(canvas, size, viewProj, eye);
       }
       if (renderMode != ViewerRenderMode.solid) {
         _drawModelWireframe(canvas, size, projectPoint);
@@ -1497,13 +1497,7 @@ class _WireframeScenePainter extends CustomPainter {
     );
   }
 
-  void _drawModelSolid(
-    Canvas canvas,
-    Size size,
-    Mat4 viewProj,
-    Offset? Function(Vec3) project,
-    Vec3 eye,
-  ) {
+  void _drawModelSolid(Canvas canvas, Size size, Mat4 viewProj, Vec3 eye) {
     final wheelNodeSet =
         detection?.wheels
             .expand(
@@ -1527,7 +1521,20 @@ class _WireframeScenePainter extends CustomPainter {
     var faceIndex = 0;
 
     if (totalTriangles == 0) {
-      _drawModelWireframe(canvas, size, project);
+      // Some exporters omit indices or use an unsupported primitive mode. A
+      // solid preview must still be visibly solid instead of silently falling
+      // back to the wireframe view.
+      for (final instance in model!.instances) {
+        _drawSolidBounds(
+          canvas,
+          size,
+          viewProj,
+          instance.worldBBox,
+          bodyNodeIndex != null && instance.nodeIndex == bodyNodeIndex
+              ? bodyColor
+              : wireColor,
+        );
+      }
       return;
     }
 
@@ -1609,6 +1616,51 @@ class _WireframeScenePainter extends CustomPainter {
       channel((base.g * 255).round()),
       channel((base.b * 255).round()),
     );
+  }
+
+  void _drawSolidBounds(
+    Canvas canvas,
+    Size size,
+    Mat4 viewProj,
+    BBox bounds,
+    Color color,
+  ) {
+    final x0 = bounds.lo.x;
+    final x1 = bounds.hi.x;
+    final y0 = bounds.lo.y;
+    final y1 = bounds.hi.y;
+    final z0 = bounds.lo.z;
+    final z1 = bounds.hi.z;
+    final corners = [
+      Vec3(x0, y0, z0),
+      Vec3(x1, y0, z0),
+      Vec3(x1, y1, z0),
+      Vec3(x0, y1, z0),
+      Vec3(x0, y0, z1),
+      Vec3(x1, y0, z1),
+      Vec3(x1, y1, z1),
+      Vec3(x0, y1, z1),
+    ];
+    const faces = [
+      [0, 1, 2, 3],
+      [4, 7, 6, 5],
+      [0, 4, 5, 1],
+      [3, 2, 6, 7],
+      [0, 3, 7, 4],
+      [1, 5, 6, 2],
+    ];
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.82)
+      ..style = PaintingStyle.fill;
+    for (final face in faces) {
+      _drawClippedPolygon(
+        canvas,
+        viewProj,
+        size,
+        face.map((index) => corners[index]).toList(),
+        paint,
+      );
+    }
   }
 
   void _drawModelWireframe(
