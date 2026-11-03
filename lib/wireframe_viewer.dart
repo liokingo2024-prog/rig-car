@@ -25,6 +25,16 @@ enum ViewerLighting {
   final IconData icon;
 }
 
+enum ViewerRenderMode {
+  wireframe('Wireframe', Icons.polyline_rounded),
+  solid('Solid', Icons.view_in_ar_rounded),
+  hybrid('Hybrid', Icons.layers_rounded);
+
+  const ViewerRenderMode(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
 enum GroundGridStyle {
   cad('CAD Studio', 'CAD Grid', Icons.grid_4x4_rounded),
   radial('Radial Podium', 'Radial', Icons.motion_photos_on_rounded),
@@ -92,6 +102,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   bool _showMarkers = true;
   GroundGridStyle _gridStyle = GroundGridStyle.cad;
   ViewerLighting _lighting = ViewerLighting.studio;
+  ViewerRenderMode _renderMode = ViewerRenderMode.wireframe;
   bool get _showGrid => _gridStyle != GroundGridStyle.off;
   bool _invertDrag = false;
   // Performance-first default. The full parsed model remains available for
@@ -236,6 +247,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           panY: _panY,
                           gridStyle: _gridStyle,
                           lighting: _lighting,
+                          renderMode: _renderMode,
                           showGrid: _showGrid,
                           showMarkers: _showMarkers,
                           denseWireframe: _denseWireframe,
@@ -415,6 +427,60 @@ class _WireframeViewerState extends State<WireframeViewer>
                                     ),
                                   ],
                                 ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            PopupMenuButton<ViewerRenderMode>(
+                              tooltip: 'Render mode: ${_renderMode.label}',
+                              initialValue: _renderMode,
+                              onSelected: (mode) =>
+                                  setState(() => _renderMode = mode),
+                              color: const Color(0xFF111714),
+                              itemBuilder: (context) =>
+                                  ViewerRenderMode.values.map((mode) {
+                                    final selected = mode == _renderMode;
+                                    return PopupMenuItem<ViewerRenderMode>(
+                                      value: mode,
+                                      height: 38,
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            mode.icon,
+                                            size: 16,
+                                            color: selected
+                                                ? const Color(0xFF10B981)
+                                                : const Color(0xFF86978C),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            mode.label,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: selected
+                                                  ? const Color(0xFFF0FDF4)
+                                                  : const Color(0xFFC9D1D9),
+                                              fontWeight: selected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                          if (selected) ...[
+                                            const Spacer(),
+                                            const Icon(
+                                              Icons.check,
+                                              size: 14,
+                                              color: Color(0xFF10B981),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    );
+                                  }).toList(),
+                              child: _ViewerControl(
+                                icon: _renderMode.icon,
+                                label: _renderMode.label,
+                                active:
+                                    _renderMode != ViewerRenderMode.wireframe,
                               ),
                             ),
                             const SizedBox(width: 4),
@@ -707,6 +773,48 @@ class _PresetButton extends StatelessWidget {
   }
 }
 
+class _ViewerControl extends StatelessWidget {
+  const _ViewerControl({
+    required this.icon,
+    required this.label,
+    required this.active,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? const Color(0xFF10B981) : const Color(0xFF8BA2B0);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xC0111714),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: active ? color : const Color(0xFF223127)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              fontSize: 9,
+              color: active ? const Color(0xFF34D399) : const Color(0xFFC9D1D9),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(Icons.arrow_drop_down, size: 13, color: color),
+        ],
+      ),
+    );
+  }
+}
+
 class _LegendItem extends StatelessWidget {
   const _LegendItem({required this.color, required this.label});
   final Color color;
@@ -806,6 +914,18 @@ class _TelemetryOverlay extends StatelessWidget {
 
 // ── Custom Painter ──────────────────────────────────────────────────────────
 
+class _SolidTriangle {
+  const _SolidTriangle({
+    required this.vertices,
+    required this.depth,
+    required this.color,
+  });
+
+  final List<Vec3> vertices;
+  final double depth;
+  final Color color;
+}
+
 class _WireframeScenePainter extends CustomPainter {
   const _WireframeScenePainter({
     required this.model,
@@ -820,6 +940,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.panY,
     this.gridStyle = GroundGridStyle.cad,
     this.lighting = ViewerLighting.studio,
+    this.renderMode = ViewerRenderMode.wireframe,
     required this.showGrid,
     required this.showMarkers,
     required this.denseWireframe,
@@ -843,6 +964,7 @@ class _WireframeScenePainter extends CustomPainter {
   final double panY;
   final GroundGridStyle gridStyle;
   final ViewerLighting lighting;
+  final ViewerRenderMode renderMode;
   final bool showGrid;
   final bool showMarkers;
   final bool denseWireframe;
@@ -867,6 +989,7 @@ class _WireframeScenePainter extends CustomPainter {
         oldDelegate.panY != panY ||
         oldDelegate.gridStyle != gridStyle ||
         oldDelegate.lighting != lighting ||
+        oldDelegate.renderMode != renderMode ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.showMarkers != showMarkers ||
         oldDelegate.denseWireframe != denseWireframe ||
@@ -925,11 +1048,21 @@ class _WireframeScenePainter extends CustomPainter {
     // ── 1. Draw 3D Ground Surface Grid ───────────────────────────────────────
     _drawGroundSurface(canvas, size, viewProj, projectPoint);
 
-    // ── 2. Draw Model Wireframe OR Procedural Rig ────────────────────────────
+    // ── 2. Draw Model Preview ────────────────────────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
-      _drawModelWireframe(canvas, size, projectPoint);
+      if (renderMode != ViewerRenderMode.wireframe) {
+        _drawModelSolid(canvas, size, viewProj, projectPoint);
+      }
+      if (renderMode != ViewerRenderMode.solid) {
+        _drawModelWireframe(canvas, size, projectPoint);
+      }
     } else {
-      _drawProceduralWireframeCar(canvas, size, projectPoint);
+      if (renderMode != ViewerRenderMode.wireframe) {
+        _drawProceduralSolidCar(canvas, size, viewProj);
+      }
+      if (renderMode != ViewerRenderMode.solid) {
+        _drawProceduralWireframeCar(canvas, size, projectPoint);
+      }
     }
 
     // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
@@ -1364,6 +1497,88 @@ class _WireframeScenePainter extends CustomPainter {
     );
   }
 
+  void _drawModelSolid(
+    Canvas canvas,
+    Size size,
+    Mat4 viewProj,
+    Offset? Function(Vec3) project,
+  ) {
+    final wheelNodeSet =
+        detection?.wheels
+            .expand(
+              (w) => w.partNodeIndices.isEmpty
+                  ? <int>[w.nodeIndex]
+                  : w.partNodeIndices,
+            )
+            .toSet() ??
+        {};
+    final selectedBodyNodeIndex = bodyNodeIndex ?? detection?.body?.nodeIndex;
+    final selectedNode = selectedNodeIndex;
+    final totalTriangles = model!.instances.fold<int>(
+      0,
+      (sum, instance) => sum + instance.triangles.length,
+    );
+    // Painter's algorithm keeps the CustomPainter implementation lightweight
+    // while still making filled GLB previews read as a 3D object.
+    const faceBudget = 9000;
+    final faceStride = max(1, (totalTriangles / faceBudget).ceil());
+    final faces = <_SolidTriangle>[];
+    var faceIndex = 0;
+
+    if (totalTriangles == 0) {
+      _drawModelWireframe(canvas, size, project);
+      return;
+    }
+
+    for (final instance in model!.instances) {
+      final color = instance.nodeIndex == selectedNode
+          ? const Color(0x9900E5FF)
+          : wheelNodeSet.contains(instance.nodeIndex)
+          ? wheelColor.withValues(alpha: 0.78)
+          : instance.nodeIndex == selectedBodyNodeIndex
+          ? bodyColor.withValues(alpha: 0.72)
+          : wireColor.withValues(alpha: 0.32);
+
+      for (final triangle in instance.triangles) {
+        final shouldDraw = faceIndex % faceStride == 0;
+        faceIndex++;
+        if (!shouldDraw) continue;
+        if (triangle.a >= instance.worldVertices.length ||
+            triangle.b >= instance.worldVertices.length ||
+            triangle.c >= instance.worldVertices.length) {
+          continue;
+        }
+
+        final vertices = [
+          instance.worldVertices[triangle.a],
+          instance.worldVertices[triangle.b],
+          instance.worldVertices[triangle.c],
+        ];
+        final clips = vertices.map(viewProj.transformClip).toList();
+        final depth =
+            clips.fold<double>(0.0, (sum, clip) => sum + clip[3]) /
+            clips.length;
+        if (clips.every((clip) => clip[3] <= 0.05)) continue;
+        faces.add(
+          _SolidTriangle(vertices: vertices, depth: depth, color: color),
+        );
+      }
+    }
+
+    faces.sort((a, b) => b.depth.compareTo(a.depth));
+    for (final face in faces) {
+      _drawClippedPolygon(
+        canvas,
+        viewProj,
+        size,
+        face.vertices,
+        Paint()
+          ..color = face.color
+          ..style = PaintingStyle.fill,
+      );
+    }
+  }
+
   void _drawModelWireframe(
     Canvas canvas,
     Size size,
@@ -1433,6 +1648,67 @@ class _WireframeScenePainter extends CustomPainter {
           }
         }
       }
+    }
+  }
+
+  void _drawProceduralSolidCar(Canvas canvas, Size size, Mat4 viewProj) {
+    const bodyCorners = [
+      Vec3(-0.9, 0.2, -1.8),
+      Vec3(0.9, 0.2, -1.8),
+      Vec3(0.9, 0.2, 1.8),
+      Vec3(-0.9, 0.2, 1.8),
+      Vec3(-0.85, 0.7, -1.6),
+      Vec3(0.85, 0.7, -1.6),
+      Vec3(-0.8, 0.85, -0.6),
+      Vec3(0.8, 0.85, -0.6),
+      Vec3(-0.65, 1.35, -0.2),
+      Vec3(0.65, 1.35, -0.2),
+      Vec3(-0.65, 1.35, 0.8),
+      Vec3(0.65, 1.35, 0.8),
+      Vec3(-0.8, 0.85, 1.3),
+      Vec3(0.8, 0.85, 1.3),
+      Vec3(-0.85, 0.75, 1.75),
+      Vec3(0.85, 0.75, 1.75),
+    ];
+    const bodyFaces = [
+      [0, 1, 5, 4],
+      [4, 5, 7, 6],
+      [6, 7, 9, 8],
+      [8, 9, 11, 10],
+      [10, 11, 13, 12],
+      [12, 13, 15, 14],
+      [0, 4, 6, 8, 10, 12, 14, 3],
+      [1, 2, 15, 13, 11, 9, 7, 5],
+    ];
+    final bodyPaint = Paint()
+      ..color = bodyColor.withValues(alpha: 0.62)
+      ..style = PaintingStyle.fill;
+    for (final face in bodyFaces) {
+      _drawClippedPolygon(
+        canvas,
+        viewProj,
+        size,
+        face.map((index) => bodyCorners[index]).toList(),
+        bodyPaint,
+      );
+    }
+
+    const wheelCenters = [
+      Vec3(-0.95, 0.35, -1.2),
+      Vec3(0.95, 0.35, -1.2),
+      Vec3(-0.95, 0.35, 1.2),
+      Vec3(0.95, 0.35, 1.2),
+    ];
+    final wheelPaint = Paint()
+      ..color = wheelColor.withValues(alpha: 0.88)
+      ..style = PaintingStyle.fill;
+    for (final center in wheelCenters) {
+      final points = [
+        for (var i = 0; i < 16; i++)
+          center +
+              Vec3(0, 0.35 * sin(i * 2 * pi / 16), 0.35 * cos(i * 2 * pi / 16)),
+      ];
+      _drawClippedPolygon(canvas, viewProj, size, points, wheelPaint);
     }
   }
 

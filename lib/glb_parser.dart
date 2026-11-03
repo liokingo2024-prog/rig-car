@@ -128,6 +128,7 @@ class GlbParser {
 
       final allVerts = <Vec3>[];
       final allEdges = <Edge>{};
+      final allTriangles = <Triangle>[];
 
       for (final prim in prims) {
         final attrs = prim['attributes'] as Map<String, dynamic>?;
@@ -159,9 +160,29 @@ class GlbParser {
             final i0 = indices[t] + vOffset;
             final i1 = indices[t + 1] + vOffset;
             final i2 = indices[t + 2] + vOffset;
+            allTriangles.add(Triangle(i0, i1, i2));
             allEdges.add(Edge(i0, i1));
             allEdges.add(Edge(i1, i2));
             allEdges.add(Edge(i0, i2));
+          }
+        } else {
+          // glTF's default primitive mode is TRIANGLES.
+          final mode = prim['mode'] as int? ?? 4;
+          final vertexCount = allVerts.length - vOffset;
+          if (mode == 4) {
+            final triangleCount = vertexCount ~/ 3;
+            final step = triangleCount > _maxEdgesPerPrimitive
+                ? (triangleCount / _maxEdgesPerPrimitive).ceil()
+                : 1;
+            for (var t = 0; t + 2 < vertexCount; t += 3 * step) {
+              final i0 = vOffset + t;
+              final i1 = vOffset + t + 1;
+              final i2 = vOffset + t + 2;
+              allTriangles.add(Triangle(i0, i1, i2));
+              allEdges.add(Edge(i0, i1));
+              allEdges.add(Edge(i1, i2));
+              allEdges.add(Edge(i0, i2));
+            }
           }
         }
       }
@@ -172,6 +193,7 @@ class GlbParser {
           name: m['name'] as String? ?? 'Mesh_$mi',
           vertices: allVerts,
           edges: allEdges.toList(),
+          triangles: allTriangles,
           bbox: BBox.fromPoints(allVerts),
         ),
       );
@@ -196,6 +218,7 @@ class GlbParser {
           meshIndex: mi,
           worldVertices: worldVerts,
           edges: mesh.edges,
+          triangles: mesh.triangles,
           worldBBox: BBox.fromPoints(worldVerts),
         ),
       );

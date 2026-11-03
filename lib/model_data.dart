@@ -254,6 +254,12 @@ class Edge {
   int get hashCode => Object.hash(a, b);
 }
 
+/// A triangle in a mesh's local vertex index space.
+class Triangle {
+  final int a, b, c;
+  const Triangle(this.a, this.b, this.c);
+}
+
 // ── Picked File ─────────────────────────────────────────────────────────────
 
 class PickedFile {
@@ -289,6 +295,7 @@ class MeshData {
   final String name;
   final List<Vec3> vertices;
   final List<Edge> edges;
+  final List<Triangle> triangles;
   final BBox bbox;
 
   const MeshData({
@@ -296,6 +303,7 @@ class MeshData {
     required this.name,
     required this.vertices,
     required this.edges,
+    this.triangles = const [],
     required this.bbox,
   });
 }
@@ -306,6 +314,7 @@ class MeshInstance {
   final int meshIndex;
   final List<Vec3> worldVertices;
   final List<Edge> edges;
+  final List<Triangle> triangles;
   BBox worldBBox;
 
   MeshInstance({
@@ -313,6 +322,7 @@ class MeshInstance {
     required this.meshIndex,
     required this.worldVertices,
     required this.edges,
+    this.triangles = const [],
     required this.worldBBox,
   });
 }
@@ -383,6 +393,7 @@ class ParsedModel {
         meshIndex: instance.meshIndex,
         worldVertices: vertices,
         edges: instance.edges,
+        triangles: instance.triangles,
         worldBBox: bounds,
       );
     }).toList();
