@@ -1051,14 +1051,14 @@ class _WireframeScenePainter extends CustomPainter {
     // ── 2. Draw Model Preview ────────────────────────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
       if (renderMode != ViewerRenderMode.wireframe) {
-        _drawModelSolid(canvas, size, viewProj, eye);
+        _drawModelSolid(canvas, size, viewProj, projectPoint, eye);
       }
       if (renderMode != ViewerRenderMode.solid) {
         _drawModelWireframe(canvas, size, projectPoint);
       }
     } else {
       if (renderMode != ViewerRenderMode.wireframe) {
-        _drawProceduralSolidCar(canvas, size, viewProj);
+        _drawProceduralSolidCar(canvas, size, viewProj, eye);
       }
       if (renderMode != ViewerRenderMode.solid) {
         _drawProceduralWireframeCar(canvas, size, projectPoint);
@@ -1497,7 +1497,13 @@ class _WireframeScenePainter extends CustomPainter {
     );
   }
 
-  void _drawModelSolid(Canvas canvas, Size size, Mat4 viewProj, Vec3 eye) {
+  void _drawModelSolid(
+    Canvas canvas,
+    Size size,
+    Mat4 viewProj,
+    Offset? Function(Vec3) project,
+    Vec3 eye,
+  ) {
     final wheelNodeSet =
         detection?.wheels
             .expand(
@@ -1513,44 +1519,46 @@ class _WireframeScenePainter extends CustomPainter {
       0,
       (sum, instance) => sum + instance.triangles.length,
     );
-    // Painter's algorithm keeps the CustomPainter implementation lightweight
-    // while still making filled GLB previews read as a 3D object.
-    const faceBudget = 9000;
-    final faceStride = max(1, (totalTriangles / faceBudget).ceil());
-    final faces = <_SolidTriangle>[];
-    var faceIndex = 0;
 
     if (totalTriangles == 0) {
-      // Some exporters omit indices or use an unsupported primitive mode. A
-      // solid preview must still be visibly solid instead of silently falling
-      // back to the wireframe view.
-      for (final instance in model!.instances) {
-        _drawSolidBounds(
-          canvas,
-          size,
-          viewProj,
-          instance.worldBBox,
-          bodyNodeIndex != null && instance.nodeIndex == bodyNodeIndex
-              ? bodyColor
-              : wireColor,
-        );
-      }
+      // Fall back to clean wireframe of the original model if no triangle faces exist.
+      // Never draw arbitrary bounding-box cubes.
+      _drawModelWireframe(canvas, size, project);
       return;
     }
 
+    final faces = <_SolidTriangle>[];
+
     for (final instance in model!.instances) {
-      final color = instance.nodeIndex == selectedNode
-          ? const Color(0xF000E5FF)
-          : wheelNodeSet.contains(instance.nodeIndex)
-          ? wheelColor.withValues(alpha: 0.96)
-          : instance.nodeIndex == selectedBodyNodeIndex
-          ? bodyColor.withValues(alpha: 0.96)
-          : bodyColor.withValues(alpha: 0.76);
+      final isSelected = instance.nodeIndex == selectedNode;
+      final nodeName = instance.nodeIndex < model!.nodes.length
+          ? model!.nodes[instance.nodeIndex].name.toLowerCase()
+          : '';
+      final isWheel = wheelNodeSet.contains(instance.nodeIndex) ||
+          nodeName.contains('wheel') ||
+          nodeName.contains('tire') ||
+          nodeName.contains('rim');
+      final isGlass = nodeName.contains('glass') ||
+          nodeName.contains('window') ||
+          nodeName.contains('windshield');
+      final isBody = instance.nodeIndex == selectedBodyNodeIndex ||
+          nodeName.contains('body') ||
+          nodeName.contains('chassis');
+
+      Color color;
+      if (isSelected) {
+        color = const Color(0xFF00E5FF);
+      } else if (isGlass) {
+        color = const Color(0xFF1E3A42);
+      } else if (isWheel) {
+        color = const Color(0xFF26322C);
+      } else if (isBody) {
+        color = bodyColor;
+      } else {
+        color = bodyColor;
+      }
 
       for (final triangle in instance.triangles) {
-        final shouldDraw = faceIndex % faceStride == 0;
-        faceIndex++;
-        if (!shouldDraw) continue;
         if (triangle.a >= instance.worldVertices.length ||
             triangle.b >= instance.worldVertices.length ||
             triangle.c >= instance.worldVertices.length) {
@@ -1567,11 +1575,19 @@ class _WireframeScenePainter extends CustomPainter {
             .normalized;
         if (normal.lengthSquared < 1e-10) continue;
         final center = (vertices[0] + vertices[1] + vertices[2]) * (1 / 3);
+        final toEye = eye - center;
+
+        // Backface culling: cull triangles pointing away from the camera.
+        // This prevents back-facing polygons and internal cabin faces from
+        // bleeding over the outer vehicle shell.
+        if (normal.dot(toEye) <= 0) continue;
+
         final clips = vertices.map(viewProj.transformClip).toList();
+        if (clips.every((clip) => clip[3] <= 0.05)) continue;
         final depth =
             clips.fold<double>(0.0, (sum, clip) => sum + clip[3]) /
             clips.length;
-        if (clips.every((clip) => clip[3] <= 0.05)) continue;
+
         faces.add(
           _SolidTriangle(
             vertices: vertices,
@@ -1582,8 +1598,13 @@ class _WireframeScenePainter extends CustomPainter {
       }
     }
 
+    // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
-    for (final face in faces) {
+
+    // Cap at 18000 front-facing faces for buttery smooth 60fps on extreme meshes
+    final drawCount = faces.length > 18000 ? 18000 : faces.length;
+    for (var i = 0; i < drawCount; i++) {
+      final face = faces[i];
       _drawClippedPolygon(
         canvas,
         viewProj,
@@ -1604,63 +1625,16 @@ class _WireframeScenePainter extends CustomPainter {
       ViewerLighting.flat => const Vec3(0, 1, 0),
     }.normalized;
     final toEye = (eye - center).normalized;
-    final diffuse = normal.dot(lightDirection).abs();
-    final rim = normal.dot(toEye).abs();
-    final lightingFactor = lighting == ViewerLighting.flat
-        ? 0.92
-        : (0.28 + diffuse * 0.56 + rim * 0.16).clamp(0.22, 1.0);
-    int channel(int value) => (value * lightingFactor).round().clamp(0, 255);
-    return Color.fromARGB(
-      (base.a * 255).round().clamp(0, 255),
-      channel((base.r * 255).round()),
-      channel((base.g * 255).round()),
-      channel((base.b * 255).round()),
-    );
-  }
-
-  void _drawSolidBounds(
-    Canvas canvas,
-    Size size,
-    Mat4 viewProj,
-    BBox bounds,
-    Color color,
-  ) {
-    final x0 = bounds.lo.x;
-    final x1 = bounds.hi.x;
-    final y0 = bounds.lo.y;
-    final y1 = bounds.hi.y;
-    final z0 = bounds.lo.z;
-    final z1 = bounds.hi.z;
-    final corners = [
-      Vec3(x0, y0, z0),
-      Vec3(x1, y0, z0),
-      Vec3(x1, y1, z0),
-      Vec3(x0, y1, z0),
-      Vec3(x0, y0, z1),
-      Vec3(x1, y0, z1),
-      Vec3(x1, y1, z1),
-      Vec3(x0, y1, z1),
-    ];
-    const faces = [
-      [0, 1, 2, 3],
-      [4, 7, 6, 5],
-      [0, 4, 5, 1],
-      [3, 2, 6, 7],
-      [0, 3, 7, 4],
-      [1, 5, 6, 2],
-    ];
-    final paint = Paint()
-      ..color = color.withValues(alpha: 0.82)
-      ..style = PaintingStyle.fill;
-    for (final face in faces) {
-      _drawClippedPolygon(
-        canvas,
-        viewProj,
-        size,
-        face.map((index) => corners[index]).toList(),
-        paint,
-      );
-    }
+    final diffuse = max(0.0, normal.dot(lightDirection));
+    final halfVector = (lightDirection + toEye).normalized;
+    final specular =
+        pow(max(0.0, normal.dot(halfVector)), 16).toDouble() * 0.35;
+    final ambient = 0.30;
+    final factor = lighting == ViewerLighting.flat
+        ? 0.95
+        : (ambient + diffuse * 0.55 + specular).clamp(0.2, 1.15);
+    int ch(double v) => (v * 255 * factor).round().clamp(0, 255);
+    return Color.fromARGB(255, ch(base.r), ch(base.g), ch(base.b));
   }
 
   void _drawModelWireframe(
@@ -1735,64 +1709,182 @@ class _WireframeScenePainter extends CustomPainter {
     }
   }
 
-  void _drawProceduralSolidCar(Canvas canvas, Size size, Mat4 viewProj) {
+  void _drawProceduralSolidCar(
+    Canvas canvas,
+    Size size,
+    Mat4 viewProj,
+    Vec3 eye,
+  ) {
+    // 16 body corners of the sports car matching the wireframe model 1:1
     const bodyCorners = [
-      Vec3(-0.9, 0.2, -1.8),
-      Vec3(0.9, 0.2, -1.8),
-      Vec3(0.9, 0.2, 1.8),
-      Vec3(-0.9, 0.2, 1.8),
-      Vec3(-0.85, 0.7, -1.6),
-      Vec3(0.85, 0.7, -1.6),
-      Vec3(-0.8, 0.85, -0.6),
-      Vec3(0.8, 0.85, -0.6),
-      Vec3(-0.65, 1.35, -0.2),
-      Vec3(0.65, 1.35, -0.2),
-      Vec3(-0.65, 1.35, 0.8),
-      Vec3(0.65, 1.35, 0.8),
-      Vec3(-0.8, 0.85, 1.3),
-      Vec3(0.8, 0.85, 1.3),
-      Vec3(-0.85, 0.75, 1.75),
-      Vec3(0.85, 0.75, 1.75),
+      Vec3(-0.9, 0.22, -1.8), // 0: Front-Left bottom
+      Vec3(0.9, 0.22, -1.8), // 1: Front-Right bottom
+      Vec3(0.9, 0.22, 1.8), // 2: Rear-Right bottom
+      Vec3(-0.9, 0.22, 1.8), // 3: Rear-Left bottom
+      Vec3(-0.85, 0.70, -1.6), // 4: Front-Left hood
+      Vec3(0.85, 0.70, -1.6), // 5: Front-Right hood
+      Vec3(-0.8, 0.85, -0.6), // 6: Windshield base Left
+      Vec3(0.8, 0.85, -0.6), // 7: Windshield base Right
+      Vec3(-0.65, 1.35, -0.2), // 8: Roof front Left
+      Vec3(0.65, 1.35, -0.2), // 9: Roof front Right
+      Vec3(-0.65, 1.35, 0.8), // 10: Roof rear Left
+      Vec3(0.65, 1.35, 0.8), // 11: Roof rear Right
+      Vec3(-0.8, 0.85, 1.3), // 12: Rear window base Left
+      Vec3(0.8, 0.85, 1.3), // 13: Rear window base Right
+      Vec3(-0.85, 0.75, 1.75), // 14: Trunk rear Left
+      Vec3(0.85, 0.75, 1.75), // 15: Trunk rear Right
     ];
-    const bodyFaces = [
-      [0, 1, 5, 4],
-      [4, 5, 7, 6],
-      [6, 7, 9, 8],
-      [8, 9, 11, 10],
-      [10, 11, 13, 12],
-      [12, 13, 15, 14],
-      [0, 4, 6, 8, 10, 12, 14, 3],
-      [1, 2, 15, 13, 11, 9, 7, 5],
+
+    const glassColor = Color(0xFF1E3A42);
+    const trimColor = Color(0xFF1A221E);
+    final carPaintColor = bodyColor;
+
+    // Body panels with CCW outward normals
+    final bodyPanels = <({List<int> indices, Color color})>[
+      // Front bumper / grill
+      (indices: const [0, 4, 5, 1], color: trimColor),
+      // Hood
+      (indices: const [4, 6, 7, 5], color: carPaintColor),
+      // Windshield
+      (indices: const [6, 8, 9, 7], color: glassColor),
+      // Roof
+      (indices: const [8, 10, 11, 9], color: carPaintColor),
+      // Rear window
+      (indices: const [10, 12, 13, 11], color: glassColor),
+      // Trunk
+      (indices: const [12, 14, 15, 13], color: carPaintColor),
+      // Rear bumper
+      (indices: const [14, 3, 2, 15], color: trimColor),
+      // Undercarriage floor
+      (indices: const [0, 1, 2, 3], color: const Color(0xFF0F1411)),
+      // Left side:
+      (indices: const [0, 6, 4], color: carPaintColor), // front fender
+      (indices: const [0, 3, 12, 6], color: carPaintColor), // lower door
+      (indices: const [6, 12, 10, 8], color: glassColor), // side window
+      (indices: const [3, 14, 12], color: carPaintColor), // rear quarter
+      // Right side:
+      (indices: const [1, 5, 7], color: carPaintColor), // front fender
+      (indices: const [1, 7, 13, 2], color: carPaintColor), // lower door
+      (indices: const [7, 9, 11, 13], color: glassColor), // side window
+      (indices: const [2, 13, 15], color: carPaintColor), // rear quarter
     ];
-    final bodyPaint = Paint()
-      ..color = bodyColor.withValues(alpha: 0.62)
-      ..style = PaintingStyle.fill;
-    for (final face in bodyFaces) {
+
+    final faces = <_SolidTriangle>[];
+
+    void addPolygonFace(List<Vec3> verts, Color baseColor) {
+      if (verts.length < 3) return;
+      final normal =
+          (verts[1] - verts[0]).cross(verts[2] - verts[0]).normalized;
+      if (normal.lengthSquared < 1e-10) return;
+      var cx = 0.0, cy = 0.0, cz = 0.0;
+      for (final v in verts) {
+        cx += v.x;
+        cy += v.y;
+        cz += v.z;
+      }
+      final center =
+          Vec3(cx / verts.length, cy / verts.length, cz / verts.length);
+      final toEye = eye - center;
+      // Backface culling: reject polygons pointing away from the camera
+      if (normal.dot(toEye) <= 0) return;
+
+      final clips = verts.map(viewProj.transformClip).toList();
+      if (clips.every((c) => c[3] <= 0.05)) return;
+      final depth =
+          clips.fold<double>(0.0, (sum, c) => sum + c[3]) / clips.length;
+
+      faces.add(
+        _SolidTriangle(
+          vertices: verts,
+          depth: depth,
+          color: _shadeSolidColor(baseColor, normal, center, eye),
+        ),
+      );
+    }
+
+    // Add body panels
+    for (final panel in bodyPanels) {
+      final verts = panel.indices.map((idx) => bodyCorners[idx]).toList();
+      addPolygonFace(verts, panel.color);
+    }
+
+    // 4 Wheels: 3D solid cylinders with tire rubber and alloy rims
+    const wheelPositions = [
+      Vec3(-0.95, 0.35, -1.2), // FL
+      Vec3(0.95, 0.35, -1.2), // FR
+      Vec3(-0.95, 0.35, 1.2), // RL
+      Vec3(0.95, 0.35, 1.2), // RR
+    ];
+    const wheelRadius = 0.35;
+    const wheelWidth = 0.26;
+    const segments = 16;
+    const tireColor = Color(0xFF1E2320);
+    const rimColor = Color(0xFFB0BEC5);
+
+    for (var wIdx = 0; wIdx < wheelPositions.length; wIdx++) {
+      final center = wheelPositions[wIdx];
+      final isLeft = center.x < 0;
+      final outerX =
+          isLeft ? center.x - wheelWidth / 2 : center.x + wheelWidth / 2;
+      final innerX =
+          isLeft ? center.x + wheelWidth / 2 : center.x - wheelWidth / 2;
+
+      final outerVerts = <Vec3>[];
+      final innerVerts = <Vec3>[];
+
+      for (var i = 0; i < segments; i++) {
+        final angle = i * 2 * pi / segments;
+        final sy = wheelRadius * sin(angle);
+        final sz = wheelRadius * cos(angle);
+        outerVerts.add(Vec3(outerX, center.y + sy, center.z + sz));
+        innerVerts.add(Vec3(innerX, center.y + sy, center.z + sz));
+      }
+
+      // Outer disc (rim face)
+      final outerCenter = Vec3(outerX, center.y, center.z);
+      for (var i = 0; i < segments; i++) {
+        final next = (i + 1) % segments;
+        final triVerts = isLeft
+            ? [outerCenter, outerVerts[i], outerVerts[next]]
+            : [outerCenter, outerVerts[next], outerVerts[i]];
+        // Alloy rim center + outer rubber tire
+        addPolygonFace(triVerts, i % 2 == 0 ? rimColor : tireColor);
+      }
+
+      // Inner disc
+      final innerCenter = Vec3(innerX, center.y, center.z);
+      for (var i = 0; i < segments; i++) {
+        final next = (i + 1) % segments;
+        final triVerts = isLeft
+            ? [innerCenter, innerVerts[next], innerVerts[i]]
+            : [innerCenter, innerVerts[i], innerVerts[next]];
+        addPolygonFace(triVerts, tireColor);
+      }
+
+      // Tread quads connecting outer and inner rims
+      for (var i = 0; i < segments; i++) {
+        final next = (i + 1) % segments;
+        final quadVerts = isLeft
+            ? [outerVerts[next], outerVerts[i], innerVerts[i], innerVerts[next]]
+            : [outerVerts[i], outerVerts[next], innerVerts[next], innerVerts[i]];
+        addPolygonFace(quadVerts, tireColor);
+      }
+    }
+
+    // Sort all faces from furthest to nearest (Painter's algorithm)
+    faces.sort((a, b) => b.depth.compareTo(a.depth));
+
+    // Render solid polygons
+    for (final face in faces) {
       _drawClippedPolygon(
         canvas,
         viewProj,
         size,
-        face.map((index) => bodyCorners[index]).toList(),
-        bodyPaint,
+        face.vertices,
+        Paint()
+          ..color = face.color
+          ..style = PaintingStyle.fill,
       );
-    }
-
-    const wheelCenters = [
-      Vec3(-0.95, 0.35, -1.2),
-      Vec3(0.95, 0.35, -1.2),
-      Vec3(-0.95, 0.35, 1.2),
-      Vec3(0.95, 0.35, 1.2),
-    ];
-    final wheelPaint = Paint()
-      ..color = wheelColor.withValues(alpha: 0.88)
-      ..style = PaintingStyle.fill;
-    for (final center in wheelCenters) {
-      final points = [
-        for (var i = 0; i < 16; i++)
-          center +
-              Vec3(0, 0.35 * sin(i * 2 * pi / 16), 0.35 * cos(i * 2 * pi / 16)),
-      ];
-      _drawClippedPolygon(canvas, viewProj, size, points, wheelPaint);
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
 import 'package:rig_car/physics_sim.dart';
 import 'package:rig_car/pre_rigged_cars.dart';
+import 'package:rig_car/wireframe_viewer.dart';
 
 void main() {
   group('3D Math & Matrix', () {
@@ -706,5 +707,50 @@ void main() {
 
       expect(find.text('FULLSCREEN (F)'), findsOneWidget);
     });
+
+    testWidgets(
+      'switches viewport render mode between Wireframe, Solid, and Hybrid',
+      (tester) async {
+        tester.view.physicalSize = const Size(1400, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: Scaffold(
+              body: WireframeViewer(
+                model: null,
+                detection: null,
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('WIREFRAME'), findsOneWidget);
+
+        // Open render mode dropdown
+        final wireframeBtn = find.text('WIREFRAME');
+        await tester.tap(wireframeBtn);
+        await tester.pumpAndSettle();
+
+        // Tap Solid option
+        await tester.tap(find.text('Solid').last);
+        await tester.pumpAndSettle();
+
+        expect(find.text('SOLID'), findsOneWidget);
+
+        // Open render mode dropdown and tap Hybrid
+        final solidBtn = find.text('SOLID');
+        await tester.tap(solidBtn);
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Hybrid').last);
+        await tester.pumpAndSettle();
+
+        expect(find.text('HYBRID'), findsOneWidget);
+      },
+    );
   });
 }
