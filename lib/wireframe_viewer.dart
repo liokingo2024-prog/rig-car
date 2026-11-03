@@ -1051,7 +1051,7 @@ class _WireframeScenePainter extends CustomPainter {
     // ── 2. Draw Model Preview ────────────────────────────────────────────────
     if (model != null && model!.instances.isNotEmpty) {
       if (renderMode != ViewerRenderMode.wireframe) {
-        _drawModelSolid(canvas, size, viewProj, projectPoint);
+        _drawModelSolid(canvas, size, viewProj, projectPoint, eye);
       }
       if (renderMode != ViewerRenderMode.solid) {
         _drawModelWireframe(canvas, size, projectPoint);
@@ -1502,6 +1502,7 @@ class _WireframeScenePainter extends CustomPainter {
     Size size,
     Mat4 viewProj,
     Offset? Function(Vec3) project,
+    Vec3 eye,
   ) {
     final wheelNodeSet =
         detection?.wheels
@@ -1532,12 +1533,12 @@ class _WireframeScenePainter extends CustomPainter {
 
     for (final instance in model!.instances) {
       final color = instance.nodeIndex == selectedNode
-          ? const Color(0x9900E5FF)
+          ? const Color(0xF000E5FF)
           : wheelNodeSet.contains(instance.nodeIndex)
-          ? wheelColor.withValues(alpha: 0.78)
+          ? wheelColor.withValues(alpha: 0.96)
           : instance.nodeIndex == selectedBodyNodeIndex
-          ? bodyColor.withValues(alpha: 0.72)
-          : wireColor.withValues(alpha: 0.32);
+          ? bodyColor.withValues(alpha: 0.96)
+          : bodyColor.withValues(alpha: 0.76);
 
       for (final triangle in instance.triangles) {
         final shouldDraw = faceIndex % faceStride == 0;
@@ -1554,13 +1555,22 @@ class _WireframeScenePainter extends CustomPainter {
           instance.worldVertices[triangle.b],
           instance.worldVertices[triangle.c],
         ];
+        final normal = (vertices[1] - vertices[0])
+            .cross(vertices[2] - vertices[0])
+            .normalized;
+        if (normal.lengthSquared < 1e-10) continue;
+        final center = (vertices[0] + vertices[1] + vertices[2]) * (1 / 3);
         final clips = vertices.map(viewProj.transformClip).toList();
         final depth =
             clips.fold<double>(0.0, (sum, clip) => sum + clip[3]) /
             clips.length;
         if (clips.every((clip) => clip[3] <= 0.05)) continue;
         faces.add(
-          _SolidTriangle(vertices: vertices, depth: depth, color: color),
+          _SolidTriangle(
+            vertices: vertices,
+            depth: depth,
+            color: _shadeSolidColor(color, normal, center, eye),
+          ),
         );
       }
     }
@@ -1577,6 +1587,28 @@ class _WireframeScenePainter extends CustomPainter {
           ..style = PaintingStyle.fill,
       );
     }
+  }
+
+  Color _shadeSolidColor(Color base, Vec3 normal, Vec3 center, Vec3 eye) {
+    final lightDirection = switch (lighting) {
+      ViewerLighting.studio => const Vec3(-0.45, 0.85, 0.35),
+      ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
+      ViewerLighting.night => const Vec3(0.35, 0.55, -0.75),
+      ViewerLighting.flat => const Vec3(0, 1, 0),
+    }.normalized;
+    final toEye = (eye - center).normalized;
+    final diffuse = normal.dot(lightDirection).abs();
+    final rim = normal.dot(toEye).abs();
+    final lightingFactor = lighting == ViewerLighting.flat
+        ? 0.92
+        : (0.28 + diffuse * 0.56 + rim * 0.16).clamp(0.22, 1.0);
+    int channel(int value) => (value * lightingFactor).round().clamp(0, 255);
+    return Color.fromARGB(
+      (base.a * 255).round().clamp(0, 255),
+      channel((base.r * 255).round()),
+      channel((base.g * 255).round()),
+      channel((base.b * 255).round()),
+    );
   }
 
   void _drawModelWireframe(

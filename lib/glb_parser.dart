@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'model_data.dart';
@@ -146,44 +147,24 @@ class GlbParser {
         );
 
         final idxIdx = prim['indices'] as int?;
+        final mode = prim['mode'] as int? ?? 4;
         if (idxIdx != null) {
           final indices = _readScalarAccessor(
             jsonAccessors[idxIdx] as Map<String, dynamic>,
             jsonBufferViews,
             bin,
           );
-          final triCount = indices.length ~/ 3;
-          final step = triCount > _maxEdgesPerPrimitive
-              ? (triCount / _maxEdgesPerPrimitive).ceil()
-              : 1;
-          for (var t = 0; t + 2 < indices.length; t += 3 * step) {
-            final i0 = indices[t] + vOffset;
-            final i1 = indices[t + 1] + vOffset;
-            final i2 = indices[t + 2] + vOffset;
-            allTriangles.add(Triangle(i0, i1, i2));
-            allEdges.add(Edge(i0, i1));
-            allEdges.add(Edge(i1, i2));
-            allEdges.add(Edge(i0, i2));
-          }
+          _appendTriangles(indices, vOffset, mode, allTriangles, allEdges);
         } else {
           // glTF's default primitive mode is TRIANGLES.
-          final mode = prim['mode'] as int? ?? 4;
           final vertexCount = allVerts.length - vOffset;
-          if (mode == 4) {
-            final triangleCount = vertexCount ~/ 3;
-            final step = triangleCount > _maxEdgesPerPrimitive
-                ? (triangleCount / _maxEdgesPerPrimitive).ceil()
-                : 1;
-            for (var t = 0; t + 2 < vertexCount; t += 3 * step) {
-              final i0 = vOffset + t;
-              final i1 = vOffset + t + 1;
-              final i2 = vOffset + t + 2;
-              allTriangles.add(Triangle(i0, i1, i2));
-              allEdges.add(Edge(i0, i1));
-              allEdges.add(Edge(i1, i2));
-              allEdges.add(Edge(i0, i2));
-            }
-          }
+          _appendTriangles(
+            List<int>.generate(vertexCount, (index) => index),
+            vOffset,
+            mode,
+            allTriangles,
+            allEdges,
+          );
         }
       }
 
@@ -255,6 +236,60 @@ class GlbParser {
       rootNodeIndices: roots,
       worldBBox: worldBBox,
     );
+  }
+
+  static void _appendTriangles(
+    List<int> indices,
+    int vertexOffset,
+    int mode,
+    List<Triangle> triangles,
+    Set<Edge> edges,
+  ) {
+    void addTriangle(int a, int b, int c) {
+      final i0 = a + vertexOffset;
+      final i1 = b + vertexOffset;
+      final i2 = c + vertexOffset;
+      triangles.add(Triangle(i0, i1, i2));
+      edges.add(Edge(i0, i1));
+      edges.add(Edge(i1, i2));
+      edges.add(Edge(i0, i2));
+    }
+
+    final triangleCount = switch (mode) {
+      4 => indices.length ~/ 3,
+      5 || 6 => max(0, indices.length - 2),
+      _ => 0,
+    };
+    final step = triangleCount > _maxEdgesPerPrimitive
+        ? (triangleCount / _maxEdgesPerPrimitive).ceil()
+        : 1;
+
+    switch (mode) {
+      case 4: // TRIANGLES
+        for (var t = 0; t < triangleCount; t += step) {
+          final offset = t * 3;
+          addTriangle(
+            indices[offset],
+            indices[offset + 1],
+            indices[offset + 2],
+          );
+        }
+      case 5: // TRIANGLE_STRIP
+        for (var t = 0; t < triangleCount; t += step) {
+          final a = indices[t];
+          final b = indices[t + 1];
+          final c = indices[t + 2];
+          if (t.isEven) {
+            addTriangle(a, b, c);
+          } else {
+            addTriangle(b, a, c);
+          }
+        }
+      case 6: // TRIANGLE_FAN
+        for (var t = 0; t < triangleCount; t += step) {
+          addTriangle(indices[0], indices[t + 1], indices[t + 2]);
+        }
+    }
   }
 
   // ── Accessor helpers ──────────────────────────────────────────────────
