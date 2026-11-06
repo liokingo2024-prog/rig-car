@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'model_data.dart';
 
@@ -122,6 +123,7 @@ class GlbParser {
     _computeWorldTransforms(nodes);
 
     // ── Parse meshes ────────────────────────────────────────────────────
+    final jsonMaterials = gltf['materials'] as List<dynamic>? ?? [];
     final meshes = <MeshData>[];
     for (var mi = 0; mi < jsonMeshes.length; mi++) {
       final m = jsonMeshes[mi] as Map<String, dynamic>;
@@ -136,6 +138,24 @@ class GlbParser {
         if (attrs == null) continue;
         final posIdx = attrs['POSITION'] as int?;
         if (posIdx == null) continue;
+
+        // Extract PBR material baseColorFactor if defined
+        Color? materialColor;
+        final matIdx = prim['material'] as int?;
+        if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
+          final mat = jsonMaterials[matIdx] as Map<String, dynamic>?;
+          final pbr = mat?['pbrMetallicRoughness'] as Map<String, dynamic>?;
+          final baseColor = pbr?['baseColorFactor'] as List<dynamic>?;
+          if (baseColor != null && baseColor.length >= 3) {
+            final r = ((baseColor[0] as num).toDouble() * 255).round().clamp(0, 255);
+            final g = ((baseColor[1] as num).toDouble() * 255).round().clamp(0, 255);
+            final b = ((baseColor[2] as num).toDouble() * 255).round().clamp(0, 255);
+            final a = baseColor.length >= 4
+                ? ((baseColor[3] as num).toDouble() * 255).round().clamp(0, 255)
+                : 255;
+            materialColor = Color.fromARGB(a, r, g, b);
+          }
+        }
 
         final vOffset = allVerts.length;
         allVerts.addAll(
@@ -154,7 +174,14 @@ class GlbParser {
             jsonBufferViews,
             bin,
           );
-          _appendTriangles(indices, vOffset, mode, allTriangles, allEdges);
+          _appendTriangles(
+            indices,
+            vOffset,
+            mode,
+            allTriangles,
+            allEdges,
+            materialColor,
+          );
         } else {
           // glTF's default primitive mode is TRIANGLES.
           final vertexCount = allVerts.length - vOffset;
@@ -164,6 +191,7 @@ class GlbParser {
             mode,
             allTriangles,
             allEdges,
+            materialColor,
           );
         }
       }
@@ -243,16 +271,18 @@ class GlbParser {
     int vertexOffset,
     int mode,
     List<Triangle> triangles,
-    Set<Edge> edges,
-  ) {
+    Set<Edge> edges, [
+    Color? materialColor,
+  ]) {
     void addTriangle(int a, int b, int c) {
       final i0 = a + vertexOffset;
       final i1 = b + vertexOffset;
       final i2 = c + vertexOffset;
-      triangles.add(Triangle(i0, i1, i2));
-      edges.add(Edge(i0, i1));
-      edges.add(Edge(i1, i2));
-      edges.add(Edge(i0, i2));
+      triangles.add(Triangle(i0, i1, i2, materialColor));
+    }
+
+    void addEdge(int a, int b) {
+      edges.add(Edge(a + vertexOffset, b + vertexOffset));
     }
 
     final triangleCount = switch (mode) {
@@ -260,13 +290,11 @@ class GlbParser {
       5 || 6 => max(0, indices.length - 2),
       _ => 0,
     };
-    final step = triangleCount > _maxEdgesPerPrimitive
-        ? (triangleCount / _maxEdgesPerPrimitive).ceil()
-        : 1;
 
+    // Keep all triangles intact so Solid mode is a continuous watertight mesh
     switch (mode) {
       case 4: // TRIANGLES
-        for (var t = 0; t < triangleCount; t += step) {
+        for (var t = 0; t < triangleCount; t++) {
           final offset = t * 3;
           addTriangle(
             indices[offset],
@@ -275,7 +303,7 @@ class GlbParser {
           );
         }
       case 5: // TRIANGLE_STRIP
-        for (var t = 0; t < triangleCount; t += step) {
+        for (var t = 0; t < triangleCount; t++) {
           final a = indices[t];
           final b = indices[t + 1];
           final c = indices[t + 2];
@@ -286,8 +314,38 @@ class GlbParser {
           }
         }
       case 6: // TRIANGLE_FAN
-        for (var t = 0; t < triangleCount; t += step) {
+        for (var t = 0; t < triangleCount; t++) {
           addTriangle(indices[0], indices[t + 1], indices[t + 2]);
+        }
+    }
+
+    // Sample wireframe edges to bound memory and prevent browser jank on dense meshes
+    final edgeStep = triangleCount > _maxEdgesPerPrimitive
+        ? (triangleCount / _maxEdgesPerPrimitive).ceil()
+        : 1;
+
+    switch (mode) {
+      case 4:
+        for (var t = 0; t < triangleCount; t += edgeStep) {
+          final offset = t * 3;
+          final i0 = indices[offset];
+          final i1 = indices[offset + 1];
+          final i2 = indices[offset + 2];
+          addEdge(i0, i1);
+          addEdge(i1, i2);
+          addEdge(i0, i2);
+        }
+      case 5:
+        for (var t = 0; t < triangleCount; t += edgeStep) {
+          addEdge(indices[t], indices[t + 1]);
+          addEdge(indices[t + 1], indices[t + 2]);
+          addEdge(indices[t], indices[t + 2]);
+        }
+      case 6:
+        for (var t = 0; t < triangleCount; t += edgeStep) {
+          addEdge(indices[0], indices[t + 1]);
+          addEdge(indices[t + 1], indices[t + 2]);
+          addEdge(indices[0], indices[t + 2]);
         }
     }
   }

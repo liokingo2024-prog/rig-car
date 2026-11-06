@@ -728,22 +728,22 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 100));
 
-        expect(find.text('WIREFRAME'), findsOneWidget);
-
-        // Open render mode dropdown
-        final wireframeBtn = find.text('WIREFRAME');
-        await tester.tap(wireframeBtn);
-        await tester.pumpAndSettle();
-
-        // Tap Solid option
-        await tester.tap(find.text('Solid').last);
-        await tester.pumpAndSettle();
-
         expect(find.text('SOLID'), findsOneWidget);
 
-        // Open render mode dropdown and tap Hybrid
+        // Open render mode dropdown and tap Wireframe
         final solidBtn = find.text('SOLID');
         await tester.tap(solidBtn);
+        await tester.pumpAndSettle();
+
+        // Tap Wireframe option
+        await tester.tap(find.text('Wireframe').last);
+        await tester.pumpAndSettle();
+
+        expect(find.text('WIREFRAME'), findsOneWidget);
+
+        // Open render mode dropdown and tap Hybrid
+        final wireframeBtn = find.text('WIREFRAME');
+        await tester.tap(wireframeBtn);
         await tester.pumpAndSettle();
 
         await tester.tap(find.text('Hybrid').last);

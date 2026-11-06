@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui';
 
 // ── 3D Math ─────────────────────────────────────────────────────────────────
 
@@ -257,7 +258,8 @@ class Edge {
 /// A triangle in a mesh's local vertex index space.
 class Triangle {
   final int a, b, c;
-  const Triangle(this.a, this.b, this.c);
+  final Color? color;
+  const Triangle(this.a, this.b, this.c, [this.color]);
 }
 
 // ── Picked File ─────────────────────────────────────────────────────────────

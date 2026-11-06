@@ -102,7 +102,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   bool _showMarkers = true;
   GroundGridStyle _gridStyle = GroundGridStyle.cad;
   ViewerLighting _lighting = ViewerLighting.studio;
-  ViewerRenderMode _renderMode = ViewerRenderMode.wireframe;
+  ViewerRenderMode _renderMode = ViewerRenderMode.solid;
   bool get _showGrid => _gridStyle != GroundGridStyle.off;
   bool _invertDrag = false;
   // Performance-first default. The full parsed model remains available for
@@ -940,7 +940,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.panY,
     this.gridStyle = GroundGridStyle.cad,
     this.lighting = ViewerLighting.studio,
-    this.renderMode = ViewerRenderMode.wireframe,
+    this.renderMode = ViewerRenderMode.solid,
     required this.showGrid,
     required this.showMarkers,
     required this.denseWireframe,
@@ -1210,21 +1210,54 @@ class _WireframeScenePainter extends CustomPainter {
     double groundY,
   ) {
     final bbox = model?.worldBBox;
-    final minX = bbox != null ? bbox.lo.x * 0.95 : -0.85;
-    final maxX = bbox != null ? bbox.hi.x * 0.95 : 0.85;
-    final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.6;
-    final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.6;
+    final minX = bbox != null ? bbox.lo.x * 0.95 : -0.92;
+    final maxX = bbox != null ? bbox.hi.x * 0.95 : 0.92;
+    final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.80;
+    final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.80;
 
-    final shadowPaint = Paint()
-      ..color = const Color(0x35000000)
-      ..style = PaintingStyle.fill;
+    final cx = (minX + maxX) * 0.5;
+    final cz = (minZ + maxZ) * 0.5;
+    final rx = (maxX - minX) * 0.48;
+    final rz = (maxZ - minZ) * 0.50;
 
-    _drawClippedPolygon(canvas, viewProj, size, [
-      Vec3(minX, groundY, minZ),
-      Vec3(maxX, groundY, minZ),
-      Vec3(maxX, groundY, maxZ),
-      Vec3(minX, groundY, maxZ),
-    ], shadowPaint);
+    // Blender/Sketchfab soft ambient occlusion ground contact shadow
+    const segments = 24;
+    final outerShadow = <Vec3>[
+      for (var i = 0; i < segments; i++)
+        Vec3(
+          cx + rx * sin(i * 2 * pi / segments),
+          groundY + 0.002,
+          cz + rz * cos(i * 2 * pi / segments),
+        ),
+    ];
+    _drawClippedPolygon(
+      canvas,
+      viewProj,
+      size,
+      outerShadow,
+      Paint()
+        ..color = const Color(0x38000000)
+        ..style = PaintingStyle.fill,
+    );
+
+    // Inner dark core directly under vehicle chassis
+    final innerShadow = <Vec3>[
+      for (var i = 0; i < segments; i++)
+        Vec3(
+          cx + (rx * 0.68) * sin(i * 2 * pi / segments),
+          groundY + 0.004,
+          cz + (rz * 0.72) * cos(i * 2 * pi / segments),
+        ),
+    ];
+    _drawClippedPolygon(
+      canvas,
+      viewProj,
+      size,
+      innerShadow,
+      Paint()
+        ..color = const Color(0x55000000)
+        ..style = PaintingStyle.fill,
+    );
   }
 
   void _drawCadGrid(Canvas canvas, Mat4 viewProj, Size size, double groundY) {
@@ -1545,17 +1578,17 @@ class _WireframeScenePainter extends CustomPainter {
           nodeName.contains('body') ||
           nodeName.contains('chassis');
 
-      Color color;
+      Color baseMeshColor;
       if (isSelected) {
-        color = const Color(0xFF00E5FF);
+        baseMeshColor = const Color(0xFF00E5FF);
       } else if (isGlass) {
-        color = const Color(0xFF1E3A42);
+        baseMeshColor = const Color(0xFF1E3A42);
       } else if (isWheel) {
-        color = const Color(0xFF26322C);
+        baseMeshColor = const Color(0xFF26322C);
       } else if (isBody) {
-        color = bodyColor;
+        baseMeshColor = bodyColor;
       } else {
-        color = bodyColor;
+        baseMeshColor = bodyColor;
       }
 
       for (final triangle in instance.triangles) {
@@ -1570,28 +1603,31 @@ class _WireframeScenePainter extends CustomPainter {
           instance.worldVertices[triangle.b],
           instance.worldVertices[triangle.c],
         ];
-        final normal = (vertices[1] - vertices[0])
+        var normal = (vertices[1] - vertices[0])
             .cross(vertices[2] - vertices[0])
             .normalized;
         if (normal.lengthSquared < 1e-10) continue;
         final center = (vertices[0] + vertices[1] + vertices[2]) * (1 / 3);
         final toEye = eye - center;
 
-        // Backface culling: cull triangles pointing away from the camera.
-        // This prevents back-facing polygons and internal cabin faces from
-        // bleeding over the outer vehicle shell.
-        if (normal.dot(toEye) <= 0) continue;
+        // Two-sided surface shading matching Blender Solid viewport:
+        // Thin body panels, spoilers, and mirrored components never disappear.
+        if (normal.dot(toEye) < 0) {
+          normal = -normal;
+        }
 
         final clips = vertices.map(viewProj.transformClip).toList();
         if (clips.every((clip) => clip[3] <= 0.05)) continue;
-        final depth =
-            clips.fold<double>(0.0, (sum, clip) => sum + clip[3]) /
-            clips.length;
+
+        // Use authentic GLTF material color if available on the triangle
+        final color = isSelected
+            ? const Color(0xFF00E5FF)
+            : (triangle.color ?? baseMeshColor);
 
         faces.add(
           _SolidTriangle(
             vertices: vertices,
-            depth: depth,
+            depth: toEye.lengthSquared,
             color: _shadeSolidColor(color, normal, center, eye),
           ),
         );
@@ -1601,8 +1637,8 @@ class _WireframeScenePainter extends CustomPainter {
     // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Cap at 18000 front-facing faces for buttery smooth 60fps on extreme meshes
-    final drawCount = faces.length > 18000 ? 18000 : faces.length;
+    // Cap at 24000 front-facing faces for buttery smooth 60fps on extreme meshes
+    final drawCount = faces.length > 24000 ? 24000 : faces.length;
     for (var i = 0; i < drawCount; i++) {
       final face = faces[i];
       _drawClippedPolygon(
@@ -1618,23 +1654,44 @@ class _WireframeScenePainter extends CustomPainter {
   }
 
   Color _shadeSolidColor(Color base, Vec3 normal, Vec3 center, Vec3 eye) {
-    final lightDirection = switch (lighting) {
-      ViewerLighting.studio => const Vec3(-0.45, 0.85, 0.35),
+    // Blender 2-light Studio Setup:
+    // Key light (dominant upper-left) + Fill light (soft counter-fill) + Specular + Fresnel rim
+    final keyLight = switch (lighting) {
+      ViewerLighting.studio => const Vec3(-0.50, 0.82, 0.40),
       ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
       ViewerLighting.night => const Vec3(0.35, 0.55, -0.75),
       ViewerLighting.flat => const Vec3(0, 1, 0),
     }.normalized;
+
+    final fillLight = const Vec3(0.50, -0.30, -0.40).normalized;
     final toEye = (eye - center).normalized;
-    final diffuse = max(0.0, normal.dot(lightDirection));
-    final halfVector = (lightDirection + toEye).normalized;
+
+    final diffuseKey = max(0.0, normal.dot(keyLight));
+    final diffuseFill = max(0.0, normal.dot(fillLight)) * 0.22;
+
+    // Specular Blinn-Phong highlight
+    final halfVector = (keyLight + toEye).normalized;
     final specular =
-        pow(max(0.0, normal.dot(halfVector)), 16).toDouble() * 0.35;
-    final ambient = 0.30;
+        pow(max(0.0, normal.dot(halfVector)), 18).toDouble() * 0.38;
+
+    // Silhouette Fresnel rim light (Blender MatCap / Sketchfab curvature pop)
+    final ndotv = max(0.0, normal.dot(toEye));
+    final fresnel = pow(1.0 - ndotv, 2.5).toDouble() * 0.24;
+
+    final ambient = 0.32;
     final factor = lighting == ViewerLighting.flat
         ? 0.95
-        : (ambient + diffuse * 0.55 + specular).clamp(0.2, 1.15);
-    int ch(double v) => (v * 255 * factor).round().clamp(0, 255);
-    return Color.fromARGB(255, ch(base.r), ch(base.g), ch(base.b));
+        : (ambient + diffuseKey * 0.55 + diffuseFill + specular + fresnel)
+            .clamp(0.20, 1.25);
+
+    int ch(double v) => (v * 255.0 * factor).round().clamp(0, 255);
+    final a = (base.a * 255.0).round().clamp(0, 255);
+    return Color.fromARGB(
+      a,
+      ch(base.r),
+      ch(base.g),
+      ch(base.b),
+    );
   }
 
   void _drawModelWireframe(
@@ -1715,65 +1772,74 @@ class _WireframeScenePainter extends CustomPainter {
     Mat4 viewProj,
     Vec3 eye,
   ) {
-    // 16 body corners of the sports car matching the wireframe model 1:1
-    const bodyCorners = [
-      Vec3(-0.9, 0.22, -1.8), // 0: Front-Left bottom
-      Vec3(0.9, 0.22, -1.8), // 1: Front-Right bottom
-      Vec3(0.9, 0.22, 1.8), // 2: Rear-Right bottom
-      Vec3(-0.9, 0.22, 1.8), // 3: Rear-Left bottom
-      Vec3(-0.85, 0.70, -1.6), // 4: Front-Left hood
-      Vec3(0.85, 0.70, -1.6), // 5: Front-Right hood
-      Vec3(-0.8, 0.85, -0.6), // 6: Windshield base Left
-      Vec3(0.8, 0.85, -0.6), // 7: Windshield base Right
-      Vec3(-0.65, 1.35, -0.2), // 8: Roof front Left
-      Vec3(0.65, 1.35, -0.2), // 9: Roof front Right
-      Vec3(-0.65, 1.35, 0.8), // 10: Roof rear Left
-      Vec3(0.65, 1.35, 0.8), // 11: Roof rear Right
-      Vec3(-0.8, 0.85, 1.3), // 12: Rear window base Left
-      Vec3(0.8, 0.85, 1.3), // 13: Rear window base Right
-      Vec3(-0.85, 0.75, 1.75), // 14: Trunk rear Left
-      Vec3(0.85, 0.75, 1.75), // 15: Trunk rear Right
-    ];
-
-    const glassColor = Color(0xFF1E3A42);
-    const trimColor = Color(0xFF1A221E);
     final carPaintColor = bodyColor;
+    const trimColor = Color(0xFF141916);
+    const grilleColor = Color(0xFF0A0E0C);
+    const glassColor = Color(0xFF15252D);
+    const headlightColor = Color(0xFFE0F7FD);
+    const taillightColor = Color(0xFFFF1E44);
+    const exhaustColor = Color(0xFFCBD5E1);
+    const diffuserColor = Color(0xFF0F1411);
 
-    // Body panels with CCW outward normals
-    final bodyPanels = <({List<int> indices, Color color})>[
-      // Front bumper / grill
-      (indices: const [0, 4, 5, 1], color: trimColor),
-      // Hood
-      (indices: const [4, 6, 7, 5], color: carPaintColor),
-      // Windshield
-      (indices: const [6, 8, 9, 7], color: glassColor),
-      // Roof
-      (indices: const [8, 10, 11, 9], color: carPaintColor),
-      // Rear window
-      (indices: const [10, 12, 13, 11], color: glassColor),
-      // Trunk
-      (indices: const [12, 14, 15, 13], color: carPaintColor),
-      // Rear bumper
-      (indices: const [14, 3, 2, 15], color: trimColor),
-      // Undercarriage floor
-      (indices: const [0, 1, 2, 3], color: const Color(0xFF0F1411)),
-      // Left side:
-      (indices: const [0, 6, 4], color: carPaintColor), // front fender
-      (indices: const [0, 3, 12, 6], color: carPaintColor), // lower door
-      (indices: const [6, 12, 10, 8], color: glassColor), // side window
-      (indices: const [3, 14, 12], color: carPaintColor), // rear quarter
-      // Right side:
-      (indices: const [1, 5, 7], color: carPaintColor), // front fender
-      (indices: const [1, 7, 13, 2], color: carPaintColor), // lower door
-      (indices: const [7, 9, 11, 13], color: glassColor), // side window
-      (indices: const [2, 13, 15], color: carPaintColor), // rear quarter
+    // 28 key feature vertices for a modern sports car with aerodynamic curves
+    final bodyPoints = [
+      // 0-3: Front lower splitter
+      const Vec3(-0.92, 0.16, -1.98), // 0: Front-Left splitter
+      const Vec3(0.92, 0.16, -1.98),  // 1: Front-Right splitter
+      const Vec3(0.00, 0.16, -2.05),  // 2: Front-Center splitter nose
+      const Vec3(0.00, 0.34, -2.00),  // 3: Front-Center bumper nose
+
+      // 4-7: Lower bumper & grille intake
+      const Vec3(-0.88, 0.36, -1.90), // 4: Front-Left bumper corner
+      const Vec3(0.88, 0.36, -1.90),  // 5: Front-Right bumper corner
+      const Vec3(-0.55, 0.22, -1.92), // 6: Grille-Left lower
+      const Vec3(0.55, 0.22, -1.92),  // 7: Grille-Right lower
+      const Vec3(-0.55, 0.44, -1.86), // 8: Grille-Left upper
+      const Vec3(0.55, 0.44, -1.86),  // 9: Grille-Right upper
+
+      // 10-13: Headlights & hood front
+      const Vec3(-0.84, 0.62, -1.72), // 10: Headlight-Left outer
+      const Vec3(-0.48, 0.64, -1.80), // 11: Headlight-Left inner
+      const Vec3(0.48, 0.64, -1.80),  // 12: Headlight-Right inner
+      const Vec3(0.84, 0.62, -1.72),  // 13: Headlight-Right outer
+
+      // 14-17: Hood cowl & windshield base
+      const Vec3(-0.82, 0.84, -0.62), // 14: Windshield base Left
+      const Vec3(0.00, 0.88, -0.58),  // 15: Windshield base Center
+      const Vec3(0.82, 0.84, -0.62),  // 16: Windshield base Right
+      const Vec3(0.00, 0.72, -1.15),  // 17: Hood power-dome center
+
+      // 18-21: Roof & greenhouse
+      const Vec3(-0.64, 1.34, -0.15), // 18: Roof front Left
+      const Vec3(0.64, 1.34, -0.15),  // 19: Roof front Right
+      const Vec3(-0.64, 1.33, 0.78),  // 20: Roof rear Left
+      const Vec3(0.64, 1.33, 0.78),   // 21: Roof rear Right
+
+      // 22-25: Rear window base & ducktail spoiler
+      const Vec3(-0.80, 0.86, 1.38),  // 22: Rear window base Left
+      const Vec3(0.80, 0.86, 1.38),   // 23: Rear window base Right
+      const Vec3(-0.86, 0.90, 1.90),  // 24: Ducktail spoiler Left
+      const Vec3(0.00, 0.94, 1.94),   // 25: Ducktail spoiler Center
+      const Vec3(0.86, 0.90, 1.90),   // 26: Ducktail spoiler Right
+
+      // 27-30: Taillight strip & rear bumper
+      const Vec3(-0.86, 0.76, 1.92),  // 27: Taillight Left
+      const Vec3(0.86, 0.76, 1.92),   // 28: Taillight Right
+      const Vec3(-0.90, 0.22, 1.92),  // 29: Rear diffuser Left
+      const Vec3(0.90, 0.22, 1.92),   // 30: Rear diffuser Right
+
+      // 31-34: Lower side sills & wheel arches
+      const Vec3(-0.90, 0.20, -0.60), // 31: Left door sill front
+      const Vec3(-0.90, 0.20, 0.60),  // 32: Left door sill rear
+      const Vec3(0.90, 0.20, -0.60),  // 33: Right door sill front
+      const Vec3(0.90, 0.20, 0.60),   // 34: Right door sill rear
     ];
 
     final faces = <_SolidTriangle>[];
 
     void addPolygonFace(List<Vec3> verts, Color baseColor) {
       if (verts.length < 3) return;
-      final normal =
+      var normal =
           (verts[1] - verts[0]).cross(verts[2] - verts[0]).normalized;
       if (normal.lengthSquared < 1e-10) return;
       var cx = 0.0, cy = 0.0, cz = 0.0;
@@ -1785,41 +1851,135 @@ class _WireframeScenePainter extends CustomPainter {
       final center =
           Vec3(cx / verts.length, cy / verts.length, cz / verts.length);
       final toEye = eye - center;
-      // Backface culling: reject polygons pointing away from the camera
-      if (normal.dot(toEye) <= 0) return;
+
+      // Two-sided surface orientation matching Blender Solid viewport
+      if (normal.dot(toEye) < 0) {
+        normal = -normal;
+      }
 
       final clips = verts.map(viewProj.transformClip).toList();
       if (clips.every((c) => c[3] <= 0.05)) return;
-      final depth =
-          clips.fold<double>(0.0, (sum, c) => sum + c[3]) / clips.length;
 
       faces.add(
         _SolidTriangle(
           vertices: verts,
-          depth: depth,
+          depth: toEye.lengthSquared,
           color: _shadeSolidColor(baseColor, normal, center, eye),
         ),
       );
     }
 
-    // Add body panels
-    for (final panel in bodyPanels) {
-      final verts = panel.indices.map((idx) => bodyCorners[idx]).toList();
-      addPolygonFace(verts, panel.color);
+    void addQuad(int a, int b, int c, int d, Color color) {
+      addPolygonFace([bodyPoints[a], bodyPoints[b], bodyPoints[c], bodyPoints[d]], color);
     }
 
-    // 4 Wheels: 3D solid cylinders with tire rubber and alloy rims
-    const wheelPositions = [
-      Vec3(-0.95, 0.35, -1.2), // FL
-      Vec3(0.95, 0.35, -1.2), // FR
-      Vec3(-0.95, 0.35, 1.2), // RL
-      Vec3(0.95, 0.35, 1.2), // RR
-    ];
+    void addTri(int a, int b, int c, Color color) {
+      addPolygonFace([bodyPoints[a], bodyPoints[b], bodyPoints[c]], color);
+    }
+
+    // ── Front Splitter & Air Dam ──────────────────────────────────────────
+    addTri(0, 2, 4, trimColor);
+    addTri(2, 1, 5, trimColor);
+    addTri(2, 3, 4, carPaintColor);
+    addTri(2, 5, 3, carPaintColor);
+
+    // ── Front Center Grille Intake ────────────────────────────────────────
+    addQuad(6, 7, 9, 8, grilleColor);
+
+    // ── Left Headlight ────────────────────────────────────────────────────
+    addTri(4, 10, 11, headlightColor);
+    addTri(4, 11, 8, carPaintColor);
+
+    // ── Right Headlight ───────────────────────────────────────────────────
+    addTri(5, 12, 13, headlightColor);
+    addTri(5, 9, 12, carPaintColor);
+
+    // ── Front Hood with Power Dome ────────────────────────────────────────
+    addTri(3, 11, 17, carPaintColor);
+    addTri(3, 17, 12, carPaintColor);
+    addTri(11, 10, 14, carPaintColor);
+    addTri(11, 14, 17, carPaintColor);
+    addTri(17, 14, 15, carPaintColor);
+    addTri(12, 17, 16, carPaintColor);
+    addTri(17, 15, 16, carPaintColor);
+    addTri(13, 12, 16, carPaintColor);
+
+    // ── Windshield ────────────────────────────────────────────────────────
+    addTri(14, 18, 15, glassColor);
+    addTri(16, 15, 19, glassColor);
+    addTri(15, 18, 19, glassColor);
+
+    // ── Roof Canopy ───────────────────────────────────────────────────────
+    addQuad(18, 20, 21, 19, carPaintColor);
+
+    // ── Side Windows ──────────────────────────────────────────────────────
+    addQuad(14, 22, 20, 18, glassColor); // Left window
+    addQuad(16, 19, 21, 23, glassColor); // Right window
+
+    // ── Fastback Rear Window ──────────────────────────────────────────────
+    addQuad(20, 22, 23, 21, glassColor);
+
+    // ── Trunk & Ducktail Spoiler ──────────────────────────────────────────
+    addTri(22, 24, 25, carPaintColor);
+    addTri(23, 25, 26, carPaintColor);
+    addTri(22, 25, 23, carPaintColor);
+
+    // ── Full-Width LED Red Taillight Strip ────────────────────────────────
+    addQuad(24, 27, 28, 26, taillightColor);
+
+    // ── Rear Bumper & Diffuser ────────────────────────────────────────────
+    addQuad(27, 29, 30, 28, diffuserColor);
+
+    // Dual Quad Exhaust Tips
+    addPolygonFace([
+      const Vec3(-0.58, 0.22, 1.94),
+      const Vec3(-0.42, 0.22, 1.94),
+      const Vec3(-0.42, 0.32, 1.94),
+      const Vec3(-0.58, 0.32, 1.94),
+    ], exhaustColor);
+    addPolygonFace([
+      const Vec3(0.42, 0.22, 1.94),
+      const Vec3(0.58, 0.22, 1.94),
+      const Vec3(0.58, 0.32, 1.94),
+      const Vec3(0.42, 0.32, 1.94),
+    ], exhaustColor);
+
+    // ── Left Side Body & Fenders ──────────────────────────────────────────
+    addTri(4, 14, 10, carPaintColor);
+    addQuad(4, 31, 14, 14, carPaintColor);
+    addQuad(31, 32, 22, 14, carPaintColor); // Door panel
+    addQuad(32, 29, 24, 22, carPaintColor); // Rear quarter
+
+    // ── Right Side Body & Fenders ─────────────────────────────────────────
+    addTri(5, 13, 16, carPaintColor);
+    addQuad(5, 16, 16, 33, carPaintColor);
+    addQuad(33, 16, 23, 34, carPaintColor); // Door panel
+    addQuad(34, 23, 26, 30, carPaintColor); // Rear quarter
+
+    // ── Undercarriage Floor ───────────────────────────────────────────────
+    addPolygonFace([
+      bodyPoints[0],
+      bodyPoints[1],
+      bodyPoints[30],
+      bodyPoints[29],
+    ], const Color(0xFF0C100E));
+
+    // ── 4 Wheels: 3D Solid Alloy Wheels with Rubber Tires & Brake Calipers ─
+    final wheelPositions = detection?.wheels.isNotEmpty == true
+        ? detection!.wheels.map((w) => w.worldPosition).toList()
+        : const [
+            Vec3(-0.95, 0.35, -1.25), // FL
+            Vec3(0.95, 0.35, -1.25),  // FR
+            Vec3(-0.95, 0.35, 1.25),  // RL
+            Vec3(0.95, 0.35, 1.25),   // RR
+          ];
     const wheelRadius = 0.35;
     const wheelWidth = 0.26;
     const segments = 16;
-    const tireColor = Color(0xFF1E2320);
-    const rimColor = Color(0xFFB0BEC5);
+    const tireColor = Color(0xFF1B201D);
+    const rimColor = Color(0xFFBAC7CE);
+    const rimPocketColor = Color(0xFF263238);
+    const caliperColor = Color(0xFFDC2626); // Sport red brake caliper
 
     for (var wIdx = 0; wIdx < wheelPositions.length; wIdx++) {
       final center = wheelPositions[wIdx];
@@ -1840,15 +2000,25 @@ class _WireframeScenePainter extends CustomPainter {
         innerVerts.add(Vec3(innerX, center.y + sy, center.z + sz));
       }
 
-      // Outer disc (rim face)
+      // Red brake caliper behind the rim
+      final caliperX = outerX + (isLeft ? 0.05 : -0.05);
+      addPolygonFace([
+        Vec3(caliperX, center.y + 0.10, center.z + 0.12),
+        Vec3(caliperX, center.y + 0.24, center.z + 0.08),
+        Vec3(caliperX, center.y + 0.22, center.z - 0.06),
+        Vec3(caliperX, center.y + 0.08, center.z - 0.04),
+      ], caliperColor);
+
+      // Outer disc (5-spoke sculpted alloy rim face)
       final outerCenter = Vec3(outerX, center.y, center.z);
       for (var i = 0; i < segments; i++) {
         final next = (i + 1) % segments;
         final triVerts = isLeft
             ? [outerCenter, outerVerts[i], outerVerts[next]]
             : [outerCenter, outerVerts[next], outerVerts[i]];
-        // Alloy rim center + outer rubber tire
-        addPolygonFace(triVerts, i % 2 == 0 ? rimColor : tireColor);
+        // 5-spoke styling with dark pockets
+        final isSpoke = (i % 3 == 0);
+        addPolygonFace(triVerts, isSpoke ? rimColor : rimPocketColor);
       }
 
       // Inner disc

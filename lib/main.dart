@@ -181,6 +181,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           axle: 'rear',
           side: 'right',
         );
+
+        _detection = DetectionResult(
+          wheels: _assignedWheels.values.whereType<DetectedWheel>().toList(),
+          body: null,
+          suggestedDrive: car.drive,
+          suggestedPreset: car.name,
+          warnings: const [],
+        );
       }
       _activeStep = 3; // Jump straight to physics tuning
     }
@@ -614,6 +622,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                     );
                                                   },
                                                   accentColor: _preset.accent,
+                                                  bodyColor: widget.initialCar?.accentColor ?? _preset.accent,
                                                   centerOfMassY: _centerOfMass,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
@@ -662,6 +671,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                     );
                                                   },
                                                   accentColor: _preset.accent,
+                                                  bodyColor: widget.initialCar?.accentColor ?? _preset.accent,
                                                   centerOfMassY: _centerOfMass,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
