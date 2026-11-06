@@ -221,13 +221,21 @@ class GlbParser {
           .map((v) => wt.transformPoint(v))
           .toList();
 
+      // Invert triangle winding in world space if transform is mirrored (negative scale)
+      final isInverted = wt.determinant3x3 < 0;
+      final worldTriangles = isInverted
+          ? mesh.triangles
+              .map((t) => Triangle(t.a, t.c, t.b, t.color))
+              .toList()
+          : mesh.triangles;
+
       instances.add(
         MeshInstance(
           nodeIndex: node.index,
           meshIndex: mi,
           worldVertices: worldVerts,
           edges: mesh.edges,
-          triangles: mesh.triangles,
+          triangles: worldTriangles,
           worldBBox: BBox.fromPoints(worldVerts),
         ),
       );

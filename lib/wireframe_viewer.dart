@@ -1637,10 +1637,8 @@ class _WireframeScenePainter extends CustomPainter {
     // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Cap at 24000 front-facing faces for buttery smooth 60fps on extreme meshes
-    final drawCount = faces.length > 24000 ? 24000 : faces.length;
-    for (var i = 0; i < drawCount; i++) {
-      final face = faces[i];
+    // Render all visible front-facing polygons
+    for (final face in faces) {
       _drawClippedPolygon(
         canvas,
         viewProj,
@@ -1828,11 +1826,30 @@ class _WireframeScenePainter extends CustomPainter {
       const Vec3(-0.90, 0.22, 1.92),  // 29: Rear diffuser Left
       const Vec3(0.90, 0.22, 1.92),   // 30: Rear diffuser Right
 
-      // 31-34: Lower side sills & wheel arches
-      const Vec3(-0.90, 0.20, -0.60), // 31: Left door sill front
-      const Vec3(-0.90, 0.20, 0.60),  // 32: Left door sill rear
-      const Vec3(0.90, 0.20, -0.60),  // 33: Right door sill front
-      const Vec3(0.90, 0.20, 0.60),   // 34: Right door sill rear
+      // 31-42: Realistic wheel arches and sculpted door sills
+      // Front-Left wheel arch (centered at z = -1.25, r = 0.35)
+      const Vec3(-0.90, 0.22, -1.65), // 31: Front-Left arch forward
+      const Vec3(-0.94, 0.74, -1.25), // 32: Front-Left arch apex
+      const Vec3(-0.90, 0.22, -0.85), // 33: Front-Left arch aft
+
+      // Rear-Left wheel arch (centered at z = 1.25, r = 0.35)
+      const Vec3(-0.90, 0.22, 0.85),  // 34: Rear-Left arch forward
+      const Vec3(-0.95, 0.76, 1.25),  // 35: Rear-Left arch apex
+      const Vec3(-0.90, 0.22, 1.65),  // 36: Rear-Left arch aft
+
+      // Front-Right wheel arch
+      const Vec3(0.90, 0.22, -1.65),  // 37: Front-Right arch forward
+      const Vec3(0.94, 0.74, -1.25),  // 38: Front-Right arch apex
+      const Vec3(0.90, 0.22, -0.85),  // 39: Front-Right arch aft
+
+      // Rear-Right wheel arch
+      const Vec3(0.90, 0.22, 0.85),   // 40: Rear-Right arch forward
+      const Vec3(0.95, 0.76, 1.25),   // 41: Rear-Right arch apex
+      const Vec3(0.90, 0.22, 1.65),   // 42: Rear-Right arch aft
+
+      // Door sill lower edge center points
+      const Vec3(-0.90, 0.20, 0.00),  // 43: Left door sill center
+      const Vec3(0.90, 0.20, 0.00),   // 44: Right door sill center
     ];
 
     final faces = <_SolidTriangle>[];
@@ -1944,17 +1961,29 @@ class _WireframeScenePainter extends CustomPainter {
       const Vec3(0.42, 0.32, 1.94),
     ], exhaustColor);
 
-    // ── Left Side Body & Fenders ──────────────────────────────────────────
-    addTri(4, 14, 10, carPaintColor);
-    addQuad(4, 31, 14, 14, carPaintColor);
-    addQuad(31, 32, 22, 14, carPaintColor); // Door panel
-    addQuad(32, 29, 24, 22, carPaintColor); // Rear quarter
+    // ── Left Side Body & Fenders with Wheel Arches ─────────────────────────
+    addTri(4, 31, 10, carPaintColor); // Front corner to arch front
+    addTri(10, 31, 32, carPaintColor); // Front fender over wheel arch
+    addTri(10, 32, 14, carPaintColor); // Fender upper to windshield cowl
+    addTri(14, 32, 33, carPaintColor); // Arch rear to A-pillar base
+    addQuad(33, 34, 22, 14, carPaintColor); // Sculpted door panel
+    addTri(33, 43, 34, trimColor); // Door sill rocker skirt
+    addTri(22, 34, 35, carPaintColor); // Muscular rear quarter over arch
+    addTri(22, 35, 24, carPaintColor); // Quarter upper to spoiler
+    addTri(24, 35, 36, carPaintColor); // Quarter rear down to arch aft
+    addTri(24, 36, 29, carPaintColor); // Quarter aft to rear diffuser
 
-    // ── Right Side Body & Fenders ─────────────────────────────────────────
-    addTri(5, 13, 16, carPaintColor);
-    addQuad(5, 16, 16, 33, carPaintColor);
-    addQuad(33, 16, 23, 34, carPaintColor); // Door panel
-    addQuad(34, 23, 26, 30, carPaintColor); // Rear quarter
+    // ── Right Side Body & Fenders with Wheel Arches ────────────────────────
+    addTri(5, 13, 37, carPaintColor); // Front corner to arch front
+    addTri(13, 38, 37, carPaintColor); // Front fender over wheel arch
+    addTri(13, 16, 38, carPaintColor); // Fender upper to windshield cowl
+    addTri(16, 38, 39, carPaintColor); // Arch rear to A-pillar base
+    addQuad(39, 16, 23, 40, carPaintColor); // Sculpted door panel
+    addTri(39, 40, 44, trimColor); // Door sill rocker skirt
+    addTri(23, 41, 40, carPaintColor); // Muscular rear quarter over arch
+    addTri(23, 26, 41, carPaintColor); // Quarter upper to spoiler
+    addTri(26, 41, 42, carPaintColor); // Quarter rear down to arch aft
+    addTri(26, 42, 30, carPaintColor); // Quarter aft to rear diffuser
 
     // ── Undercarriage Floor ───────────────────────────────────────────────
     addPolygonFace([

@@ -132,6 +132,13 @@ class Mat4 {
     return Mat4(r);
   }
 
+  /// Determinant of the upper-left 3×3 rotation/scale submatrix.
+  /// A negative value indicates reflection (inverted polygon winding).
+  double get determinant3x3 =>
+      m[0] * (m[5] * m[10] - m[6] * m[9]) -
+      m[4] * (m[1] * m[10] - m[2] * m[9]) +
+      m[8] * (m[1] * m[6] - m[2] * m[5]);
+
   static Mat4 fromTRS(Vec3 t, Quat r, Vec3 s) {
     final rot = r.toRotationMatrix();
     return Mat4([
