@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -103,6 +104,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   late final AnimationController _animController;
   bool _autoTurntable = false;
   bool _isFullscreen = false;
+  bool _isInteracting = false;
   CameraPreset _preset = CameraPreset.iso;
 
   // Camera spherical coordinates
@@ -235,6 +237,11 @@ class _WireframeViewerState extends State<WireframeViewer>
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onDoubleTap: () => setState(_resetCameraToModel),
+                onPanStart: (_) {
+                  if (!_isInteracting) {
+                    setState(() => _isInteracting = true);
+                  }
+                },
                 onPanUpdate: (details) {
                   setState(() {
                     // Natural orbit: dragging right rotates model right; dragging up tilts view up.
@@ -244,6 +251,16 @@ class _WireframeViewerState extends State<WireframeViewer>
                     _elevation = (_elevation - factor * details.delta.dy * 0.01)
                         .clamp(-1.5, 1.5);
                   });
+                },
+                onPanEnd: (_) {
+                  if (_isInteracting) {
+                    setState(() => _isInteracting = false);
+                  }
+                },
+                onPanCancel: () {
+                  if (_isInteracting) {
+                    setState(() => _isInteracting = false);
+                  }
                 },
                 child: AnimatedBuilder(
                   animation: _animController,
@@ -273,6 +290,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           wireColor: widget.wireColor,
                           centerOfMassY: widget.centerOfMassY,
                           pulseProgress: _animController.value,
+                          isInteracting: _isInteracting || _autoTurntable,
                         ),
                       ),
                     );
@@ -1092,6 +1110,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.wireColor,
     required this.centerOfMassY,
     this.pulseProgress = 0.0,
+    this.isInteracting = false,
   });
 
   final ParsedModel? model;
@@ -1116,6 +1135,7 @@ class _WireframeScenePainter extends CustomPainter {
   final Color wireColor;
   final double centerOfMassY;
   final double pulseProgress;
+  final bool isInteracting;
 
   @override
   bool shouldRepaint(covariant _WireframeScenePainter oldDelegate) {
@@ -1140,7 +1160,8 @@ class _WireframeScenePainter extends CustomPainter {
         oldDelegate.wheelColor != wheelColor ||
         oldDelegate.wireColor != wireColor ||
         oldDelegate.centerOfMassY != centerOfMassY ||
-        oldDelegate.pulseProgress != pulseProgress;
+        oldDelegate.pulseProgress != pulseProgress ||
+        oldDelegate.isInteracting != isInteracting;
   }
 
   @override
@@ -1690,12 +1711,15 @@ class _WireframeScenePainter extends CustomPainter {
       return;
     }
 
-    // Keep full geometric detail intact for models up to 16,000 triangles so solid view
-    // is a continuous watertight surface matching Blender and Sketchfab
-    const triangleBudget = 16000;
-    final stride = totalTriangles <= triangleBudget
+    // Interactive budget: during active orbit/drag or auto-turntable, keep processed
+    // triangles bounded to ~3,200 for silky-smooth 60 FPS in Flutter CanvasKit.
+    // When stationary (isInteracting == false), allow full geometric detail (up to 16,000 front-faces)
+    // for a watertight, crisp representation matching Blender and Sketchfab.
+    // Note: since back-face culling eliminates ~50% of triangles, the effective front-face count is ~totalTriangles / 2.
+    final activeBudget = isInteracting ? 3200 : 16000;
+    final stride = totalTriangles <= (activeBudget * 2)
         ? 1
-        : max(1, (totalTriangles / triangleBudget).ceil());
+        : max(1, (totalTriangles / (activeBudget * 2)).ceil());
 
     // Precalculate lighting directions once outside loop
     final keyLight = switch (lighting) {
@@ -1740,6 +1764,26 @@ class _WireframeScenePainter extends CustomPainter {
 
       final verts = instance.worldVertices;
       final numVerts = verts.length;
+      if (numVerts == 0) continue;
+
+      // Pre-transform unique vertices of this instance into clip and screen space
+      final projX = Float64List(numVerts);
+      final projY = Float64List(numVerts);
+      final projW = Float64List(numVerts);
+      final inFront = List<bool>.filled(numVerts, false);
+
+      for (var vIdx = 0; vIdx < numVerts; vIdx++) {
+        final v = verts[vIdx];
+        final clip = viewProj.transformClip(v);
+        final w = clip[3];
+        projW[vIdx] = w;
+        if (w > 0.05) {
+          inFront[vIdx] = true;
+          final invW = 1.0 / w;
+          projX[vIdx] = (clip[0] * invW * 0.5 + 0.5) * size.width + panX;
+          projY[vIdx] = (1.0 - (clip[1] * invW * 0.5 + 0.5)) * size.height + panY;
+        }
+      }
 
       for (var i = 0; i < numTriangles; i += stride) {
         final triangle = triangles[i];
@@ -1751,19 +1795,14 @@ class _WireframeScenePainter extends CustomPainter {
           continue;
         }
 
+        final allInFront = inFront[ia] && inFront[ib] && inFront[ic];
+        if (!allInFront && projW[ia] <= 0.05 && projW[ib] <= 0.05 && projW[ic] <= 0.05) {
+          continue;
+        }
+
         final v0 = verts[ia];
         final v1 = verts[ib];
         final v2 = verts[ic];
-
-        // Transform 3 vertices to clip space directly (0 list allocations)
-        final c0 = viewProj.transformClip(v0);
-        final c1 = viewProj.transformClip(v1);
-        final c2 = viewProj.transformClip(v2);
-
-        // Near plane culling
-        if (c0[3] <= 0.05 && c1[3] <= 0.05 && c2[3] <= 0.05) {
-          continue;
-        }
 
         // Face normal in world space
         final e1x = v1.x - v0.x;
@@ -1773,15 +1812,9 @@ class _WireframeScenePainter extends CustomPainter {
         final e2y = v2.y - v0.y;
         final e2z = v2.z - v0.z;
 
-        var nx = e1y * e2z - e1z * e2y;
-        var ny = e1z * e2x - e1x * e2z;
-        var nz = e1x * e2y - e1y * e2x;
-        final nLenSq = nx * nx + ny * ny + nz * nz;
-        if (nLenSq < 1e-10) continue;
-        final invNLen = 1.0 / sqrt(nLenSq);
-        nx *= invNLen;
-        ny *= invNLen;
-        nz *= invNLen;
+        final nx = e1y * e2z - e1z * e2y;
+        final ny = e1z * e2x - e1x * e2z;
+        final nz = e1x * e2y - e1y * e2x;
 
         // Centroid & view vector
         final cx = (v0.x + v1.x + v2.x) * (1.0 / 3.0);
@@ -1791,38 +1824,25 @@ class _WireframeScenePainter extends CustomPainter {
         final toEyeX = eye.x - cx;
         final toEyeY = eye.y - cy;
         final toEyeZ = eye.z - cz;
-        final depthSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
-        if (depthSq < 1e-10) continue;
-        final invEyeDist = 1.0 / sqrt(depthSq);
-        final eyex = toEyeX * invEyeDist;
-        final eyey = toEyeY * invEyeDist;
-        final eyez = toEyeZ * invEyeDist;
 
-        var ndotEye = nx * eyex + ny * eyey + nz * eyez;
-        // Two-sided surface shading matching Blender Solid viewport
-        if (ndotEye < 0) {
-          nx = -nx;
-          ny = -ny;
-          nz = -nz;
-          ndotEye = -ndotEye;
+        // Strict back-face culling: face normal must point towards eye
+        final dotEye = nx * toEyeX + ny * toEyeY + nz * toEyeZ;
+        if (dotEye <= 0.001) {
+          continue;
         }
 
         Offset? p0;
         Offset? p1;
         Offset? p2;
+        final double depth = (projW[ia] + projW[ib] + projW[ic]) * (1.0 / 3.0);
 
-        if (c0[3] > 0.05 && c1[3] > 0.05 && c2[3] > 0.05) {
-          final invW0 = 1.0 / c0[3];
-          final sx0 = (c0[0] * invW0 * 0.5 + 0.5) * size.width + panX;
-          final sy0 = (1.0 - (c0[1] * invW0 * 0.5 + 0.5)) * size.height + panY;
-
-          final invW1 = 1.0 / c1[3];
-          final sx1 = (c1[0] * invW1 * 0.5 + 0.5) * size.width + panX;
-          final sy1 = (1.0 - (c1[1] * invW1 * 0.5 + 0.5)) * size.height + panY;
-
-          final invW2 = 1.0 / c2[3];
-          final sx2 = (c2[0] * invW2 * 0.5 + 0.5) * size.width + panX;
-          final sy2 = (1.0 - (c2[1] * invW2 * 0.5 + 0.5)) * size.height + panY;
+        if (allInFront) {
+          final sx0 = projX[ia];
+          final sy0 = projY[ia];
+          final sx1 = projX[ib];
+          final sy1 = projY[ib];
+          final sx2 = projX[ic];
+          final sy2 = projY[ic];
 
           // 2D screen viewport frustum culling
           final minX = min(sx0, min(sx1, sx2));
@@ -1832,10 +1852,30 @@ class _WireframeScenePainter extends CustomPainter {
           final maxY = max(sy0, max(sy1, sy2));
           if (maxY < 0 || minY > size.height) continue;
 
+          // Sub-pixel sliver culling (less than 0.6 px^2)
+          final signedArea = (sx1 - sx0) * (sy2 - sy0) - (sy1 - sy0) * (sx2 - sx0);
+          if (signedArea.abs() < 0.6) continue;
+
           p0 = Offset(sx0, sy0);
           p1 = Offset(sx1, sy1);
           p2 = Offset(sx2, sy2);
         }
+
+        final nLenSq = nx * nx + ny * ny + nz * nz;
+        if (nLenSq < 1e-10) continue;
+        final invNLen = 1.0 / sqrt(nLenSq);
+        final normX = nx * invNLen;
+        final normY = ny * invNLen;
+        final normZ = nz * invNLen;
+
+        final eyeDistSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
+        if (eyeDistSq < 1e-10) continue;
+        final invEyeDist = 1.0 / sqrt(eyeDistSq);
+        final eyex = toEyeX * invEyeDist;
+        final eyey = toEyeY * invEyeDist;
+        final eyez = toEyeZ * invEyeDist;
+
+        final ndotEye = normX * eyex + normY * eyey + normZ * eyez;
 
         final Color baseColor = isSelected
             ? const Color(0xFF00E5FF)
@@ -1845,10 +1885,10 @@ class _WireframeScenePainter extends CustomPainter {
         if (isFlat) {
           shadedColor = baseColor;
         } else {
-          final dotKey = nx * kx + ny * ky + nz * kz;
+          final dotKey = normX * kx + normY * ky + normZ * kz;
           final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
 
-          final dotFill = nx * fx + ny * fy + nz * fz;
+          final dotFill = normX * fx + normY * fy + normZ * fz;
           final diffuseFill = dotFill > 0.0 ? dotFill * 0.22 : 0.0;
 
           // Blinn-Phong specular highlight via 4 successive squarings
@@ -1859,7 +1899,7 @@ class _WireframeScenePainter extends CustomPainter {
           double specular = 0.0;
           if (hLenSq > 1e-6) {
             final invHLen = 1.0 / sqrt(hLenSq);
-            final ndoth = nx * (hx * invHLen) + ny * (hy * invHLen) + nz * (hz * invHLen);
+            final ndoth = normX * (hx * invHLen) + normY * (hy * invHLen) + normZ * (hz * invHLen);
             if (ndoth > 0.0) {
               final x2 = ndoth * ndoth;
               final x4 = x2 * x2;
@@ -1870,7 +1910,7 @@ class _WireframeScenePainter extends CustomPainter {
           }
 
           // Fresnel rim light
-          final oneMinusNdot = 1.0 - (ndotEye > 1.0 ? 1.0 : ndotEye);
+          final oneMinusNdot = 1.0 - (ndotEye > 1.0 ? 1.0 : (ndotEye < 0.0 ? 0.0 : ndotEye));
           final f2 = oneMinusNdot * oneMinusNdot;
           final fresnel = (f2 * sqrt(oneMinusNdot)) * 0.24;
 
@@ -1889,7 +1929,7 @@ class _WireframeScenePainter extends CustomPainter {
               p0: p0,
               p1: p1,
               p2: p2,
-              depth: depthSq,
+              depth: depth,
               color: shadedColor,
             ),
           );
@@ -1897,7 +1937,7 @@ class _WireframeScenePainter extends CustomPainter {
           faces.add(
             _SolidTriangle(
               vertices: [v0, v1, v2],
-              depth: depthSq,
+              depth: depth,
               color: shadedColor,
             ),
           );
@@ -1905,7 +1945,7 @@ class _WireframeScenePainter extends CustomPainter {
       }
     }
 
-    // Painter's algorithm: sort faces from furthest to nearest
+    // Painter's algorithm: sort faces from furthest to nearest along view ray
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
     // Render all visible front-facing polygons with authentic anti-aliased solid fills
