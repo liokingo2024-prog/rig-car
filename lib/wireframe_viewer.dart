@@ -1044,17 +1044,28 @@ class _TelemetryOverlay extends StatelessWidget {
 
 class _SolidTriangle {
   const _SolidTriangle({
-    required this.vertices,
+    this.vertices,
+    this.p0,
+    this.p1,
+    this.p2,
     required this.depth,
     required this.color,
   });
 
-  final List<Vec3> vertices;
+  final List<Vec3>? vertices;
+  final Offset? p0;
+  final Offset? p1;
+  final Offset? p2;
   final double depth;
   final Color color;
 }
 
 class _WireframeScenePainter extends CustomPainter {
+  static final List<(double, double)> _unitCircle24 = List.generate(
+    24,
+    (i) => (sin(i * 2 * pi / 24), cos(i * 2 * pi / 24)),
+  );
+
   const _WireframeScenePainter({
     required this.model,
     required this.detection,
@@ -1353,9 +1364,9 @@ class _WireframeScenePainter extends CustomPainter {
     final outerShadow = <Vec3>[
       for (var i = 0; i < segments; i++)
         Vec3(
-          cx + rx * sin(i * 2 * pi / segments),
+          cx + rx * _unitCircle24[i].$1,
           groundY + 0.002,
-          cz + rz * cos(i * 2 * pi / segments),
+          cz + rz * _unitCircle24[i].$2,
         ),
     ];
     _drawClippedPolygon(
@@ -1372,9 +1383,9 @@ class _WireframeScenePainter extends CustomPainter {
     final innerShadow = <Vec3>[
       for (var i = 0; i < segments; i++)
         Vec3(
-          cx + (rx * 0.68) * sin(i * 2 * pi / segments),
+          cx + (rx * 0.68) * _unitCircle24[i].$1,
           groundY + 0.004,
-          cz + (rz * 0.72) * cos(i * 2 * pi / segments),
+          cz + (rz * 0.72) * _unitCircle24[i].$2,
         ),
     ];
     _drawClippedPolygon(
@@ -1688,9 +1699,29 @@ class _WireframeScenePainter extends CustomPainter {
       return;
     }
 
+    // Adaptive triangle budget for 60 FPS viewport orbit & drag on web
+    const triangleBudget = 3600;
+    final globalStride = max(1, (totalTriangles / triangleBudget).ceil());
+
+    // Precalculate lighting directions once outside loop
+    final keyLight = switch (lighting) {
+      ViewerLighting.studio => const Vec3(-0.50, 0.82, 0.40),
+      ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
+      ViewerLighting.night => const Vec3(0.35, 0.55, -0.75),
+      ViewerLighting.flat => const Vec3(0, 1, 0),
+    }.normalized;
+    final fillLight = const Vec3(0.50, -0.30, -0.40).normalized;
+    final kx = keyLight.x, ky = keyLight.y, kz = keyLight.z;
+    final fx = fillLight.x, fy = fillLight.y, fz = fillLight.z;
+    final isFlat = lighting == ViewerLighting.flat;
+
     final faces = <_SolidTriangle>[];
 
     for (final instance in model!.instances) {
+      final triangles = instance.triangles;
+      final numTriangles = triangles.length;
+      if (numTriangles == 0) continue;
+
       final isSelected = instance.nodeIndex == selectedNode;
       final nodeName = instance.nodeIndex < model!.nodes.length
           ? model!.nodes[instance.nodeIndex].name.toLowerCase()
@@ -1706,7 +1737,7 @@ class _WireframeScenePainter extends CustomPainter {
           nodeName.contains('body') ||
           nodeName.contains('chassis');
 
-      Color baseMeshColor;
+      final Color baseMeshColor;
       if (isSelected) {
         baseMeshColor = const Color(0xFF00E5FF);
       } else if (isGlass) {
@@ -1719,63 +1750,203 @@ class _WireframeScenePainter extends CustomPainter {
         baseMeshColor = bodyColor;
       }
 
-      for (final triangle in instance.triangles) {
-        if (triangle.a >= instance.worldVertices.length ||
-            triangle.b >= instance.worldVertices.length ||
-            triangle.c >= instance.worldVertices.length) {
+      // Proportional stride preserves detailed small parts (wheels, mirrors, spoilers)
+      // while sampling large car body shells to maintain locked 60 FPS
+      final stride = totalTriangles <= triangleBudget
+          ? 1
+          : max(1, (numTriangles * globalStride / totalTriangles).ceil());
+
+      final verts = instance.worldVertices;
+      final numVerts = verts.length;
+      final clipVerts = List<List<double>?>.filled(numVerts, null);
+      final screenOffsets = List<Offset?>.filled(numVerts, null);
+
+      List<double> getClip(int idx) {
+        var c = clipVerts[idx];
+        if (c == null) {
+          c = viewProj.transformClip(verts[idx]);
+          clipVerts[idx] = c;
+          if (c[3] > 0.05) {
+            final invW = 1.0 / c[3];
+            final sx = (c[0] * invW * 0.5 + 0.5) * size.width + panX;
+            final sy = (1.0 - (c[1] * invW * 0.5 + 0.5)) * size.height + panY;
+            screenOffsets[idx] = Offset(sx, sy);
+          }
+        }
+        return c;
+      }
+
+      for (var i = 0; i < numTriangles; i += stride) {
+        final triangle = triangles[i];
+        final ia = triangle.a;
+        final ib = triangle.b;
+        final ic = triangle.c;
+
+        if (ia >= numVerts || ib >= numVerts || ic >= numVerts) {
           continue;
         }
 
-        final vertices = [
-          instance.worldVertices[triangle.a],
-          instance.worldVertices[triangle.b],
-          instance.worldVertices[triangle.c],
-        ];
-        var normal = (vertices[1] - vertices[0])
-            .cross(vertices[2] - vertices[0])
-            .normalized;
-        if (normal.lengthSquared < 1e-10) continue;
-        final center = (vertices[0] + vertices[1] + vertices[2]) * (1 / 3);
-        final toEye = eye - center;
+        final c0 = getClip(ia);
+        final c1 = getClip(ib);
+        final c2 = getClip(ic);
 
-        // Two-sided surface shading matching Blender Solid viewport:
-        // Thin body panels, spoilers, and mirrored components never disappear.
-        if (normal.dot(toEye) < 0) {
-          normal = -normal;
+        // Near plane culling (behind camera)
+        if (c0[3] <= 0.05 && c1[3] <= 0.05 && c2[3] <= 0.05) {
+          continue;
         }
 
-        final clips = vertices.map(viewProj.transformClip).toList();
-        if (clips.every((clip) => clip[3] <= 0.05)) continue;
+        final v0 = verts[ia];
+        final v1 = verts[ib];
+        final v2 = verts[ic];
 
-        // Use authentic GLTF material color if available on the triangle
-        final color = isSelected
+        // Face normal in world space
+        final e1x = v1.x - v0.x;
+        final e1y = v1.y - v0.y;
+        final e1z = v1.z - v0.z;
+        final e2x = v2.x - v0.x;
+        final e2y = v2.y - v0.y;
+        final e2z = v2.z - v0.z;
+
+        var nx = e1y * e2z - e1z * e2y;
+        var ny = e1z * e2x - e1x * e2z;
+        var nz = e1x * e2y - e1y * e2x;
+        final nLenSq = nx * nx + ny * ny + nz * nz;
+        if (nLenSq < 1e-10) continue;
+        final invNLen = 1.0 / sqrt(nLenSq);
+        nx *= invNLen;
+        ny *= invNLen;
+        nz *= invNLen;
+
+        // Centroid & view vector
+        final cx = (v0.x + v1.x + v2.x) * (1.0 / 3.0);
+        final cy = (v0.y + v1.y + v2.y) * (1.0 / 3.0);
+        final cz = (v0.z + v1.z + v2.z) * (1.0 / 3.0);
+
+        final toEyeX = eye.x - cx;
+        final toEyeY = eye.y - cy;
+        final toEyeZ = eye.z - cz;
+        final depthSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
+        if (depthSq < 1e-10) continue;
+        final invEyeDist = 1.0 / sqrt(depthSq);
+        final eyex = toEyeX * invEyeDist;
+        final eyey = toEyeY * invEyeDist;
+        final eyez = toEyeZ * invEyeDist;
+
+        var ndotEye = nx * eyex + ny * eyey + nz * eyez;
+        // Two-sided surface shading matching Blender Solid viewport
+        if (ndotEye < 0) {
+          nx = -nx;
+          ny = -ny;
+          nz = -nz;
+          ndotEye = -ndotEye;
+        }
+
+        final p0 = screenOffsets[ia];
+        final p1 = screenOffsets[ib];
+        final p2 = screenOffsets[ic];
+
+        // 2D screen viewport frustum culling when in front of camera
+        if (p0 != null && p1 != null && p2 != null) {
+          final minX = min(p0.dx, min(p1.dx, p2.dx));
+          final maxX = max(p0.dx, max(p1.dx, p2.dx));
+          if (maxX < 0 || minX > size.width) continue;
+          final minY = min(p0.dy, min(p1.dy, p2.dy));
+          final maxY = max(p0.dy, max(p1.dy, p2.dy));
+          if (maxY < 0 || minY > size.height) continue;
+        }
+
+        final Color baseColor = isSelected
             ? const Color(0xFF00E5FF)
             : (triangle.color ?? baseMeshColor);
 
-        faces.add(
-          _SolidTriangle(
-            vertices: vertices,
-            depth: toEye.lengthSquared,
-            color: _shadeSolidColor(color, normal, center, eye),
-          ),
-        );
+        final Color shadedColor;
+        if (isFlat) {
+          shadedColor = baseColor;
+        } else {
+          final dotKey = nx * kx + ny * ky + nz * kz;
+          final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
+
+          final dotFill = nx * fx + ny * fy + nz * fz;
+          final diffuseFill = dotFill > 0.0 ? dotFill * 0.22 : 0.0;
+
+          // Blinn-Phong specular highlight via 4 successive squarings
+          final hx = kx + eyex;
+          final hy = ky + eyey;
+          final hz = kz + eyez;
+          final hLenSq = hx * hx + hy * hy + hz * hz;
+          double specular = 0.0;
+          if (hLenSq > 1e-6) {
+            final invHLen = 1.0 / sqrt(hLenSq);
+            final ndoth = nx * (hx * invHLen) + ny * (hy * invHLen) + nz * (hz * invHLen);
+            if (ndoth > 0.0) {
+              final x2 = ndoth * ndoth;
+              final x4 = x2 * x2;
+              final x8 = x4 * x4;
+              final x16 = x8 * x8;
+              specular = (x16 * x2) * 0.38;
+            }
+          }
+
+          // Fresnel rim light
+          final oneMinusNdot = 1.0 - (ndotEye > 1.0 ? 1.0 : ndotEye);
+          final f2 = oneMinusNdot * oneMinusNdot;
+          final fresnel = (f2 * sqrt(oneMinusNdot)) * 0.24;
+
+          final factor = (0.32 + diffuseKey * 0.55 + diffuseFill + specular + fresnel)
+              .clamp(0.20, 1.25);
+
+          final r = ((baseColor.r * 255.0) * factor).round().clamp(0, 255);
+          final g = ((baseColor.g * 255.0) * factor).round().clamp(0, 255);
+          final b = ((baseColor.b * 255.0) * factor).round().clamp(0, 255);
+          shadedColor = Color.fromARGB((baseColor.a * 255.0).round().clamp(0, 255), r, g, b);
+        }
+
+        if (p0 != null && p1 != null && p2 != null) {
+          faces.add(
+            _SolidTriangle(
+              p0: p0,
+              p1: p1,
+              p2: p2,
+              depth: depthSq,
+              color: shadedColor,
+            ),
+          );
+        } else {
+          faces.add(
+            _SolidTriangle(
+              vertices: [v0, v1, v2],
+              depth: depthSq,
+              color: shadedColor,
+            ),
+          );
+        }
       }
     }
 
     // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Render all visible front-facing polygons
+    // Render faces with reused Path and Paint
+    final fillPaint = Paint()..style = PaintingStyle.fill;
+    final path = Path();
+
     for (final face in faces) {
-      _drawClippedPolygon(
-        canvas,
-        viewProj,
-        size,
-        face.vertices,
-        Paint()
-          ..color = face.color
-          ..style = PaintingStyle.fill,
-      );
+      if (face.p0 != null && face.p1 != null && face.p2 != null) {
+        path.reset();
+        path.moveTo(face.p0!.dx, face.p0!.dy);
+        path.lineTo(face.p1!.dx, face.p1!.dy);
+        path.lineTo(face.p2!.dx, face.p2!.dy);
+        path.close();
+        canvas.drawPath(path, fillPaint..color = face.color);
+      } else if (face.vertices != null) {
+        _drawClippedPolygon(
+          canvas,
+          viewProj,
+          size,
+          face.vertices!,
+          fillPaint..color = face.color,
+        );
+      }
     }
   }
 
@@ -1795,14 +1966,20 @@ class _WireframeScenePainter extends CustomPainter {
     final diffuseKey = max(0.0, normal.dot(keyLight));
     final diffuseFill = max(0.0, normal.dot(fillLight)) * 0.22;
 
-    // Specular Blinn-Phong highlight
+    // Specular Blinn-Phong highlight via fast squarings
     final halfVector = (keyLight + toEye).normalized;
-    final specular =
-        pow(max(0.0, normal.dot(halfVector)), 18).toDouble() * 0.38;
+    final ndoth = max(0.0, normal.dot(halfVector));
+    final x2 = ndoth * ndoth;
+    final x4 = x2 * x2;
+    final x8 = x4 * x4;
+    final x16 = x8 * x8;
+    final specular = (x16 * x2) * 0.38;
 
-    // Silhouette Fresnel rim light (Blender MatCap / Sketchfab curvature pop)
+    // Silhouette Fresnel rim light
     final ndotv = max(0.0, normal.dot(toEye));
-    final fresnel = pow(1.0 - ndotv, 2.5).toDouble() * 0.24;
+    final oneMinusNdot = 1.0 - (ndotv > 1.0 ? 1.0 : ndotv);
+    final f2 = oneMinusNdot * oneMinusNdot;
+    final fresnel = (f2 * sqrt(oneMinusNdot)) * 0.24;
 
     final ambient = 0.32;
     final factor = lighting == ViewerLighting.flat
@@ -1846,6 +2023,8 @@ class _WireframeScenePainter extends CustomPainter {
     final edgeBudget = denseWireframe ? 8000 : 3000;
     final edgeStride = max(1, (totalEdges / edgeBudget).ceil());
 
+    final path = Path();
+
     for (final inst in model!.instances) {
       Color edgeColor;
       double strokeWidth = 1.0;
@@ -1867,27 +2046,41 @@ class _WireframeScenePainter extends CustomPainter {
       final paint = Paint()
         ..color = edgeColor
         ..strokeWidth = strokeWidth
+        ..style = PaintingStyle.stroke
         ..isAntiAlias = true;
 
       final verts = inst.worldVertices;
       final edges = inst.edges;
-      if (verts.isEmpty || edges.isEmpty) continue;
-      // Do not project vertices that are not used by the sampled edge set.
-      // Large GLBs often contain hundreds of thousands of vertices but only a
-      // few thousand edges are needed for the interactive preview.
-      final projected = <int, Offset?>{};
-      Offset? projectedAt(int index) =>
-          projected.putIfAbsent(index, () => project(verts[index]));
+      final numVerts = verts.length;
+      if (numVerts == 0 || edges.isEmpty) continue;
 
+      final projected = List<Offset?>.filled(numVerts, null);
+      final visited = List<bool>.filled(numVerts, false);
+
+      Offset? projectedAt(int index) {
+        if (!visited[index]) {
+          visited[index] = true;
+          projected[index] = project(verts[index]);
+        }
+        return projected[index];
+      }
+
+      path.reset();
+      var hasLines = false;
       for (var i = 0; i < edges.length; i += edgeStride) {
         final e = edges[i];
-        if (e.a < verts.length && e.b < verts.length) {
+        if (e.a < numVerts && e.b < numVerts) {
           final p0 = projectedAt(e.a);
           final p1 = projectedAt(e.b);
           if (p0 != null && p1 != null) {
-            canvas.drawLine(p0, p1, paint);
+            path.moveTo(p0.dx, p0.dy);
+            path.lineTo(p1.dx, p1.dy);
+            hasLines = true;
           }
         }
+      }
+      if (hasLines) {
+        canvas.drawPath(path, paint);
       }
     }
   }
@@ -2201,17 +2394,18 @@ class _WireframeScenePainter extends CustomPainter {
     // Sort all faces from furthest to nearest (Painter's algorithm)
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Render solid polygons
+    // Render solid polygons with single reused fill paint
+    final fillPaint = Paint()..style = PaintingStyle.fill;
     for (final face in faces) {
-      _drawClippedPolygon(
-        canvas,
-        viewProj,
-        size,
-        face.vertices,
-        Paint()
-          ..color = face.color
-          ..style = PaintingStyle.fill,
-      );
+      if (face.vertices != null) {
+        _drawClippedPolygon(
+          canvas,
+          viewProj,
+          size,
+          face.vertices!,
+          fillPaint..color = face.color,
+        );
+      }
     }
   }
 

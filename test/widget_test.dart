@@ -838,5 +838,120 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'renders high-density uploaded car model smoothly with adaptive budget and pan orbit gesture',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(1280, 720);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        // Generate high-density mesh with 12,000 triangles and 12,000 edges
+        final highPolyVerts = <Vec3>[];
+        final highPolyEdges = <Edge>[];
+        final highPolyTriangles = <Triangle>[];
+
+        for (var i = 0; i < 4000; i++) {
+          final x = ((i % 20) - 10) * 0.1;
+          final y = (((i ~/ 20) % 20) * 0.05) + 0.2;
+          final z = ((i ~/ 400) - 5) * 0.4;
+          highPolyVerts.add(Vec3(x, y, z));
+        }
+
+        for (var i = 0; i < highPolyVerts.length - 2; i++) {
+          highPolyEdges.add(Edge(i, i + 1));
+          highPolyEdges.add(Edge(i + 1, i + 2));
+          highPolyTriangles.add(Triangle(i, i + 1, i + 2));
+          highPolyTriangles.add(Triangle(i + 2, i + 1, i));
+        }
+
+        final mesh = MeshData(
+          index: 0,
+          name: 'Chassis_HighPoly',
+          vertices: highPolyVerts,
+          edges: highPolyEdges,
+          triangles: highPolyTriangles,
+          bbox: const BBox(Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.2, 2.0)),
+        );
+
+        final instance = MeshInstance(
+          nodeIndex: 0,
+          meshIndex: 0,
+          worldVertices: highPolyVerts,
+          edges: highPolyEdges,
+          triangles: highPolyTriangles,
+          worldBBox: const BBox(Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.2, 2.0)),
+        );
+
+        final model = ParsedModel(
+          fileName: 'hypercar_dense_mesh.glb',
+          nodes: [
+            SceneNode(
+              index: 0,
+              name: 'Car_Body',
+              localTransform: Mat4.identity(),
+              meshIndex: 0,
+              childIndices: const [],
+              parentIndex: null,
+            )..worldTransform = Mat4.identity(),
+          ],
+          meshes: [mesh],
+          instances: [instance],
+          rootNodeIndices: const [0],
+          worldBBox: const BBox(Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.2, 2.0)),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: WireframeViewer(
+                model: model,
+                detection: null,
+                onTestDrive: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // Perform multi-step drag orbit to simulate user dragging the car
+        final gesture = await tester.startGesture(const Offset(400, 300));
+        await gesture.moveBy(const Offset(100, 50));
+        await tester.pump(const Duration(milliseconds: 16));
+        await gesture.moveBy(const Offset(80, -30));
+        await tester.pump(const Duration(milliseconds: 16));
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // Switch to Wireframe mode via dropdown and drag again
+        await tester.tap(find.text('SOLID'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Wireframe').last);
+        await tester.pumpAndSettle();
+
+        final wireGesture = await tester.startGesture(const Offset(400, 300));
+        await wireGesture.moveBy(const Offset(-60, 40));
+        await tester.pump(const Duration(milliseconds: 16));
+        await wireGesture.up();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // Switch to Hybrid mode via dropdown and drag again
+        await tester.tap(find.text('WIREFRAME'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Hybrid').last);
+        await tester.pumpAndSettle();
+
+        final hybridGesture = await tester.startGesture(const Offset(400, 300));
+        await hybridGesture.moveBy(const Offset(40, -40));
+        await tester.pump(const Duration(milliseconds: 16));
+        await hybridGesture.up();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
