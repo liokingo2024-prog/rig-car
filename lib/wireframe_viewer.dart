@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -1691,10 +1690,12 @@ class _WireframeScenePainter extends CustomPainter {
       return;
     }
 
-    // Hard triangle budget: strictly cap processed triangles to 2,400 total.
-    // In Flutter Web, 2,400 triangles rendered via drawVertices runs in a single GPU draw call (~0.1ms).
-    const triangleBudget = 2400;
-    final stride = max(1, (totalTriangles / triangleBudget).ceil());
+    // Keep full geometric detail intact for models up to 16,000 triangles so solid view
+    // is a continuous watertight surface matching Blender and Sketchfab
+    const triangleBudget = 16000;
+    final stride = totalTriangles <= triangleBudget
+        ? 1
+        : max(1, (totalTriangles / triangleBudget).ceil());
 
     // Precalculate lighting directions once outside loop
     final keyLight = switch (lighting) {
@@ -1716,7 +1717,26 @@ class _WireframeScenePainter extends CustomPainter {
       if (numTriangles == 0) continue;
 
       final isSelected = instance.nodeIndex == selectedNodeIndex;
-      final Color baseMeshColor = isSelected ? const Color(0xFF00E5FF) : bodyColor;
+      final nodeName = instance.nodeIndex < model!.nodes.length
+          ? model!.nodes[instance.nodeIndex].name.toLowerCase()
+          : '';
+      final isWheel = nodeName.contains('wheel') ||
+          nodeName.contains('tire') ||
+          nodeName.contains('rim');
+      final isGlass = nodeName.contains('glass') ||
+          nodeName.contains('window') ||
+          nodeName.contains('windshield');
+
+      final Color baseMeshColor;
+      if (isSelected) {
+        baseMeshColor = const Color(0xFF00E5FF);
+      } else if (isGlass) {
+        baseMeshColor = const Color(0xFF1E3A42);
+      } else if (isWheel) {
+        baseMeshColor = const Color(0xFF26322C);
+      } else {
+        baseMeshColor = bodyColor;
+      }
 
       final verts = instance.worldVertices;
       final numVerts = verts.length;
@@ -1888,19 +1908,18 @@ class _WireframeScenePainter extends CustomPainter {
     // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Batch all 2D triangles into a single GPU draw call via canvas.drawVertices
-    final positions = <Offset>[];
-    final colors = <Color>[];
+    // Render all visible front-facing polygons with authentic anti-aliased solid fills
     final fillPaint = Paint()..style = PaintingStyle.fill;
+    final path = Path();
 
     for (final face in faces) {
       if (face.p0 != null && face.p1 != null && face.p2 != null) {
-        positions.add(face.p0!);
-        positions.add(face.p1!);
-        positions.add(face.p2!);
-        colors.add(face.color);
-        colors.add(face.color);
-        colors.add(face.color);
+        path.reset();
+        path.moveTo(face.p0!.dx, face.p0!.dy);
+        path.lineTo(face.p1!.dx, face.p1!.dy);
+        path.lineTo(face.p2!.dx, face.p2!.dy);
+        path.close();
+        canvas.drawPath(path, fillPaint..color = face.color);
       } else if (face.vertices != null) {
         _drawClippedPolygon(
           canvas,
@@ -1910,15 +1929,6 @@ class _WireframeScenePainter extends CustomPainter {
           fillPaint..color = face.color,
         );
       }
-    }
-
-    if (positions.isNotEmpty) {
-      final vertices = ui.Vertices(
-        ui.VertexMode.triangles,
-        positions,
-        colors: colors,
-      );
-      canvas.drawVertices(vertices, BlendMode.src, Paint());
     }
   }
 
