@@ -759,5 +759,89 @@ void main() {
         expect(find.text('HYBRID'), findsOneWidget);
       },
     );
+
+    testWidgets(
+      'renders compact non-overflowing 3D viewport topbar with long uploaded model name on narrow screen',
+      (tester) async {
+        tester.view.physicalSize = const Size(580, 500);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final model = ParsedModel(
+          fileName:
+              'Lamborghini_Aventador_LP700-4_Roadster_Special_Track_Edition.glb',
+          nodes: const [],
+          meshes: const [],
+          instances: const [],
+          rootNodeIndices: const [],
+          worldBBox: const BBox(Vec3(-1, 0, -2), Vec3(1, 1, 2)),
+        );
+
+        final detection = DetectionResult(
+          wheels: [
+            DetectedWheel(
+              nodeIndex: 0,
+              nodeName: 'Wheel_FL',
+              axle: 'front',
+              side: 'left',
+              worldPosition: const Vec3(-0.8, 0.3, -1.3),
+              confidence: 0.95,
+            ),
+            DetectedWheel(
+              nodeIndex: 1,
+              nodeName: 'Wheel_FR',
+              axle: 'front',
+              side: 'right',
+              worldPosition: const Vec3(0.8, 0.3, -1.3),
+              confidence: 0.95,
+            ),
+            DetectedWheel(
+              nodeIndex: 2,
+              nodeName: 'Wheel_RL',
+              axle: 'rear',
+              side: 'left',
+              worldPosition: const Vec3(-0.8, 0.3, 1.3),
+              confidence: 0.95,
+            ),
+            DetectedWheel(
+              nodeIndex: 3,
+              nodeName: 'Wheel_RR',
+              axle: 'rear',
+              side: 'right',
+              worldPosition: const Vec3(0.8, 0.3, 1.3),
+              confidence: 0.95,
+            ),
+          ],
+          body: const DetectedBody(
+            nodeIndex: 4,
+            nodeName: 'Body',
+            worldBBox: BBox(Vec3(-1, 0, -2), Vec3(1, 1, 2)),
+            confidence: 0.95,
+          ),
+          suggestedDrive: 'AWD',
+          suggestedPreset: 'Supercar',
+          warnings: const [],
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: WireframeViewer(
+                model: model,
+                detection: detection,
+                onTestDrive: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('SOLID'), findsOneWidget);
+        expect(find.text('ISO'), findsOneWidget);
+        expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }

@@ -289,33 +289,37 @@ class _WireframeViewerState extends State<WireframeViewer>
             right: 12,
             child: LayoutBuilder(
               builder: (context, box) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: box.maxWidth),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                final isUltraCompact = box.maxWidth < 640;
+                final isCompact = box.maxWidth < 780;
+
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: _VehicleStatusBadge(
+                        fileName: widget.model != null
+                            ? widget.model!.fileName
+                            : 'Procedural 3D Rig',
+                        wheelCount: widget.detection?.wheels.length ?? 0,
+                        compact: isCompact,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        _VehicleStatusBadge(
-                          fileName: widget.model != null
-                              ? widget.model!.fileName
-                              : 'Procedural 3D Rig',
-                          wheelCount: widget.detection?.wheels.length ?? 0,
-                        ),
-                        const SizedBox(width: 8),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
                             if (widget.onTestDrive != null) ...[
                               FilledButton.icon(
                                 onPressed: widget.onTestDrive,
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFF10B981),
                                   foregroundColor: const Color(0xFF041D14),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: isUltraCompact ? 7 : 9,
+                                    vertical: 5,
                                   ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   visualDensity: VisualDensity.compact,
                                   elevation: 3,
                                   shadowColor: const Color(0x6010B981),
@@ -325,18 +329,18 @@ class _WireframeViewerState extends State<WireframeViewer>
                                 ),
                                 icon: const Icon(
                                   Icons.sports_motorsports_rounded,
-                                  size: 14,
+                                  size: 13,
                                 ),
-                                label: const Text(
-                                  'TEST DRIVE',
-                                  style: TextStyle(
-                                    fontSize: 10,
+                                label: Text(
+                                  isUltraCompact ? 'DRIVE' : 'TEST DRIVE',
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
                                     fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.6,
+                                    letterSpacing: 0.5,
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 4),
                             ],
 
                             // 1. View Selection (Render Mode: Solid / Wireframe / Hybrid)
@@ -495,7 +499,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                   }).toList(),
                               child: _ViewerControl(
                                 icon: _lighting.icon,
-                                label: _lighting.label,
+                                label: isCompact ? '' : _lighting.label,
                                 active: false,
                               ),
                             ),
@@ -513,39 +517,59 @@ class _WireframeViewerState extends State<WireframeViewer>
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  IconButton(
-                                    iconSize: 15,
-                                    padding: const EdgeInsets.all(5),
-                                    constraints: const BoxConstraints(),
-                                    tooltip: _autoTurntable
+                                  Tooltip(
+                                    message: _autoTurntable
                                         ? 'Pause Turntable'
                                         : 'Auto 360° Turntable',
-                                    icon: Icon(
-                                      _autoTurntable
-                                          ? Icons.pause_circle_filled_rounded
-                                          : Icons.rotate_right_rounded,
-                                      color: _autoTurntable
-                                          ? const Color(0xFF10B981)
-                                          : const Color(0xFFBAC7CE),
+                                    child: InkWell(
+                                      onTap: _toggleTurntable,
+                                      borderRadius:
+                                          const BorderRadius.horizontal(
+                                        left: Radius.circular(5),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 5,
+                                        ),
+                                        child: Icon(
+                                          _autoTurntable
+                                              ? Icons.pause_circle_filled_rounded
+                                              : Icons.rotate_right_rounded,
+                                          size: 15,
+                                          color: _autoTurntable
+                                              ? const Color(0xFF10B981)
+                                              : const Color(0xFFBAC7CE),
+                                        ),
+                                      ),
                                     ),
-                                    onPressed: _toggleTurntable,
                                   ),
                                   Container(
                                     width: 1,
                                     height: 14,
                                     color: const Color(0xFF223127),
                                   ),
-                                  IconButton(
-                                    iconSize: 15,
-                                    padding: const EdgeInsets.all(5),
-                                    constraints: const BoxConstraints(),
-                                    tooltip: 'Reset View',
-                                    icon: const Icon(
-                                      Icons.refresh_rounded,
-                                      color: Color(0xFFBAC7CE),
+                                  Tooltip(
+                                    message: 'Reset View',
+                                    child: InkWell(
+                                      onTap: () =>
+                                          setState(_resetCameraToModel),
+                                      borderRadius:
+                                          const BorderRadius.horizontal(
+                                        right: Radius.circular(5),
+                                      ),
+                                      child: const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 5,
+                                        ),
+                                        child: Icon(
+                                          Icons.refresh_rounded,
+                                          size: 15,
+                                          color: Color(0xFFBAC7CE),
+                                        ),
+                                      ),
                                     ),
-                                    onPressed: () =>
-                                        setState(_resetCameraToModel),
                                   ),
                                 ],
                               ),
@@ -588,20 +612,22 @@ class _WireframeViewerState extends State<WireframeViewer>
                                             ? const Color(0xFF10B981)
                                             : const Color(0xFF34D399),
                                       ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        _isFullscreen
-                                            ? 'EXIT FULL'
-                                            : 'FULLSCREEN',
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.5,
-                                          color: _isFullscreen
-                                              ? const Color(0xFF10B981)
-                                              : const Color(0xFFE2E8F0),
+                                      if (!isCompact) ...[
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          _isFullscreen
+                                              ? 'EXIT FULL'
+                                              : 'FULLSCREEN',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.5,
+                                            color: _isFullscreen
+                                                ? const Color(0xFF10B981)
+                                                : const Color(0xFFE2E8F0),
+                                          ),
                                         ),
-                                      ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -610,12 +636,10 @@ class _WireframeViewerState extends State<WireframeViewer>
                           ],
                         ),
                       ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+                    );
+                  },
+                ),
+              ),
 
           // ── HUD Telemetry Overlay ─────────────────────────────────────────
           Positioned(
@@ -634,14 +658,16 @@ class _WireframeViewerState extends State<WireframeViewer>
             bottom: 12,
             left: 12,
             right: 12,
-            child: Row(
-              children: [
-                _LegendItem(color: widget.wheelColor, label: 'Wheels'),
-                const SizedBox(width: 12),
-                _LegendItem(color: widget.bodyColor, label: 'Body'),
-                const SizedBox(width: 12),
-                _LegendItem(color: widget.wireColor, label: 'Chassis / Misc'),
-                const Spacer(),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _LegendItem(color: widget.wheelColor, label: 'Wheels'),
+                  const SizedBox(width: 8),
+                  _LegendItem(color: widget.bodyColor, label: 'Body'),
+                  const SizedBox(width: 8),
+                  _LegendItem(color: widget.wireColor, label: 'Chassis'),
+                  const SizedBox(width: 16),
                 // Toggle markers
                 IconButton(
                   iconSize: 18,
@@ -785,6 +811,7 @@ class _WireframeViewerState extends State<WireframeViewer>
               ],
             ),
           ),
+        ),
         ],
       ),
     );
@@ -797,15 +824,17 @@ class _VehicleStatusBadge extends StatelessWidget {
   const _VehicleStatusBadge({
     required this.fileName,
     required this.wheelCount,
+    this.compact = false,
   });
 
   final String fileName;
   final int wheelCount;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xC0111714),
         borderRadius: BorderRadius.circular(6),
@@ -820,8 +849,7 @@ class _VehicleStatusBadge extends StatelessWidget {
             color: Color(0xFF10B981),
           ),
           const SizedBox(width: 5),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 160),
+          Flexible(
             child: Tooltip(
               message: fileName,
               child: Text(
@@ -838,7 +866,7 @@ class _VehicleStatusBadge extends StatelessWidget {
           ),
           if (wheelCount > 0) ...[
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 6),
+              margin: const EdgeInsets.symmetric(horizontal: 5),
               width: 1,
               height: 10,
               color: const Color(0xFF223127),
@@ -852,9 +880,9 @@ class _VehicleStatusBadge extends StatelessWidget {
                   ? const Color(0xFF10B981)
                   : const Color(0xFF34D399),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 3),
             Text(
-              '$wheelCount/4 Rigged',
+              compact ? '$wheelCount/4' : '$wheelCount/4 Rigged',
               style: TextStyle(
                 fontSize: 9,
                 fontWeight: FontWeight.w700,
@@ -886,7 +914,7 @@ class _ViewerControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = active ? const Color(0xFF10B981) : const Color(0xFF8BA2B0);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
       decoration: BoxDecoration(
         color: const Color(0xC0111714),
         borderRadius: BorderRadius.circular(5),
@@ -896,15 +924,17 @@ class _ViewerControl extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 14, color: color),
-          const SizedBox(width: 5),
-          Text(
-            label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 9,
-              color: active ? const Color(0xFF34D399) : const Color(0xFFC9D1D9),
-              fontWeight: FontWeight.w700,
+          if (label.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Text(
+              label.toUpperCase(),
+              style: TextStyle(
+                fontSize: 9,
+                color: active ? const Color(0xFF34D399) : const Color(0xFFC9D1D9),
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
+          ],
           const SizedBox(width: 2),
           Icon(Icons.arrow_drop_down, size: 13, color: color),
         ],
