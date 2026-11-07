@@ -190,7 +190,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           warnings: const [],
         );
       }
-      _activeStep = 3; // Jump straight to physics tuning
+      _activeStep = 1;
     }
   }
 
@@ -235,14 +235,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
           // Map detected wheels
           _mapDetectedWheels(detection.wheels);
-
-          // Auto-advance to review step
-          _activeStep = 2;
+          _activeStep = 1;
         });
 
         _showMessage(
-          'Model normalized and auto-rigged: ${detection.wheels.length}/4 '
-          'wheels detected',
+          'Model loaded: ${picked.name}',
         );
       } else {
         _showMessage('Loaded ${picked.name} (procedural fallback)');
@@ -265,11 +262,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _selectedBodyNodeIndex = detection.body?.nodeIndex;
       _drive = detection.suggestedDrive;
       _mapDetectedWheels(detection.wheels);
-      _activeStep = 2;
+      _activeStep = 1;
     });
     _showMessage(
-      'Auto-rig complete: ${detection.wheels.length}/4 wheels detected. '
-      'Review assignments before export.',
+      'Model processed: ${detection.wheels.length}/4 wheels detected.',
     );
   }
 
@@ -434,7 +430,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   void _enterTestDrive() {
     setState(() {
       _isTestDriveMode = true;
-      _activeStep = 5;
     });
   }
 
@@ -442,9 +437,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() {
       _isTestDriveMode = false;
       _isDriveFullscreen = false;
-      if (_activeStep == 5) {
-        _activeStep = 3;
-      }
+      _activeStep = 1;
     });
   }
 
@@ -832,43 +825,11 @@ class _DesktopSidebar extends StatelessWidget {
           const SizedBox(height: 10),
           _SidebarStep(
             number: 1,
-            title: 'Upload & Scan',
-            subtitle: 'Auto-parse GLB/glTF',
-            active: activeStep == 1,
-            complete: activeStep > 1,
+            title: 'Upload',
+            subtitle: 'Import 3D model (.glb, .gltf)',
+            active: true,
+            complete: hasModel,
             onTap: () => onStepSelected(1),
-          ),
-          _SidebarStep(
-            number: 2,
-            title: 'Review Detections',
-            subtitle: 'Human-assist rigging',
-            active: activeStep == 2,
-            complete: activeStep > 2,
-            onTap: () => onStepSelected(2),
-          ),
-          _SidebarStep(
-            number: 3,
-            title: 'Tune physics',
-            subtitle: 'Mass & suspension',
-            active: activeStep == 3,
-            complete: activeStep > 3,
-            onTap: () => onStepSelected(3),
-          ),
-          _SidebarStep(
-            number: 4,
-            title: 'Export to Godot',
-            subtitle: 'Real wheel positions',
-            active: activeStep == 4 && !isTestDrive,
-            complete: false,
-            onTap: () => onStepSelected(4),
-          ),
-          _SidebarStep(
-            number: 5,
-            title: 'Test Drive',
-            subtitle: 'Godot 4 simulator',
-            active: isTestDrive || activeStep == 5,
-            complete: false,
-            onTap: () => onStepSelected(5),
           ),
           const Spacer(),
           Container(
@@ -1155,6 +1116,7 @@ class _StepStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (workflowSteps.length <= 1) return const SizedBox.shrink();
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -1283,16 +1245,6 @@ class _InspectorPanel extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         switch (activeStep) {
-          1 => _UploadScanInspector(
-            modelName: modelName,
-            parsedModel: parsedModel,
-            detection: detection,
-            preset: preset,
-            onPickModel: onPickModel,
-            onAutoRig: onAutoRig,
-            onPresetChanged: onPresetChanged,
-            onNextStep: () => onStepSelected(2),
-          ),
           2 => _ReviewRigInspector(
             parsedModel: parsedModel,
             detection: detection,
@@ -1331,35 +1283,39 @@ class _InspectorPanel extends StatelessWidget {
             canExport: canExport,
             blockReason: exportBlockReason,
           ),
-          _ => _TestDriveLauncherInspector(onLaunch: onTestDrive),
+          5 => _TestDriveLauncherInspector(onLaunch: onTestDrive),
+          _ => _UploadInspector(
+            modelName: modelName,
+            parsedModel: parsedModel,
+            preset: preset,
+            onPickModel: onPickModel,
+            onAutoRig: onAutoRig,
+            onPresetChanged: onPresetChanged,
+          ),
         },
       ],
     );
   }
 }
 
-// ── Step 1: Upload & Scan Inspector ─────────────────────────────────────────
+// ── Step 1: Upload Inspector ─────────────────────────────────────────────────
 
-class _UploadScanInspector extends StatelessWidget {
-  const _UploadScanInspector({
+class _UploadInspector extends StatelessWidget {
+  const _UploadInspector({
     required this.modelName,
     required this.parsedModel,
-    required this.detection,
     required this.preset,
     required this.onPickModel,
     required this.onAutoRig,
     required this.onPresetChanged,
-    required this.onNextStep,
   });
 
   final String modelName;
   final ParsedModel? parsedModel;
-  final DetectionResult? detection;
   final RigPreset preset;
   final VoidCallback onPickModel;
   final VoidCallback onAutoRig;
   final ValueChanged<RigPreset> onPresetChanged;
-  final VoidCallback onNextStep;
 
   @override
   Widget build(BuildContext context) {
@@ -1430,7 +1386,7 @@ class _UploadScanInspector extends StatelessWidget {
                         label: Text(
                           parsedModel != null
                               ? 'Choose another model'
-                              : 'Upload & Auto-Scan',
+                              : 'Upload 3D Model',
                         ),
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF10B981),
@@ -1459,81 +1415,6 @@ class _UploadScanInspector extends StatelessWidget {
             ],
           ),
         ),
-        if (detection != null) ...[
-          const SizedBox(height: 12),
-          _Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _PanelTitle(
-                  icon: Icons.radar_rounded,
-                  title: 'Scan Results',
-                  subtitle: 'Auto-detected vehicle topology',
-                ),
-                const SizedBox(height: 12),
-                _DetectionMetric(
-                  label: 'Wheels detected',
-                  value: '${detection!.wheels.length} / 4',
-                  isGood: detection!.wheels.length >= 4,
-                ),
-                const SizedBox(height: 6),
-                _DetectionMetric(
-                  label: 'Car Body',
-                  value: detection!.body?.nodeName ?? 'Manual Selection Needed',
-                  isGood: detection!.body != null,
-                ),
-                const SizedBox(height: 6),
-                _DetectionMetric(
-                  label: 'Suggested Drive',
-                  value: detection!.suggestedDrive,
-                  isGood: true,
-                ),
-                const SizedBox(height: 6),
-                _DetectionMetric(
-                  label: 'Suggested Preset',
-                  value: detection!.suggestedPreset,
-                  isGood: true,
-                ),
-                for (final warning in detection!.warnings) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(
-                        Icons.warning_amber_rounded,
-                        size: 14,
-                        color: Color(0xFFFBBF24),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          warning,
-                          style: const TextStyle(
-                            color: Color(0xFFFDE68A),
-                            fontSize: 10,
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: onNextStep,
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                    label: const Text('Review Detections (Human Assist)'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF2E7D32),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
         const SizedBox(height: 12),
         _Panel(
           child: Column(
@@ -2125,45 +2006,6 @@ class _ExportInspector extends StatelessWidget {
 
 // ── Helpers & Reusable Widgets ──────────────────────────────────────────────
 
-class _DetectionMetric extends StatelessWidget {
-  const _DetectionMetric({
-    required this.label,
-    required this.value,
-    required this.isGood,
-  });
-
-  final String label;
-  final String value;
-  final bool isGood;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          isGood ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-          size: 14,
-          color: isGood ? const Color(0xFF10B981) : const Color(0xFFFBBF24),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: const TextStyle(color: Color(0xFF8FA0AA), fontSize: 11),
-        ),
-        const Spacer(),
-        Text(
-          value,
-          style: TextStyle(
-            color: isGood ? const Color(0xFFE2E9EC) : const Color(0xFFFBBF24),
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _Panel extends StatelessWidget {
   const _Panel({required this.child});
   final Widget child;
@@ -2655,19 +2497,11 @@ class WorkflowStep {
 }
 
 const workflowSteps = [
-  WorkflowStep(number: 1, title: 'Upload & Scan', subtitle: 'Auto-detect GLB'),
   WorkflowStep(
-    number: 2,
-    title: 'Review Rig',
-    subtitle: 'Human-assist markers',
+    number: 1,
+    title: 'Upload',
+    subtitle: 'Import 3D model (.glb, .gltf)',
   ),
-  WorkflowStep(number: 3, title: 'Tune physics', subtitle: 'Mass & suspension'),
-  WorkflowStep(
-    number: 4,
-    title: 'Export to Godot',
-    subtitle: 'Scene + script + config',
-  ),
-  WorkflowStep(number: 5, title: 'Test Drive', subtitle: 'Godot 4 simulator'),
 ];
 
 const presets = [

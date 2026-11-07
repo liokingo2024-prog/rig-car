@@ -401,7 +401,7 @@ void main() {
       expect(find.text('BACK'), findsOneWidget);
     });
 
-    testWidgets('switches between workflow steps in workbench', (tester) async {
+    testWidgets('renders single-step Upload pipeline in workbench without extra steps or scan panel', (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -410,25 +410,20 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Tap Step 2: Review Detections
-      await tester.tap(find.text('Review Detections'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('Human-Assist Wheel Assignment'), findsOneWidget);
+      // Sidebar has single Upload step
+      expect(find.text('Upload'), findsWidgets);
+      expect(find.text('Import 3D model (.glb, .gltf)'), findsWidgets);
 
-      // Tap Step 3: Tune physics
-      await tester.tap(find.text('Tune physics'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('Vehicle Physics'), findsOneWidget);
-      expect(find.text('Mass'), findsOneWidget);
+      // Other pipeline steps and scan panel are removed
+      expect(find.text('Upload & Scan'), findsNothing);
+      expect(find.text('Review Detections'), findsNothing);
+      expect(find.text('Tune physics'), findsNothing);
+      expect(find.text('Export to Godot'), findsNothing);
+      expect(find.text('Scan Results'), findsNothing);
 
-      // Tap Step 4: Export to Godot
-      await tester.tap(find.text('Export to Godot'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('Godot 4 Rig Package'), findsOneWidget);
-      expect(find.text('rig_car.tscn'), findsOneWidget);
+      // Upload controls exist
+      expect(find.text('Upload 3D Model'), findsOneWidget);
+      expect(find.text('Geometry Preset'), findsOneWidget);
     });
   });
 
