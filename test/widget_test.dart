@@ -389,9 +389,16 @@ void main() {
       expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
       expect(find.text('Procedural 3D Rig'), findsOneWidget);
       expect(find.byTooltip('Auto-rig vehicle'), findsOneWidget);
-      expect(find.text('BACK'), findsOneWidget);
+      expect(find.text('ISO'), findsOneWidget);
       expect(find.byTooltip('Viewport lighting: Studio'), findsOneWidget);
       expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
+
+      // Open camera angle dropdown and switch to Rear view
+      await tester.tap(find.text('ISO'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rear View (+Z)').last);
+      await tester.pumpAndSettle();
+      expect(find.text('BACK'), findsOneWidget);
     });
 
     testWidgets('switches between workflow steps in workbench', (tester) async {
