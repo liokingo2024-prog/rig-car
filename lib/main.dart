@@ -210,20 +210,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         // arbitrary units.
         final parsed = GlbParser.parse(picked.name, picked.bytes);
         parsed.normalizeForRiggingInPlace();
-        final detection = AutoDetector.detect(parsed);
 
         setState(() {
           _parsedModel = parsed;
-          _detection = detection;
-          _selectedBodyNodeIndex = detection.body?.nodeIndex;
-          _drive = detection.suggestedDrive;
-
-          // Find preset matching suggestion
-          final matched = presets.firstWhere(
-            (p) => p.name == detection.suggestedPreset,
-            orElse: () => presets.first,
-          );
-          _preset = matched;
+          _detection = null;
+          _selectedBodyNodeIndex = null;
 
           // Estimate mass from volume
           final size = parsed.worldBBox.size;
@@ -232,9 +223,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
             30.0,
           );
           _mass = (vol * 140.0).clamp(600.0, 2800.0).roundToDouble();
-
-          // Map detected wheels
-          _mapDetectedWheels(detection.wheels);
           _activeStep = 1;
         });
 
@@ -1393,21 +1381,6 @@ class _UploadInspector extends StatelessWidget {
                           foregroundColor: const Color(0xFF041D14),
                         ),
                       ),
-                      if (parsedModel != null) ...[
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: onAutoRig,
-                          icon: const Icon(
-                            Icons.auto_awesome_rounded,
-                            size: 16,
-                          ),
-                          label: const Text('AUTO-RIG VEHICLE'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF34D399),
-                            side: const BorderSide(color: Color(0xFF10B981)),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),

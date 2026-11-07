@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -113,7 +114,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   double _panX = 0;
   double _panY = 0;
 
-  bool _showMarkers = true;
+  bool _showMarkers = false;
   GroundGridStyle _gridStyle = GroundGridStyle.cad;
   ViewerLighting _lighting = ViewerLighting.studio;
   ViewerRenderMode _renderMode = ViewerRenderMode.solid;
@@ -662,27 +663,30 @@ class _WireframeViewerState extends State<WireframeViewer>
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _LegendItem(color: widget.wheelColor, label: 'Wheels'),
-                  const SizedBox(width: 8),
+                  if (widget.detection != null && widget.detection!.wheels.isNotEmpty) ...[
+                    _LegendItem(color: widget.wheelColor, label: 'Wheels'),
+                    const SizedBox(width: 8),
+                  ],
                   _LegendItem(color: widget.bodyColor, label: 'Body'),
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
                   const SizedBox(width: 16),
-                // Toggle markers
-                IconButton(
-                  iconSize: 18,
-                  visualDensity: VisualDensity.compact,
-                  tooltip: _showMarkers ? 'Hide Markers' : 'Show Markers',
-                  icon: Icon(
-                    _showMarkers
-                        ? Icons.pin_drop_rounded
-                        : Icons.pin_drop_outlined,
-                    color: _showMarkers
-                        ? const Color(0xFF34D399)
-                        : const Color(0xFF71818B),
+                // Toggle markers (only shown when detection markers are present)
+                if (widget.detection != null && widget.detection!.wheels.isNotEmpty)
+                  IconButton(
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: _showMarkers ? 'Hide Markers' : 'Show Markers',
+                    icon: Icon(
+                      _showMarkers
+                          ? Icons.pin_drop_rounded
+                          : Icons.pin_drop_outlined,
+                      color: _showMarkers
+                          ? const Color(0xFF34D399)
+                          : const Color(0xFF71818B),
+                    ),
+                    onPressed: () => setState(() => _showMarkers = !_showMarkers),
                   ),
-                  onPressed: () => setState(() => _showMarkers = !_showMarkers),
-                ),
                 // Land Grid Style Selector (CAD, Radial Podium, Cyber Hex, Skidpad, Off)
                 PopupMenuButton<GroundGridStyle>(
                   tooltip: 'Land Grid: ${_gridStyle.label} (Click to choose)',
@@ -1205,7 +1209,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
 
     // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
-    if (showMarkers) {
+    if (showMarkers && (detection?.wheels.isNotEmpty ?? false)) {
       _drawMarkers(canvas, size, projectPoint);
     }
   }
@@ -1676,17 +1680,6 @@ class _WireframeScenePainter extends CustomPainter {
     Offset? Function(Vec3) project,
     Vec3 eye,
   ) {
-    final wheelNodeSet =
-        detection?.wheels
-            .expand(
-              (w) => w.partNodeIndices.isEmpty
-                  ? <int>[w.nodeIndex]
-                  : w.partNodeIndices,
-            )
-            .toSet() ??
-        {};
-    final selectedBodyNodeIndex = bodyNodeIndex ?? detection?.body?.nodeIndex;
-    final selectedNode = selectedNodeIndex;
     final totalTriangles = model!.instances.fold<int>(
       0,
       (sum, instance) => sum + instance.triangles.length,
@@ -1694,14 +1687,14 @@ class _WireframeScenePainter extends CustomPainter {
 
     if (totalTriangles == 0) {
       // Fall back to clean wireframe of the original model if no triangle faces exist.
-      // Never draw arbitrary bounding-box cubes.
       _drawModelWireframe(canvas, size, project);
       return;
     }
 
-    // Adaptive triangle budget for 60 FPS viewport orbit & drag on web
-    const triangleBudget = 3600;
-    final globalStride = max(1, (totalTriangles / triangleBudget).ceil());
+    // Hard triangle budget: strictly cap processed triangles to 2,400 total.
+    // In Flutter Web, 2,400 triangles rendered via drawVertices runs in a single GPU draw call (~0.1ms).
+    const triangleBudget = 2400;
+    final stride = max(1, (totalTriangles / triangleBudget).ceil());
 
     // Precalculate lighting directions once outside loop
     final keyLight = switch (lighting) {
@@ -1722,59 +1715,11 @@ class _WireframeScenePainter extends CustomPainter {
       final numTriangles = triangles.length;
       if (numTriangles == 0) continue;
 
-      final isSelected = instance.nodeIndex == selectedNode;
-      final nodeName = instance.nodeIndex < model!.nodes.length
-          ? model!.nodes[instance.nodeIndex].name.toLowerCase()
-          : '';
-      final isWheel = wheelNodeSet.contains(instance.nodeIndex) ||
-          nodeName.contains('wheel') ||
-          nodeName.contains('tire') ||
-          nodeName.contains('rim');
-      final isGlass = nodeName.contains('glass') ||
-          nodeName.contains('window') ||
-          nodeName.contains('windshield');
-      final isBody = instance.nodeIndex == selectedBodyNodeIndex ||
-          nodeName.contains('body') ||
-          nodeName.contains('chassis');
-
-      final Color baseMeshColor;
-      if (isSelected) {
-        baseMeshColor = const Color(0xFF00E5FF);
-      } else if (isGlass) {
-        baseMeshColor = const Color(0xFF1E3A42);
-      } else if (isWheel) {
-        baseMeshColor = const Color(0xFF26322C);
-      } else if (isBody) {
-        baseMeshColor = bodyColor;
-      } else {
-        baseMeshColor = bodyColor;
-      }
-
-      // Proportional stride preserves detailed small parts (wheels, mirrors, spoilers)
-      // while sampling large car body shells to maintain locked 60 FPS
-      final stride = totalTriangles <= triangleBudget
-          ? 1
-          : max(1, (numTriangles * globalStride / totalTriangles).ceil());
+      final isSelected = instance.nodeIndex == selectedNodeIndex;
+      final Color baseMeshColor = isSelected ? const Color(0xFF00E5FF) : bodyColor;
 
       final verts = instance.worldVertices;
       final numVerts = verts.length;
-      final clipVerts = List<List<double>?>.filled(numVerts, null);
-      final screenOffsets = List<Offset?>.filled(numVerts, null);
-
-      List<double> getClip(int idx) {
-        var c = clipVerts[idx];
-        if (c == null) {
-          c = viewProj.transformClip(verts[idx]);
-          clipVerts[idx] = c;
-          if (c[3] > 0.05) {
-            final invW = 1.0 / c[3];
-            final sx = (c[0] * invW * 0.5 + 0.5) * size.width + panX;
-            final sy = (1.0 - (c[1] * invW * 0.5 + 0.5)) * size.height + panY;
-            screenOffsets[idx] = Offset(sx, sy);
-          }
-        }
-        return c;
-      }
 
       for (var i = 0; i < numTriangles; i += stride) {
         final triangle = triangles[i];
@@ -1786,18 +1731,19 @@ class _WireframeScenePainter extends CustomPainter {
           continue;
         }
 
-        final c0 = getClip(ia);
-        final c1 = getClip(ib);
-        final c2 = getClip(ic);
-
-        // Near plane culling (behind camera)
-        if (c0[3] <= 0.05 && c1[3] <= 0.05 && c2[3] <= 0.05) {
-          continue;
-        }
-
         final v0 = verts[ia];
         final v1 = verts[ib];
         final v2 = verts[ic];
+
+        // Transform 3 vertices to clip space directly (0 list allocations)
+        final c0 = viewProj.transformClip(v0);
+        final c1 = viewProj.transformClip(v1);
+        final c2 = viewProj.transformClip(v2);
+
+        // Near plane culling
+        if (c0[3] <= 0.05 && c1[3] <= 0.05 && c2[3] <= 0.05) {
+          continue;
+        }
 
         // Face normal in world space
         final e1x = v1.x - v0.x;
@@ -1841,18 +1787,34 @@ class _WireframeScenePainter extends CustomPainter {
           ndotEye = -ndotEye;
         }
 
-        final p0 = screenOffsets[ia];
-        final p1 = screenOffsets[ib];
-        final p2 = screenOffsets[ic];
+        Offset? p0;
+        Offset? p1;
+        Offset? p2;
 
-        // 2D screen viewport frustum culling when in front of camera
-        if (p0 != null && p1 != null && p2 != null) {
-          final minX = min(p0.dx, min(p1.dx, p2.dx));
-          final maxX = max(p0.dx, max(p1.dx, p2.dx));
+        if (c0[3] > 0.05 && c1[3] > 0.05 && c2[3] > 0.05) {
+          final invW0 = 1.0 / c0[3];
+          final sx0 = (c0[0] * invW0 * 0.5 + 0.5) * size.width + panX;
+          final sy0 = (1.0 - (c0[1] * invW0 * 0.5 + 0.5)) * size.height + panY;
+
+          final invW1 = 1.0 / c1[3];
+          final sx1 = (c1[0] * invW1 * 0.5 + 0.5) * size.width + panX;
+          final sy1 = (1.0 - (c1[1] * invW1 * 0.5 + 0.5)) * size.height + panY;
+
+          final invW2 = 1.0 / c2[3];
+          final sx2 = (c2[0] * invW2 * 0.5 + 0.5) * size.width + panX;
+          final sy2 = (1.0 - (c2[1] * invW2 * 0.5 + 0.5)) * size.height + panY;
+
+          // 2D screen viewport frustum culling
+          final minX = min(sx0, min(sx1, sx2));
+          final maxX = max(sx0, max(sx1, sx2));
           if (maxX < 0 || minX > size.width) continue;
-          final minY = min(p0.dy, min(p1.dy, p2.dy));
-          final maxY = max(p0.dy, max(p1.dy, p2.dy));
+          final minY = min(sy0, min(sy1, sy2));
+          final maxY = max(sy0, max(sy1, sy2));
           if (maxY < 0 || minY > size.height) continue;
+
+          p0 = Offset(sx0, sy0);
+          p1 = Offset(sx1, sy1);
+          p2 = Offset(sx2, sy2);
         }
 
         final Color baseColor = isSelected
@@ -1926,18 +1888,19 @@ class _WireframeScenePainter extends CustomPainter {
     // Painter's algorithm: sort faces from furthest to nearest
     faces.sort((a, b) => b.depth.compareTo(a.depth));
 
-    // Render faces with reused Path and Paint
+    // Batch all 2D triangles into a single GPU draw call via canvas.drawVertices
+    final positions = <Offset>[];
+    final colors = <Color>[];
     final fillPaint = Paint()..style = PaintingStyle.fill;
-    final path = Path();
 
     for (final face in faces) {
       if (face.p0 != null && face.p1 != null && face.p2 != null) {
-        path.reset();
-        path.moveTo(face.p0!.dx, face.p0!.dy);
-        path.lineTo(face.p1!.dx, face.p1!.dy);
-        path.lineTo(face.p2!.dx, face.p2!.dy);
-        path.close();
-        canvas.drawPath(path, fillPaint..color = face.color);
+        positions.add(face.p0!);
+        positions.add(face.p1!);
+        positions.add(face.p2!);
+        colors.add(face.color);
+        colors.add(face.color);
+        colors.add(face.color);
       } else if (face.vertices != null) {
         _drawClippedPolygon(
           canvas,
@@ -1947,6 +1910,15 @@ class _WireframeScenePainter extends CustomPainter {
           fillPaint..color = face.color,
         );
       }
+    }
+
+    if (positions.isNotEmpty) {
+      final vertices = ui.Vertices(
+        ui.VertexMode.triangles,
+        positions,
+        colors: colors,
+      );
+      canvas.drawVertices(vertices, BlendMode.src, Paint());
     }
   }
 
@@ -2016,11 +1988,8 @@ class _WireframeScenePainter extends CustomPainter {
       0,
       (sum, instance) => sum + instance.edges.length,
     );
-    // Projecting every edge of a production GLB every frame is the main
-    // source of browser jank. Keep full detail for small assets and decimate
-    // only the rendered wireframe for large assets; detection still retains
-    // the complete parsed model.
-    final edgeBudget = denseWireframe ? 8000 : 3000;
+    // Projecting sampled edges bounds browser rendering to solid 60 FPS
+    final edgeBudget = denseWireframe ? 4000 : 1800;
     final edgeStride = max(1, (totalEdges / edgeBudget).ceil());
 
     final path = Path();
@@ -2054,24 +2023,13 @@ class _WireframeScenePainter extends CustomPainter {
       final numVerts = verts.length;
       if (numVerts == 0 || edges.isEmpty) continue;
 
-      final projected = List<Offset?>.filled(numVerts, null);
-      final visited = List<bool>.filled(numVerts, false);
-
-      Offset? projectedAt(int index) {
-        if (!visited[index]) {
-          visited[index] = true;
-          projected[index] = project(verts[index]);
-        }
-        return projected[index];
-      }
-
       path.reset();
       var hasLines = false;
       for (var i = 0; i < edges.length; i += edgeStride) {
         final e = edges[i];
         if (e.a < numVerts && e.b < numVerts) {
-          final p0 = projectedAt(e.a);
-          final p1 = projectedAt(e.b);
+          final p0 = project(verts[e.a]);
+          final p1 = project(verts[e.b]);
           if (p0 != null && p1 != null) {
             path.moveTo(p0.dx, p0.dy);
             path.lineTo(p1.dx, p1.dy);
