@@ -10,6 +10,7 @@ class SketchfabViewport extends StatelessWidget {
     required this.gridStyle,
     required this.autoTurntable,
     required this.cameraPreset,
+    this.resetEpoch = 0,
     this.detectedWheels = const [],
     this.fallbackWidget,
   });
@@ -20,6 +21,7 @@ class SketchfabViewport extends StatelessWidget {
   final String gridStyle;
   final bool autoTurntable;
   final String cameraPreset;
+  final int resetEpoch;
   final List<dynamic> detectedWheels;
   final Widget? fallbackWidget;
 

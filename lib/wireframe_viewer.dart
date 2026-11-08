@@ -119,6 +119,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   Vec3 _target = Vec3.zero;
   double _panX = 0;
   double _panY = 0;
+  int _cameraResetEpoch = 0;
 
   bool _showMarkers = false;
   GroundGridStyle _gridStyle = GroundGridStyle.cad;
@@ -158,6 +159,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   }
 
   void _resetCameraToModel() {
+    _cameraResetEpoch++;
     final model = widget.model;
     if (model != null && model.instances.isNotEmpty) {
       _target = model.worldBBox.center;
@@ -238,6 +240,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                     gridStyle: _gridStyle.name,
                     autoTurntable: _autoTurntable,
                     cameraPreset: _preset.name,
+                    resetEpoch: _cameraResetEpoch,
                     fallbackWidget: RepaintBoundary(
                       child: CustomPaint(
                         painter: _WireframeScenePainter(

@@ -22,6 +22,40 @@
   let modelRadius = 4.0;
   let currentRenderMode = 'solid'; // 'solid' | 'wireframe' | 'hybrid'
   let currentLighting = 'studio'; // 'studio' | 'daylight' | 'night' | 'flat'
+  let pendingModelBuffer = null;
+
+  function ensureArrayBuffer(input) {
+    if (!input) return null;
+    if (input instanceof ArrayBuffer) {
+      return input;
+    }
+    // Dart ByteBuffer wrapper (e.g. { o: ArrayBuffer } in dart2js)
+    if (input.o && input.o instanceof ArrayBuffer) {
+      return input.o;
+    }
+    if (input._buffer && input._buffer instanceof ArrayBuffer) {
+      return input._buffer;
+    }
+    if (input._parent && input._parent.buffer && input._parent.buffer instanceof ArrayBuffer) {
+      return input._parent.buffer;
+    }
+    // Uint8Array or other TypedArray / ArrayBufferView
+    if (ArrayBuffer.isView(input) || (input.buffer && input.buffer instanceof ArrayBuffer)) {
+      const buf = input.buffer;
+      const offset = typeof input.byteOffset === 'number' ? input.byteOffset : 0;
+      const length = typeof input.byteLength === 'number' ? input.byteLength : buf.byteLength;
+      if (offset === 0 && length === buf.byteLength) {
+        return buf;
+      }
+      return buf.slice(offset, offset + length);
+    }
+    // Generic iterable / array of bytes
+    if (Array.isArray(input) || (typeof input.length === 'number' && typeof input[0] === 'number')) {
+      const u8 = new Uint8Array(input);
+      return u8.buffer;
+    }
+    return input;
+  }
 
   function init(container) {
     if (isInitialized && containerEl === container) return;
@@ -35,7 +69,7 @@
     scene.background = new THREE.Color(0x090D0B);
 
     // 2. Camera
-    camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 1000);
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 2000);
     camera.position.set(4.5, 2.2, 5.0);
 
     // 3. Renderer
@@ -59,37 +93,47 @@
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
     renderer.domElement.style.display = 'block';
+    renderer.domElement.style.touchAction = 'none';
+    renderer.domElement.style.userSelect = 'none';
+    renderer.domElement.style.cursor = 'grab';
 
     // 4. OrbitControls
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = true;
-    controls.maxPolarAngle = Math.PI * 0.92;
-    controls.minDistance = 0.4;
-    controls.maxDistance = 100.0;
+    controls.maxPolarAngle = Math.PI * 0.95;
+    controls.minDistance = 0.2;
+    controls.maxDistance = 500.0;
     controls.target.set(0, 0.6, 0);
 
+    controls.domElement.addEventListener('pointerdown', () => {
+      renderer.domElement.style.cursor = 'grabbing';
+    });
+    controls.domElement.addEventListener('pointerup', () => {
+      renderer.domElement.style.cursor = 'grab';
+    });
+
     // 5. Lighting Rig (Sketchfab Studio 3-Point PBR Lighting)
-    hemiLight = new THREE.HemisphereLight(0xffffff, 0x18241d, 0.85);
+    hemiLight = new THREE.HemisphereLight(0xffffff, 0x18241d, 1.0);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
 
-    dirLightKey = new THREE.DirectionalLight(0xffffff, 1.4);
+    dirLightKey = new THREE.DirectionalLight(0xffffff, 1.6);
     dirLightKey.position.set(6, 9, 6);
     dirLightKey.castShadow = true;
     dirLightKey.shadow.mapSize.width = 2048;
     dirLightKey.shadow.mapSize.height = 2048;
     dirLightKey.shadow.camera.near = 0.5;
-    dirLightKey.shadow.camera.far = 40;
-    dirLightKey.shadow.camera.left = -6;
-    dirLightKey.shadow.camera.right = 6;
-    dirLightKey.shadow.camera.top = 6;
-    dirLightKey.shadow.camera.bottom = -6;
+    dirLightKey.shadow.camera.far = 60;
+    dirLightKey.shadow.camera.left = -8;
+    dirLightKey.shadow.camera.right = 8;
+    dirLightKey.shadow.camera.top = 8;
+    dirLightKey.shadow.camera.bottom = -8;
     dirLightKey.shadow.bias = -0.0002;
     scene.add(dirLightKey);
 
-    dirLightFill = new THREE.DirectionalLight(0xaad8e6, 0.65);
+    dirLightFill = new THREE.DirectionalLight(0xaad8e6, 0.7);
     dirLightFill.position.set(-6, 4, -4);
     scene.add(dirLightFill);
 
@@ -113,6 +157,13 @@
     // 9. Animation Loop
     isInitialized = true;
     animate();
+
+    // 10. Load any pending buffer
+    if (pendingModelBuffer) {
+      const p = pendingModelBuffer;
+      pendingModelBuffer = null;
+      loadGlbFromArrayBuffer(p.buffer, p.callback);
+    }
   }
 
   function createGround(sc) {
@@ -121,7 +172,7 @@
 
     // Dark CAD Ground Grid
     groundGrid = new THREE.GridHelper(30, 60, 0x10b981, 0x1b2820);
-    groundGrid.position.y = -0.001;
+    groundGrid.position.y = 0.0005;
     sc.add(groundGrid);
 
     // Soft Radial Contact Shadow Plane
@@ -130,8 +181,8 @@
     shadowCanvas.height = 256;
     const ctx = shadowCanvas.getContext('2d');
     const grad = ctx.createRadialGradient(128, 128, 20, 128, 128, 120);
-    grad.addColorStop(0, 'rgba(0, 0, 0, 0.7)');
-    grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.3)');
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.75)');
+    grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.35)');
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 256, 256);
@@ -146,7 +197,7 @@
     });
     groundShadow = new THREE.Mesh(shadowGeo, shadowMat);
     groundShadow.rotation.x = -Math.PI / 2;
-    groundShadow.position.y = 0.001;
+    groundShadow.position.y = 0.0001;
     sc.add(groundShadow);
   }
 
@@ -168,8 +219,20 @@
     }
   }
 
-  function loadGlbFromArrayBuffer(arrayBuffer, callback) {
-    if (!scene) return;
+  function loadGlbFromArrayBuffer(rawBuffer, callback) {
+    if (!scene) {
+      pendingModelBuffer = { buffer: rawBuffer, callback: callback };
+      return;
+    }
+
+    const arrayBuffer = ensureArrayBuffer(rawBuffer);
+    if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
+      console.error('SketchfabViewer: Invalid buffer passed to loadGlbFromArrayBuffer', rawBuffer);
+      if (callback) callback({ success: false, error: 'Invalid buffer' });
+      return;
+    }
+
+    console.log('SketchfabViewer: Parsing GLB model, byteLength =', arrayBuffer.byteLength);
     const loader = new THREE.GLTFLoader();
 
     loader.parse(
@@ -186,16 +249,28 @@
         const model = gltf.scene || gltf.scenes[0];
         currentModel = model;
 
+        let meshCount = 0;
+        let triCount = 0;
+
         // Process materials and textures
         model.traverse(function(child) {
           if (child.isMesh) {
+            meshCount++;
+            if (child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
+              const pos = child.geometry.attributes.position;
+              if (child.geometry.index) {
+                triCount += Math.floor(child.geometry.index.count / 3);
+              } else {
+                triCount += Math.floor(pos.count / 3);
+              }
+            }
+
             child.castShadow = true;
             child.receiveShadow = true;
 
             if (child.material) {
               const mats = Array.isArray(child.material) ? child.material : [child.material];
               mats.forEach(mat => {
-                originalMaterials.set(mat.uuid, mat.clone());
                 // Enable anisotropic filtering on all textures
                 const textures = [
                   mat.map, mat.normalMap, mat.roughnessMap,
@@ -213,7 +288,7 @@
                 const isGlass = name.includes('glass') || name.includes('windshield') ||
                                 name.includes('window') || name.includes('wnd') ||
                                 name.includes('visor');
-                if (isGlass || mat.transparent || mat.opacity < 1.0) {
+                if (isGlass || (mat.transparent && mat.opacity < 0.98)) {
                   mat.transparent = true;
                   mat.depthWrite = true;
                   mat.side = THREE.DoubleSide;
@@ -222,29 +297,44 @@
                   // Double-sided for thin aero panels (spoilers, wings, diffusers)
                   mat.side = THREE.DoubleSide;
                 }
+
+                originalMaterials.set(mat.uuid, mat.clone());
               });
             }
           }
         });
 
         // Compute BBox and center
+        model.updateMatrixWorld(true);
         const box = new THREE.Box3().setFromObject(model);
         modelBBox = box;
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
 
+        const maxDim = Math.max(size.x, Math.max(size.y, size.z));
+        // Normalize unit scale if author exported in millimeters (>20) or decimeters
+        if (maxDim > 20.0 || (maxDim < 0.2 && maxDim > 0)) {
+          const s = 4.2 / maxDim;
+          model.scale.set(s, s, s);
+          model.updateMatrixWorld(true);
+          box.setFromObject(model);
+          box.getSize(size);
+          box.getCenter(center);
+        }
+
         // Center on floor (y=0)
         model.position.x = -center.x;
         model.position.y = -box.min.y;
         model.position.z = -center.z;
+        model.updateMatrixWorld(true);
 
-        modelRadius = Math.max(size.x, Math.max(size.y, size.z)) * 0.5;
+        modelRadius = Math.max(Math.max(size.x, Math.max(size.y, size.z)) * 0.5, 0.5);
         modelCenter = new THREE.Vector3(0, size.y * 0.5, 0);
 
         // Adjust shadow plane to vehicle size
         if (groundShadow) {
-          groundShadow.scale.set(size.x * 0.35, size.z * 0.35, 1);
-          groundShadow.position.set(0, 0.001, 0);
+          groundShadow.scale.set(Math.max(size.x * 0.7, 4), Math.max(size.z * 0.7, 4), 1);
+          groundShadow.position.set(0, 0.0005, 0);
         }
 
         scene.add(model);
@@ -255,10 +345,11 @@
         // Apply current render mode
         applyRenderMode(currentRenderMode);
 
+        console.log('SketchfabViewer: GLB successfully loaded! Meshes:', meshCount, 'Triangles:', triCount);
         if (callback) callback({ success: true, size: size, center: center });
       },
       function(error) {
-        console.error('Error parsing GLB in WebGL viewer:', error);
+        console.error('SketchfabViewer: Error parsing GLB in WebGL viewer:', error);
         if (callback) callback({ success: false, error: error });
       }
     );
@@ -266,23 +357,23 @@
 
   function resetCamera() {
     if (!camera || !controls) return;
-    const dist = modelRadius * 2.8;
-    camera.position.set(dist * 0.8, dist * 0.45, dist * 0.85);
+    const dist = Math.max(modelRadius * 2.6, 2.5);
+    camera.position.set(dist * 0.85, dist * 0.45, dist * 0.85);
     controls.target.copy(modelCenter || new THREE.Vector3(0, 0.7, 0));
     camera.near = Math.max(0.01, dist * 0.01);
-    camera.far = Math.max(100, dist * 20);
+    camera.far = Math.max(500, dist * 50);
     camera.updateProjectionMatrix();
     controls.update();
   }
 
   function setCameraPreset(preset) {
     if (!camera || !controls) return;
-    const dist = modelRadius * 2.8;
+    const dist = Math.max(modelRadius * 2.6, 2.5);
     const cy = modelCenter ? modelCenter.y : 0.7;
 
     switch (preset.toLowerCase()) {
       case 'iso':
-        camera.position.set(dist * 0.8, dist * 0.45, dist * 0.85);
+        camera.position.set(dist * 0.85, dist * 0.45, dist * 0.85);
         break;
       case 'front':
         camera.position.set(0, cy, -dist);
@@ -399,10 +490,10 @@
         scene.background.set(0x090D0B);
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x18241d);
-        hemiLight.intensity = 0.85;
+        hemiLight.intensity = 1.0;
         dirLightKey.color.set(0xffffff);
-        dirLightKey.intensity = 1.4;
-        dirLightFill.intensity = 0.65;
+        dirLightKey.intensity = 1.6;
+        dirLightFill.intensity = 0.7;
         dirLightRim.intensity = 0.9;
         renderer.toneMappingExposure = 1.05;
         break;

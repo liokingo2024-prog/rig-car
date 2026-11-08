@@ -16,6 +16,7 @@ class SketchfabViewport extends StatefulWidget {
     required this.gridStyle,
     required this.autoTurntable,
     required this.cameraPreset,
+    this.resetEpoch = 0,
     this.detectedWheels = const [],
     this.fallbackWidget,
   });
@@ -26,6 +27,7 @@ class SketchfabViewport extends StatefulWidget {
   final String gridStyle;
   final bool autoTurntable;
   final String cameraPreset;
+  final int resetEpoch;
   final List<dynamic> detectedWheels;
   final Widget? fallbackWidget;
 
@@ -63,7 +65,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   }
 
   void _initViewer() {
-    if (_container == null) return;
+    if (_container == null || !mounted) return;
     try {
       final viewer = js.context['SketchfabViewer'];
       if (viewer != null) {
@@ -72,9 +74,13 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
           _loadModel(widget.bytes!);
         }
         _syncControls();
+      } else {
+        Future.delayed(const Duration(milliseconds: 50), () {
+          if (mounted) _initViewer();
+        });
       }
     } catch (e) {
-      // Graceful fallback to canvas if WebGL initialization encounters issues
+      debugPrint('SketchfabViewport init error: $e');
     }
   }
 
@@ -84,9 +90,19 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
     try {
       final viewer = js.context['SketchfabViewer'];
       if (viewer != null) {
-        viewer.callMethod('loadGlbFromArrayBuffer', [bytes.buffer]);
+        // Pass Uint8List directly to JS
+        viewer.callMethod('loadGlbFromArrayBuffer', [bytes]);
+      } else {
+        Future.delayed(const Duration(milliseconds: 60), () {
+          if (mounted && _loadedBytes == bytes) {
+            _loadedBytes = null;
+            _loadModel(bytes);
+          }
+        });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('SketchfabViewport loadModel error: $e');
+    }
   }
 
   void _syncControls() {
@@ -123,6 +139,9 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
         }
         if (widget.cameraPreset != oldWidget.cameraPreset) {
           viewer.callMethod('setCameraPreset', [widget.cameraPreset]);
+        }
+        if (widget.resetEpoch != oldWidget.resetEpoch) {
+          viewer.callMethod('resetCamera');
         }
       }
     } catch (_) {}
