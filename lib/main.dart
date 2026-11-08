@@ -103,6 +103,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
   bool _isTestDriveMode = false;
   bool _isDriveFullscreen = false;
+  bool _showLeftPanel = true;
   bool _showRightPanel = true;
   RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
@@ -539,11 +540,31 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (desktop)
-                      _DesktopSidebar(
-                        activeStep: _activeStep,
-                        onStepSelected: _selectStep,
-                        hasModel: _parsedModel != null,
-                        isTestDrive: _isTestDriveMode,
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        width: _showLeftPanel ? 232 : 0,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF111714),
+                          border: Border(
+                            right: BorderSide(color: Color(0xFF223127)),
+                          ),
+                        ),
+                        child: OverflowBox(
+                          minWidth: 232,
+                          maxWidth: 232,
+                          alignment: Alignment.topLeft,
+                          child: _DesktopSidebar(
+                            activeStep: _activeStep,
+                            onStepSelected: _selectStep,
+                            hasModel: _parsedModel != null,
+                            isTestDrive: _isTestDriveMode,
+                            onToggleCollapse: () {
+                              setState(() => _showLeftPanel = !_showLeftPanel);
+                            },
+                          ),
+                        ),
                       ),
                     Expanded(
                       child: Column(
@@ -561,6 +582,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                 } else {
                                   _enterTestDrive();
                                 }
+                              },
+                              isLeftPanelOpen: _showLeftPanel,
+                              onToggleLeftPanel: () {
+                                setState(() => _showLeftPanel = !_showLeftPanel);
                               },
                               isRightPanelOpen: _showRightPanel,
                               onToggleRightPanel: () {
@@ -753,12 +778,14 @@ class _DesktopSidebar extends StatelessWidget {
     required this.onStepSelected,
     required this.hasModel,
     required this.isTestDrive,
+    required this.onToggleCollapse,
   });
 
   final int activeStep;
   final ValueChanged<int> onStepSelected;
   final bool hasModel;
   final bool isTestDrive;
+  final VoidCallback onToggleCollapse;
 
   @override
   Widget build(BuildContext context) {
@@ -772,7 +799,24 @@ class _DesktopSidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _Brand(),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const _Brand(),
+              IconButton(
+                tooltip: 'Collapse sidebar',
+                icon: const Icon(
+                  Icons.keyboard_double_arrow_left_rounded,
+                  size: 18,
+                  color: Color(0xFF86978C),
+                ),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: onToggleCollapse,
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
           InkWell(
             onTap: () {
@@ -881,6 +925,8 @@ class _DesktopTopbar extends StatelessWidget {
     required this.wheelsCount,
     required this.isTestDrive,
     required this.onToggleTestDrive,
+    required this.isLeftPanelOpen,
+    required this.onToggleLeftPanel,
     required this.isRightPanelOpen,
     required this.onToggleRightPanel,
   });
@@ -891,6 +937,8 @@ class _DesktopTopbar extends StatelessWidget {
   final int wheelsCount;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
+  final bool isLeftPanelOpen;
+  final VoidCallback onToggleLeftPanel;
   final bool isRightPanelOpen;
   final VoidCallback onToggleRightPanel;
 
@@ -898,13 +946,27 @@ class _DesktopTopbar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: const BoxDecoration(
         color: Color(0xFF111714),
         border: Border(bottom: BorderSide(color: Color(0xFF223127))),
       ),
       child: Row(
         children: [
+          IconButton(
+            tooltip: isLeftPanelOpen ? 'Collapse left sidebar' : 'Expand left sidebar',
+            icon: Icon(
+              isLeftPanelOpen
+                  ? Icons.menu_open_rounded
+                  : Icons.menu_rounded,
+              size: 20,
+              color: isLeftPanelOpen
+                  ? const Color(0xFF10B981)
+                  : const Color(0xFF86978C),
+            ),
+            onPressed: onToggleLeftPanel,
+          ),
+          const SizedBox(width: 2),
           IconButton(
             tooltip: 'Back to Fleet Library',
             icon: const Icon(
@@ -922,7 +984,7 @@ class _DesktopTopbar extends StatelessWidget {
               }
             },
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           const Text(
             'CAR RIGGER',
             style: TextStyle(
@@ -932,9 +994,9 @@ class _DesktopTopbar extends StatelessWidget {
               letterSpacing: 1.1,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
               color: const Color(0xFF1A231E),
               borderRadius: BorderRadius.circular(5),
@@ -970,31 +1032,32 @@ class _DesktopTopbar extends StatelessWidget {
             child: Text(
               modelName,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFF86978C), fontSize: 12),
+              style: const TextStyle(color: Color(0xFF86978C), fontSize: 11),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 8),
           IconButton.filledTonal(
             onPressed: onAutoRig,
             tooltip: 'Auto-rig vehicle',
-            icon: const Icon(Icons.auto_awesome_rounded, size: 17),
+            icon: const Icon(Icons.auto_awesome_rounded, size: 16),
             color: const Color(0xFF10B981),
             visualDensity: VisualDensity.compact,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           FilledButton.icon(
             onPressed: onToggleTestDrive,
             icon: Icon(
               isTestDrive
                   ? Icons.tune_rounded
                   : Icons.sports_motorsports_rounded,
-              size: 16,
+              size: 15,
             ),
             label: Text(
               isTestDrive ? 'WORKBENCH' : 'TEST DRIVE',
               style: const TextStyle(
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
-                letterSpacing: 0.6,
+                letterSpacing: 0.5,
               ),
             ),
             style: FilledButton.styleFrom(
@@ -1007,24 +1070,24 @@ class _DesktopTopbar extends StatelessWidget {
               side: isTestDrive
                   ? const BorderSide(color: Color(0xFF223127))
                   : null,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(6),
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 6),
           OutlinedButton.icon(
             onPressed: onExport,
-            icon: const Icon(Icons.file_download_outlined, size: 17),
-            label: const Text('Export Godot rig'),
+            icon: const Icon(Icons.file_download_outlined, size: 15),
+            label: const Text('Export rig', style: TextStyle(fontSize: 11)),
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFC9D1D9),
               side: const BorderSide(color: Color(0xFF223127)),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: isRightPanelOpen ? 'Hide right sidepanel' : 'Show right sidepanel',
             icon: Icon(

@@ -431,6 +431,35 @@ void main() {
       expect(find.text('Geometry Preset'), findsNothing);
       expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
     });
+
+    testWidgets('collapses and expands left sidepanel with toggle button', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Sidebar is initially expanded with collapse button
+      expect(find.byTooltip('Collapse left sidebar'), findsOneWidget);
+      expect(find.byTooltip('Collapse sidebar'), findsOneWidget);
+      expect(find.text('RIGGING PIPELINE'), findsOneWidget);
+
+      // Tap collapse button in topbar
+      await tester.tap(find.byTooltip('Collapse left sidebar'));
+      await tester.pumpAndSettle();
+
+      // Now topbar shows Expand left sidebar button
+      expect(find.byTooltip('Expand left sidebar'), findsOneWidget);
+
+      // Tap expand button to restore sidebar
+      await tester.tap(find.byTooltip('Expand left sidebar'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Collapse left sidebar'), findsOneWidget);
+      expect(find.text('RIGGING PIPELINE'), findsOneWidget);
+    });
   });
 
   group('VehiclePhysicsSimulation Godot 4 Physics', () {
