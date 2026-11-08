@@ -108,6 +108,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   DetectionResult? _detection;
   int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
+  Color? _vehiclePaintColor;
 
   // Drivetrain & physics
   String _drive = 'AWD';
@@ -136,6 +137,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     if (_isTestDriveMode) _activeStep = 5;
     final car = widget.initialCar;
     if (car != null) {
+      _vehiclePaintColor = car.accentColor;
       _modelName = '${car.name} (Pre-rigged)';
       _drive = car.drive;
       _mass = car.mass;
@@ -213,6 +215,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
         setState(() {
           _parsedModel = parsed;
+          _vehiclePaintColor = const Color(0xFFD6DBDF);
           _detection = null;
           _selectedBodyNodeIndex = null;
 
@@ -603,7 +606,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                     );
                                                   },
                                                   accentColor: _preset.accent,
-                                                  bodyColor: widget.initialCar?.accentColor ?? _preset.accent,
+                                                  bodyColor: _vehiclePaintColor ??
+                                                      widget.initialCar?.accentColor ??
+                                                      const Color(0xFFD6DBDF),
+                                                  onBodyColorChanged: (c) =>
+                                                      setState(() => _vehiclePaintColor = c),
                                                   centerOfMassY: _centerOfMass,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
@@ -652,7 +659,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                     );
                                                   },
                                                   accentColor: _preset.accent,
-                                                  bodyColor: widget.initialCar?.accentColor ?? _preset.accent,
+                                                  bodyColor: _vehiclePaintColor ??
+                                                      widget.initialCar?.accentColor ??
+                                                      const Color(0xFFD6DBDF),
+                                                  onBodyColorChanged: (c) =>
+                                                      setState(() => _vehiclePaintColor = c),
                                                   centerOfMassY: _centerOfMass,
                                                   onTestDrive: _enterTestDrive,
                                                 ),

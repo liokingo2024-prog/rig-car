@@ -23,6 +23,12 @@ import 'model_data.dart';
 const int solidKindBody = 0;
 const int solidKindGlass = 1;
 const int solidKindWheel = 2;
+const int solidKindRim = 3;
+const int solidKindInterior = 4;
+const int solidKindTrim = 5;
+const int solidKindHeadlight = 6;
+const int solidKindTaillight = 7;
+const int solidKindChassis = 8;
 
 /// Render-ready triangle soup plus per-frame scratch buffers.
 class SolidMesh {
@@ -136,23 +142,93 @@ class _Source {
         maxZ = double.negativeInfinity;
     var total = 0;
 
+    final mbb = model.worldBBox;
+    final modelHeight = max(0.01, mbb.size.y);
+    final modelWidth = max(0.01, mbb.size.x);
+    final modelLength = max(0.01, mbb.size.z);
+
     for (final instance in model.instances) {
       if (instance.triangles.isEmpty || instance.worldVertices.isEmpty) {
         continue;
       }
-      final name =
+      final nodeName =
           instance.nodeIndex >= 0 && instance.nodeIndex < model.nodes.length
               ? model.nodes[instance.nodeIndex].name.toLowerCase()
               : '';
-      final isWheel = name.contains('wheel') ||
-          name.contains('tire') ||
-          name.contains('rim');
-      final isGlass = name.contains('glass') ||
-          name.contains('window') ||
-          name.contains('windshield');
-      final kind = isGlass
-          ? solidKindGlass
-          : (isWheel ? solidKindWheel : solidKindBody);
+      final meshName =
+          instance.meshIndex >= 0 && instance.meshIndex < model.meshes.length
+              ? model.meshes[instance.meshIndex].name.toLowerCase()
+              : '';
+      final combinedName = '$nodeName $meshName';
+
+      final bb = instance.worldBBox;
+      final relY = (bb.center.y - mbb.lo.y) / modelHeight;
+      final relX = (bb.center.x - mbb.center.x).abs() / (modelWidth * 0.5);
+      final relZ = (bb.center.z - mbb.center.z).abs() / (modelLength * 0.5);
+
+      final hasWheelName = RegExp(
+        r'(wheel|tire|tyre|rim|alloy|spoke|whl|rad|roue|rueda)',
+      ).hasMatch(combinedName) &&
+          !RegExp(
+            r'(steering|arch|well|fender|guard|mudguard)',
+          ).hasMatch(combinedName);
+      final hasGlassName = RegExp(
+        r'(glass|window|windshield|windscreen|visor|gls|wnd|sunroof|canopy|screen)',
+      ).hasMatch(combinedName);
+      final hasHeadlightName = RegExp(
+        r'(headlight|headlamp|front_light|light_front|drl|front.*lamp|lens)',
+      ).hasMatch(combinedName);
+      final hasTaillightName = RegExp(
+        r'(taillight|taillamp|tail_light|rear_light|light_rear|brake_light|red.*light)',
+      ).hasMatch(combinedName);
+      final hasInteriorName = RegExp(
+        r'(interior|cockpit|seat|dash|dashboard|steering|console|carpet|cabin)',
+      ).hasMatch(combinedName);
+      final hasTrimName = RegExp(
+        r'(carbon|trim|grill|grille|radiator|mesh|intake|diffuser|splitter|exhaust|muffler|spoiler|wing|mirror)',
+      ).hasMatch(combinedName);
+      final hasChassisName = RegExp(
+        r'(chassis|underbody|undercarriage|suspension|subframe|axle)',
+      ).hasMatch(combinedName);
+
+      // Geometric classification fallback for models with unnamed or generic nodes/meshes:
+      final isGeometricWheel = !hasGlassName &&
+          !hasInteriorName &&
+          relY < 0.48 &&
+          relX > 0.45 &&
+          bb.size.y < 0.60 * modelHeight &&
+          bb.size.x < 0.48 * modelWidth &&
+          bb.size.z < 0.42 * modelLength;
+
+      final isGeometricChassis = !hasWheelName &&
+          !hasGlassName &&
+          relY < 0.22 &&
+          relX < 0.42;
+
+      final isGeometricGlass = !hasWheelName &&
+          relY > 0.48 &&
+          relX < 0.85 &&
+          relZ < 0.82 &&
+          (combinedName.contains('glass') ||
+              combinedName.contains('wnd') ||
+              combinedName.contains('gls'));
+
+      int kind = solidKindBody;
+      if (hasWheelName || isGeometricWheel) {
+        kind = solidKindWheel;
+      } else if (hasGlassName || isGeometricGlass) {
+        kind = solidKindGlass;
+      } else if (hasHeadlightName) {
+        kind = solidKindHeadlight;
+      } else if (hasTaillightName) {
+        kind = solidKindTaillight;
+      } else if (hasInteriorName) {
+        kind = solidKindInterior;
+      } else if (hasTrimName) {
+        kind = solidKindTrim;
+      } else if (hasChassisName || isGeometricChassis) {
+        kind = solidKindChassis;
+      }
 
       for (final v in instance.worldVertices) {
         if (!v.x.isFinite || !v.y.isFinite || !v.z.isFinite) continue;

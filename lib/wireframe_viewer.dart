@@ -69,6 +69,24 @@ enum GroundGridStyle {
   }
 }
 
+class AutomotivePaintSwatch {
+  const AutomotivePaintSwatch(this.name, this.color);
+  final String name;
+  final Color color;
+}
+
+const automotivePaints = [
+  AutomotivePaintSwatch('Studio Platinum', Color(0xFFD6DBDF)),
+  AutomotivePaintSwatch('Polar White', Color(0xFFF8FAFC)),
+  AutomotivePaintSwatch('Rosso Corsa Red', Color(0xFFDC2626)),
+  AutomotivePaintSwatch('Apex Sapphire Blue', Color(0xFF2563EB)),
+  AutomotivePaintSwatch('Obsidian Black', Color(0xFF1E2229)),
+  AutomotivePaintSwatch('Nardo Slate Grey', Color(0xFF64748B)),
+  AutomotivePaintSwatch('Cyber Mint Green', Color(0xFF10B981)),
+  AutomotivePaintSwatch('Sunset Amber Orange', Color(0xFFEA580C)),
+  AutomotivePaintSwatch('Speedway Yellow', Color(0xFFF59E0B)),
+];
+
 class WireframeViewer extends StatefulWidget {
   const WireframeViewer({
     super.key,
@@ -78,7 +96,8 @@ class WireframeViewer extends StatefulWidget {
     this.selectedNodeIndex,
     this.onNodeSelected,
     this.accentColor = const Color(0xFF10B981),
-    this.bodyColor = const Color(0xFF64B5F6),
+    this.bodyColor = const Color(0xFFD6DBDF),
+    this.onBodyColorChanged,
     this.wheelColor = const Color(0xFF34D399),
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
@@ -92,6 +111,7 @@ class WireframeViewer extends StatefulWidget {
   final ValueChanged<int>? onNodeSelected;
   final Color accentColor;
   final Color bodyColor;
+  final ValueChanged<Color>? onBodyColorChanged;
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
@@ -104,6 +124,8 @@ class WireframeViewer extends StatefulWidget {
 class _WireframeViewerState extends State<WireframeViewer>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animController;
+  Color? _activeBodyColor;
+  Color get _currentBodyColor => _activeBodyColor ?? widget.bodyColor;
   bool _autoTurntable = false;
   bool _isFullscreen = false;
   bool _isInteracting = false;
@@ -151,6 +173,9 @@ class _WireframeViewerState extends State<WireframeViewer>
     super.didUpdateWidget(oldWidget);
     if (widget.model != oldWidget.model && widget.model != null) {
       _resetCameraToModel();
+    }
+    if (widget.bodyColor != oldWidget.bodyColor) {
+      _activeBodyColor = widget.bodyColor;
     }
   }
 
@@ -287,7 +312,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           showMarkers: _showMarkers,
                           denseWireframe: _denseWireframe,
                           accentColor: widget.accentColor,
-                          bodyColor: widget.bodyColor,
+                          bodyColor: _currentBodyColor,
                           wheelColor: widget.wheelColor,
                           wireColor: widget.wireColor,
                           centerOfMassY: widget.centerOfMassY,
@@ -525,6 +550,78 @@ class _WireframeViewerState extends State<WireframeViewer>
                             ),
                             const SizedBox(width: 4),
 
+                            // 3b. Vehicle Paint Color Dropdown
+                            PopupMenuButton<Color>(
+                              tooltip: 'Vehicle paint color',
+                              initialValue: _currentBodyColor,
+                              onSelected: (color) {
+                                setState(() => _activeBodyColor = color);
+                                widget.onBodyColorChanged?.call(color);
+                              },
+                              color: const Color(0xFF111714),
+                              surfaceTintColor: Colors.transparent,
+                              elevation: 8,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                side: const BorderSide(
+                                  color: Color(0xFF223127),
+                                ),
+                              ),
+                              itemBuilder: (context) =>
+                                  automotivePaints.map((paint) {
+                                    final selected =
+                                        paint.color.toARGB32() ==
+                                        _currentBodyColor.toARGB32();
+                                    return PopupMenuItem<Color>(
+                                      value: paint.color,
+                                      height: 36,
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 14,
+                                            height: 14,
+                                            decoration: BoxDecoration(
+                                              color: paint.color,
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: Colors.white30,
+                                                width: 1,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Text(
+                                            paint.name,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: selected
+                                                  ? const Color(0xFFF0FDF4)
+                                                  : const Color(0xFFC9D1D9),
+                                              fontWeight: selected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                          if (selected) ...[
+                                            const Spacer(),
+                                            const Icon(
+                                              Icons.check,
+                                              size: 14,
+                                              color: Color(0xFF10B981),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    );
+                                  }).toList(),
+                              child: _ViewerControl(
+                                icon: Icons.palette_outlined,
+                                label: isCompact ? '' : 'Paint',
+                                active: false,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+
                             // 4. Quick Actions Capsule (Turntable + Reset)
                             Container(
                               decoration: BoxDecoration(
@@ -686,7 +783,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                     _LegendItem(color: widget.wheelColor, label: 'Wheels'),
                     const SizedBox(width: 8),
                   ],
-                  _LegendItem(color: widget.bodyColor, label: 'Body'),
+                  _LegendItem(color: _currentBodyColor, label: 'Body'),
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
                   const SizedBox(width: 16),
@@ -1343,23 +1440,24 @@ class _WireframeScenePainter extends CustomPainter {
   ) {
     final groundY = model?.worldBBox.lo.y ?? 0.0;
 
-    // Contact shadow beneath car chassis is always rendered for depth
-    _drawContactShadow(canvas, viewProj, size, groundY);
-
-    if (gridStyle == GroundGridStyle.off) return;
-
-    switch (gridStyle) {
-      case GroundGridStyle.cad:
-        _drawCadGrid(canvas, viewProj, size, groundY);
-      case GroundGridStyle.radial:
-        _drawRadialGrid(canvas, viewProj, size, groundY);
-      case GroundGridStyle.hex:
-        _drawHexGrid(canvas, viewProj, size, groundY);
-      case GroundGridStyle.checker:
-        _drawCheckerGrid(canvas, viewProj, size, groundY);
-      case GroundGridStyle.off:
-        break;
+    if (gridStyle != GroundGridStyle.off) {
+      switch (gridStyle) {
+        case GroundGridStyle.cad:
+          _drawCadGrid(canvas, viewProj, size, groundY);
+        case GroundGridStyle.radial:
+          _drawRadialGrid(canvas, viewProj, size, groundY);
+        case GroundGridStyle.hex:
+          _drawHexGrid(canvas, viewProj, size, groundY);
+        case GroundGridStyle.checker:
+          _drawCheckerGrid(canvas, viewProj, size, groundY);
+        case GroundGridStyle.off:
+          break;
+      }
     }
+
+    // Contact shadow beneath car chassis is rendered on top of ground grid
+    // lines to naturally darken the floor directly beneath the vehicle.
+    _drawContactShadow(canvas, viewProj, size, groundY);
   }
 
   void _drawContactShadow(
@@ -1369,19 +1467,39 @@ class _WireframeScenePainter extends CustomPainter {
     double groundY,
   ) {
     final bbox = model?.worldBBox;
-    final minX = bbox != null ? bbox.lo.x * 0.95 : -0.92;
-    final maxX = bbox != null ? bbox.hi.x * 0.95 : 0.92;
-    final minZ = bbox != null ? bbox.lo.z * 0.95 : -1.80;
-    final maxZ = bbox != null ? bbox.hi.z * 0.95 : 1.80;
+    final minX = bbox != null ? bbox.lo.x * 0.96 : -0.92;
+    final maxX = bbox != null ? bbox.hi.x * 0.96 : 0.92;
+    final minZ = bbox != null ? bbox.lo.z * 0.96 : -1.80;
+    final maxZ = bbox != null ? bbox.hi.z * 0.96 : 1.80;
 
     final cx = (minX + maxX) * 0.5;
     final cz = (minZ + maxZ) * 0.5;
-    final rx = (maxX - minX) * 0.48;
-    final rz = (maxZ - minZ) * 0.50;
+    final rx = (maxX - minX) * 0.50;
+    final rz = (maxZ - minZ) * 0.52;
 
-    // Blender/Sketchfab soft ambient occlusion ground contact shadow
     const segments = 24;
+
+    // 1. Soft outer ambient occlusion contact shadow
     final outerShadow = <Vec3>[
+      for (var i = 0; i < segments; i++)
+        Vec3(
+          cx + (rx * 1.15) * _unitCircle24[i].$1,
+          groundY + 0.001,
+          cz + (rz * 1.12) * _unitCircle24[i].$2,
+        ),
+    ];
+    _drawClippedPolygon(
+      canvas,
+      viewProj,
+      size,
+      outerShadow,
+      Paint()
+        ..color = const Color(0x35000000)
+        ..style = PaintingStyle.fill,
+    );
+
+    // 2. Middle vehicle shadow
+    final midShadow = <Vec3>[
       for (var i = 0; i < segments; i++)
         Vec3(
           cx + rx * _unitCircle24[i].$1,
@@ -1393,13 +1511,13 @@ class _WireframeScenePainter extends CustomPainter {
       canvas,
       viewProj,
       size,
-      outerShadow,
+      midShadow,
       Paint()
-        ..color = const Color(0x38000000)
+        ..color = const Color(0x65000000)
         ..style = PaintingStyle.fill,
     );
 
-    // Inner dark core directly under vehicle chassis
+    // 3. Inner dark core directly under vehicle chassis
     final innerShadow = <Vec3>[
       for (var i = 0; i < segments; i++)
         Vec3(
@@ -1414,7 +1532,7 @@ class _WireframeScenePainter extends CustomPainter {
       size,
       innerShadow,
       Paint()
-        ..color = const Color(0x55000000)
+        ..color = const Color(0x90000000)
         ..style = PaintingStyle.fill,
     );
   }
@@ -1712,15 +1830,57 @@ class _WireframeScenePainter extends CustomPainter {
       return;
     }
 
-    final keyLight = switch (lighting) {
-      ViewerLighting.studio => const Vec3(-0.50, 0.82, 0.40),
-      ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
-      ViewerLighting.night => const Vec3(0.35, 0.55, -0.75),
-      ViewerLighting.flat => const Vec3(0, 1, 0),
-    }.normalized;
-    final fillLight = const Vec3(0.50, -0.30, -0.40).normalized;
-    final kx = keyLight.x, ky = keyLight.y, kz = keyLight.z;
-    final fx = fillLight.x, fy = fillLight.y, fz = fillLight.z;
+    final (
+      keyLight,
+      fillLight,
+      rimLight,
+      keyIntensity,
+      fillIntensity,
+      rimIntensity,
+      ambientBase,
+      ambientScale
+    ) = switch (lighting) {
+      ViewerLighting.studio => (
+        const Vec3(-0.60, 0.75, 0.45).normalized,
+        const Vec3(0.65, 0.45, 0.35).normalized,
+        const Vec3(0.15, 0.60, -0.75).normalized,
+        0.62,
+        0.28,
+        0.24,
+        0.24,
+        0.12,
+      ),
+      ViewerLighting.daylight => (
+        const Vec3(-0.55, 0.90, 0.20).normalized,
+        const Vec3(0.50, 0.35, -0.40).normalized,
+        const Vec3(0.20, 0.45, -0.80).normalized,
+        0.75,
+        0.25,
+        0.20,
+        0.28,
+        0.14,
+      ),
+      ViewerLighting.night => (
+        const Vec3(0.35, 0.65, -0.65).normalized,
+        const Vec3(-0.45, 0.35, 0.40).normalized,
+        const Vec3(-0.20, 0.50, -0.80).normalized,
+        0.70,
+        0.15,
+        0.35,
+        0.14,
+        0.08,
+      ),
+      ViewerLighting.flat => (
+        const Vec3(0, 1, 0),
+        const Vec3(0, 1, 0),
+        const Vec3(0, 1, 0),
+        0.0,
+        0.0,
+        0.0,
+        0.92,
+        0.0,
+      ),
+    };
     final isFlat = lighting == ViewerLighting.flat;
 
     // ── 1. Project every vertex once ──────────────────────────────────────
@@ -1761,9 +1921,15 @@ class _WireframeScenePainter extends CustomPainter {
 
     const selectedArgb = 0xFF00E5FF;
     final kindColors = <int>[
-      bodyColor.toARGB32(),
-      0xFF1E3A42, // glass
-      0xFF26322C, // wheel
+      bodyColor.toARGB32(), // 0: solidKindBody
+      0xCC162832,           // 1: solidKindGlass (deep tinted cockpit glass)
+      0xFF191C1E,           // 2: solidKindWheel (dark tire rubber)
+      0xFFC8D1D7,           // 3: solidKindRim (satin metallic alloy)
+      0xFF1F2327,           // 4: solidKindInterior (charcoal cabin)
+      0xFF202428,           // 5: solidKindTrim (carbon / black trim)
+      0xFFE8F4FC,           // 6: solidKindHeadlight (ice diamond crystal)
+      0xFFDC2626,           // 7: solidKindTaillight (ruby red lens)
+      0xFF181A1C,           // 8: solidKindChassis (dark mechanical underbody)
     ];
     final selected = selectedNodeIndex ?? -1;
 
@@ -1811,20 +1977,47 @@ class _WireframeScenePainter extends CustomPainter {
         base = selectedArgb;
       } else {
         final materialColor = triColor[t];
-        base = materialColor != 0 ? materialColor : kindColors[triKind[t]];
+        if (materialColor != 0) {
+          base = materialColor;
+        } else {
+          final k = triKind[t];
+          if (k == 2 /* solidKindWheel */) {
+            // Intelligent Rim vs Tire separation:
+            // Lateral outer normal (|nx| > 0.45) is the alloy wheel rim/spoke face!
+            // Radial tread or inner cylinder (|nx| <= 0.45) is dark tire rubber!
+            base = nx.abs() > 0.45 ? 0xFFC8D1D7 : 0xFF191C1E;
+          } else if (k < kindColors.length) {
+            base = kindColors[k];
+          } else {
+            base = bodyColor.toARGB32();
+          }
+        }
       }
 
       int argb = base;
       if (!isFlat) {
-        final dotKey = nx * kx + ny * ky + nz * kz;
+        final dotKey = nx * keyLight.x + ny * keyLight.y + nz * keyLight.z;
         final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
-        final dotFill = nx * fx + ny * fy + nz * fz;
-        final diffuseFill = dotFill > 0.0 ? dotFill * 0.22 : 0.0;
+        final dotFill = nx * fillLight.x + ny * fillLight.y + nz * fillLight.z;
+        final diffuseFill = dotFill > 0.0 ? dotFill : 0.0;
+        final dotRim = nx * rimLight.x + ny * rimLight.y + nz * rimLight.z;
+        final diffuseRim = dotRim > 0.0 ? dotRim : 0.0;
 
-        // Blinn-Phong highlight via successive squarings.
-        final hx = kx + ex, hy = ky + ey, hz = kz + ez;
+        var ambient = ambientBase + ambientScale * ny;
+        if (ambient < 0.12) ambient = 0.12;
+        if (ambient > 0.40) ambient = 0.40;
+
+        var diffuse = ambient +
+            diffuseKey * keyIntensity +
+            diffuseFill * fillIntensity +
+            diffuseRim * rimIntensity;
+        if (diffuse < 0.15) diffuse = 0.15;
+        if (diffuse > 1.15) diffuse = 1.15;
+
+        // Blinn-Phong highlight via successive squarings (reflection of white light sources)
+        final hx = keyLight.x + ex, hy = keyLight.y + ey, hz = keyLight.z + ez;
         final hLenSq = hx * hx + hy * hy + hz * hz;
-        var specular = 0.0;
+        var specKey = 0.0;
         if (hLenSq > 1e-6) {
           final invH = 1.0 / sqrt(hLenSq);
           final ndoth = nx * hx * invH + ny * hy * invH + nz * hz * invH;
@@ -1833,28 +2026,41 @@ class _WireframeScenePainter extends CustomPainter {
             final s4 = s2 * s2;
             final s8 = s4 * s4;
             final s16 = s8 * s8;
-            specular = s16 * s2 * 0.38;
+            final s32 = s16 * s16;
+            specKey = s32 * 0.50;
           }
         }
 
-        // Fresnel rim light.
+        final hrx = rimLight.x + ex, hry = rimLight.y + ey, hrz = rimLight.z + ez;
+        final hrLenSq = hrx * hrx + hry * hry + hrz * hrz;
+        var specRim = 0.0;
+        if (hrLenSq > 1e-6) {
+          final invH = 1.0 / sqrt(hrLenSq);
+          final ndoth = nx * hrx * invH + ny * hry * invH + nz * hrz * invH;
+          if (ndoth > 0.0) {
+            final s2 = ndoth * ndoth;
+            final s4 = s2 * s2;
+            final s8 = s4 * s4;
+            specRim = s8 * 0.20;
+          }
+        }
+
+        // Fresnel silhouette rim light at glancing angles
         var ndotEye = nx * ex + ny * ey + nz * ez;
         if (ndotEye > 1.0) ndotEye = 1.0;
         if (ndotEye < 0.0) ndotEye = 0.0;
         final oneMinus = 1.0 - ndotEye;
-        final fresnel = oneMinus * oneMinus * sqrt(oneMinus) * 0.24;
+        final fresnel = oneMinus * oneMinus * oneMinus * 0.22;
 
-        var factor =
-            0.32 + diffuseKey * 0.55 + diffuseFill + specular + fresnel;
-        if (factor < 0.20) factor = 0.20;
-        if (factor > 1.25) factor = 1.25;
+        final whiteGloss = ((specKey + specRim) * 255.0 + fresnel * 110.0);
 
-        var r = (((base >> 16) & 0xFF) * factor).round();
-        var g = (((base >> 8) & 0xFF) * factor).round();
-        var b = ((base & 0xFF) * factor).round();
-        if (r > 255) r = 255;
-        if (g > 255) g = 255;
-        if (b > 255) b = 255;
+        final baseR = (base >> 16) & 0xFF;
+        final baseG = (base >> 8) & 0xFF;
+        final baseB = base & 0xFF;
+
+        final r = (baseR * diffuse + whiteGloss).round().clamp(0, 255);
+        final g = (baseG * diffuse + whiteGloss).round().clamp(0, 255);
+        final b = (baseB * diffuse + whiteGloss).round().clamp(0, 255);
         argb = (base & 0xFF000000) | (r << 16) | (g << 8) | b;
       }
 
@@ -1931,50 +2137,106 @@ class _WireframeScenePainter extends CustomPainter {
   }
 
   Color _shadeSolidColor(Color base, Vec3 normal, Vec3 center, Vec3 eye) {
-    // Blender 2-light Studio Setup:
-    // Key light (dominant upper-left) + Fill light (soft counter-fill) + Specular + Fresnel rim
-    final keyLight = switch (lighting) {
-      ViewerLighting.studio => const Vec3(-0.50, 0.82, 0.40),
-      ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
-      ViewerLighting.night => const Vec3(0.35, 0.55, -0.75),
-      ViewerLighting.flat => const Vec3(0, 1, 0),
-    }.normalized;
+    if (lighting == ViewerLighting.flat) {
+      return base;
+    }
 
-    final fillLight = const Vec3(0.50, -0.30, -0.40).normalized;
+    final (
+      keyLight,
+      fillLight,
+      rimLight,
+      keyIntensity,
+      fillIntensity,
+      rimIntensity,
+      ambientBase,
+      ambientScale
+    ) = switch (lighting) {
+      ViewerLighting.studio => (
+        const Vec3(-0.60, 0.75, 0.45).normalized,
+        const Vec3(0.65, 0.45, 0.35).normalized,
+        const Vec3(0.15, 0.60, -0.75).normalized,
+        0.62,
+        0.28,
+        0.24,
+        0.24,
+        0.12,
+      ),
+      ViewerLighting.daylight => (
+        const Vec3(-0.55, 0.90, 0.20).normalized,
+        const Vec3(0.50, 0.35, -0.40).normalized,
+        const Vec3(0.20, 0.45, -0.80).normalized,
+        0.75,
+        0.25,
+        0.20,
+        0.28,
+        0.14,
+      ),
+      ViewerLighting.night => (
+        const Vec3(0.35, 0.65, -0.65).normalized,
+        const Vec3(-0.45, 0.35, 0.40).normalized,
+        const Vec3(-0.20, 0.50, -0.80).normalized,
+        0.70,
+        0.15,
+        0.35,
+        0.14,
+        0.08,
+      ),
+      ViewerLighting.flat => (
+        const Vec3(0, 1, 0),
+        const Vec3(0, 1, 0),
+        const Vec3(0, 1, 0),
+        0.0,
+        0.0,
+        0.0,
+        0.92,
+        0.0,
+      ),
+    };
+
     final toEye = (eye - center).normalized;
-
     final diffuseKey = max(0.0, normal.dot(keyLight));
-    final diffuseFill = max(0.0, normal.dot(fillLight)) * 0.22;
+    final diffuseFill = max(0.0, normal.dot(fillLight));
+    final diffuseRim = max(0.0, normal.dot(rimLight));
 
-    // Specular Blinn-Phong highlight via fast squarings
-    final halfVector = (keyLight + toEye).normalized;
-    final ndoth = max(0.0, normal.dot(halfVector));
-    final x2 = ndoth * ndoth;
-    final x4 = x2 * x2;
-    final x8 = x4 * x4;
-    final x16 = x8 * x8;
-    final specular = (x16 * x2) * 0.38;
+    var ambient = ambientBase + ambientScale * normal.y;
+    if (ambient < 0.12) ambient = 0.12;
+    if (ambient > 0.40) ambient = 0.40;
 
-    // Silhouette Fresnel rim light
-    final ndotv = max(0.0, normal.dot(toEye));
-    final oneMinusNdot = 1.0 - (ndotv > 1.0 ? 1.0 : ndotv);
-    final f2 = oneMinusNdot * oneMinusNdot;
-    final fresnel = (f2 * sqrt(oneMinusNdot)) * 0.24;
+    var diffuse = (ambient +
+            diffuseKey * keyIntensity +
+            diffuseFill * fillIntensity +
+            diffuseRim * rimIntensity)
+        .clamp(0.15, 1.15);
 
-    final ambient = 0.32;
-    final factor = lighting == ViewerLighting.flat
-        ? 0.95
-        : (ambient + diffuseKey * 0.55 + diffuseFill + specular + fresnel)
-            .clamp(0.20, 1.25);
+    // Additive specular Blinn-Phong highlight
+    final halfKey = (keyLight + toEye).normalized;
+    final ndothKey = max(0.0, normal.dot(halfKey));
+    final k2 = ndothKey * ndothKey;
+    final k4 = k2 * k2;
+    final k8 = k4 * k4;
+    final k16 = k8 * k8;
+    final k32 = k16 * k16;
+    final specKey = k32 * 0.50;
 
-    int ch(double v) => (v * 255.0 * factor).round().clamp(0, 255);
+    final halfRim = (rimLight + toEye).normalized;
+    final ndothRim = max(0.0, normal.dot(halfRim));
+    final r2 = ndothRim * ndothRim;
+    final r4 = r2 * r2;
+    final r8 = r4 * r4;
+    final specRim = r8 * 0.20;
+
+    final ndotv = max(0.0, normal.dot(toEye)).clamp(0.0, 1.0);
+    final oneMinus = 1.0 - ndotv;
+    final fresnel = oneMinus * oneMinus * oneMinus * 0.22;
+
+    final whiteGloss = ((specKey + specRim) * 255.0 + fresnel * 110.0);
+
+    final r = ((base.r * 255.0) * diffuse + whiteGloss).round().clamp(0, 255);
+    final g = ((base.g * 255.0) * diffuse + whiteGloss).round().clamp(0, 255);
+    final b = ((base.b * 255.0) * diffuse + whiteGloss).round().clamp(0, 255);
     final a = (base.a * 255.0).round().clamp(0, 255);
-    return Color.fromARGB(
-      a,
-      ch(base.r),
-      ch(base.g),
-      ch(base.b),
-    );
+
+    return Color.fromARGB(a, r, g, b);
   }
 
   void _drawModelWireframe(

@@ -142,9 +142,16 @@ class GlbParser {
         // Resolve a viewport colour from the primitive's material.
         Color? materialColor;
         final matIdx = prim['material'] as int?;
+        final meshName = m['name'] as String?;
         if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
           materialColor = _materialColor(
             jsonMaterials[matIdx] as Map<String, dynamic>?,
+            meshName: meshName,
+          );
+        } else {
+          materialColor = _materialColor(
+            null,
+            meshName: meshName,
           );
         }
 
@@ -266,29 +273,67 @@ class GlbParser {
   }
 
   static final _glassMaterial = RegExp(
-    r'(glass|window|windshield|windscreen|visor)',
+    r'(glass|window|windshield|windscreen|visor|gls|wnd|sunroof|canopy|screen)',
     caseSensitive: false,
   );
   static final _tireMaterial = RegExp(
-    r'(tire|tyre|rubber)',
+    r'(tire|tyre|rubber|tread|compound)',
     caseSensitive: false,
   );
   static final _metalMaterial = RegExp(
-    r'(chrome|alloy|aluminium|aluminum|steel|silver)',
+    r'(chrome|alloy|aluminium|aluminum|steel|silver|wheel|rim|spoke|hub)',
+    caseSensitive: false,
+  );
+  static final _brakeMaterial = RegExp(
+    r'(brake|caliper|disc|rotor)',
+    caseSensitive: false,
+  );
+  static final _headlightMaterial = RegExp(
+    r'(headlight|headlamp|front_light|light_front|drl|front.*lamp|lens)',
+    caseSensitive: false,
+  );
+  static final _taillightMaterial = RegExp(
+    r'(taillight|taillamp|tail_light|rear_light|light_rear|brake_light|red.*light)',
+    caseSensitive: false,
+  );
+  static final _interiorMaterial = RegExp(
+    r'(interior|cockpit|seat|dash|dashboard|steering|console|carpet|cabin)',
+    caseSensitive: false,
+  );
+  static final _trimMaterial = RegExp(
+    r'(carbon|trim|grill|grille|radiator|mesh|intake|diffuser|splitter|exhaust|muffler)',
+    caseSensitive: false,
+  );
+  static final _chassisMaterial = RegExp(
+    r'(chassis|underbody|undercarriage|suspension|subframe|axle)',
     caseSensitive: false,
   );
 
-  /// Picks a flat viewport colour for a glTF material. The viewer cannot
-  /// sample textures, so textured materials fall back to the body colour
-  /// (null) rather than the white base factor, and well-known material names
-  /// get a sensible tint so glass, tyres and trim are distinguishable.
-  static Color? _materialColor(Map<String, dynamic>? material) {
-    if (material == null) return null;
+  /// Picks a flat viewport colour for a glTF material. When textured materials
+  /// lack custom vertex colors, well-known material and mesh names get authentic
+  /// automotive tints so glass, tyres, rims, interior, and lights are properly
+  /// distinguished rather than collapsing into the body paint.
+  static Color? _materialColor(
+    Map<String, dynamic>? material, {
+    String? meshName,
+  }) {
+    final matName = (material?['name'] as String? ?? '').toLowerCase();
+    final mName = (meshName ?? '').toLowerCase();
+    final combined = '$matName $mName';
 
-    final name = (material['name'] as String? ?? '').toLowerCase();
-    if (_glassMaterial.hasMatch(name)) return const Color(0xC0162A32);
-    if (_tireMaterial.hasMatch(name)) return const Color(0xFF1A1D1C);
-    if (_metalMaterial.hasMatch(name)) return const Color(0xFFB8C2C8);
+    if (_glassMaterial.hasMatch(combined)) return const Color(0xBB162832);
+    if (_tireMaterial.hasMatch(combined)) return const Color(0xFF191C1E);
+    if (_brakeMaterial.hasMatch(combined)) return const Color(0xFF8B1E1E);
+    if (_metalMaterial.hasMatch(combined) && !_tireMaterial.hasMatch(combined)) {
+      return const Color(0xFFC8D1D7);
+    }
+    if (_headlightMaterial.hasMatch(combined)) return const Color(0xFFE8F4FC);
+    if (_taillightMaterial.hasMatch(combined)) return const Color(0xFFDC2626);
+    if (_interiorMaterial.hasMatch(combined)) return const Color(0xFF1F2327);
+    if (_trimMaterial.hasMatch(combined)) return const Color(0xFF202428);
+    if (_chassisMaterial.hasMatch(combined)) return const Color(0xFF181A1C);
+
+    if (material == null) return null;
 
     final pbr = material['pbrMetallicRoughness'] as Map<String, dynamic>?;
     final factor = pbr?['baseColorFactor'] as List<dynamic>?;
@@ -310,7 +355,7 @@ class GlbParser {
     if ((material['alphaMode'] as String?) == 'BLEND') {
       final base = color ?? const Color(0xFF162A32);
       final alpha = (base.a * 255.0).round();
-      return base.withAlpha(alpha < 96 ? alpha : 96);
+      return base.withAlpha(alpha < 120 ? alpha : 120);
     }
     return color;
   }
