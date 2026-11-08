@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -105,6 +106,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
+  Uint8List? _modelBytes;
   DetectionResult? _detection;
   int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
@@ -213,6 +215,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
         setState(() {
           _parsedModel = parsed;
+          _modelBytes = picked.bytes;
           _detection = null;
           _selectedBodyNodeIndex = null;
 
@@ -591,6 +594,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                               Expanded(
                                                 child: WireframeViewer(
                                                   model: _parsedModel,
+                                                  modelBytes: _modelBytes,
                                                   detection: _detection,
                                                   bodyNodeIndex:
                                                       _selectedBodyNodeIndex,
@@ -641,6 +645,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                 height: 380,
                                                 child: WireframeViewer(
                                                   model: _parsedModel,
+                                                  modelBytes: _modelBytes,
                                                   detection: _detection,
                                                   bodyNodeIndex:
                                                       _selectedBodyNodeIndex,

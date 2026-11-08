@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'fullscreen.dart';
 import 'model_data.dart';
+import 'sketchfab_viewport.dart';
 import 'solid_mesh_lod.dart';
 
 // ── 3D Wireframe Viewer ─────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ class WireframeViewer extends StatefulWidget {
   const WireframeViewer({
     super.key,
     required this.model,
+    this.modelBytes,
     required this.detection,
     this.bodyNodeIndex,
     this.selectedNodeIndex,
@@ -86,6 +88,7 @@ class WireframeViewer extends StatefulWidget {
   });
 
   final ParsedModel? model;
+  final Uint8List? modelBytes;
   final DetectionResult? detection;
   final int? bodyNodeIndex;
   final int? selectedNodeIndex;
@@ -225,49 +228,17 @@ class _WireframeViewerState extends State<WireframeViewer>
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // ── Interactive Gesture Area ──────────────────────────────────────
+          // ── Viewport Area (WebGL Three.js when bytes available, fallback CustomPainter) ──
           Positioned.fill(
-            child: Listener(
-              onPointerSignal: (event) {
-                if (event is PointerScrollEvent) {
-                  setState(() {
-                    _distance = (_distance * (1 + event.scrollDelta.dy * 0.001))
-                        .clamp(1.0, 50.0);
-                  });
-                }
-              },
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onDoubleTap: () => setState(_resetCameraToModel),
-                onPanStart: (_) {
-                  if (!_isInteracting) {
-                    setState(() => _isInteracting = true);
-                  }
-                },
-                onPanUpdate: (details) {
-                  setState(() {
-                    // Natural orbit: dragging right rotates model right; dragging up tilts view up.
-                    // Both axes maintain unified polarity across natural and inverted modes.
-                    final factor = _invertDrag ? 1.0 : -1.0;
-                    _azimuth += factor * details.delta.dx * 0.01;
-                    _elevation = (_elevation - factor * details.delta.dy * 0.01)
-                        .clamp(-1.5, 1.5);
-                  });
-                },
-                onPanEnd: (_) {
-                  if (_isInteracting) {
-                    setState(() => _isInteracting = false);
-                  }
-                },
-                onPanCancel: () {
-                  if (_isInteracting) {
-                    setState(() => _isInteracting = false);
-                  }
-                },
-                child: AnimatedBuilder(
-                  animation: _animController,
-                  builder: (context, _) {
-                    return RepaintBoundary(
+            child: widget.modelBytes != null && widget.modelBytes!.isNotEmpty
+                ? SketchfabViewport(
+                    bytes: widget.modelBytes,
+                    renderMode: _renderMode.name,
+                    lighting: _lighting.name,
+                    gridStyle: _gridStyle.name,
+                    autoTurntable: _autoTurntable,
+                    cameraPreset: _preset.name,
+                    fallbackWidget: RepaintBoundary(
                       child: CustomPaint(
                         painter: _WireframeScenePainter(
                           model: widget.model,
@@ -295,11 +266,81 @@ class _WireframeViewerState extends State<WireframeViewer>
                           isInteracting: _isInteracting || _autoTurntable,
                         ),
                       ),
-                    );
-                  },
-                ),
-              ),
-            ),
+                    ),
+                  )
+                : Listener(
+                    onPointerSignal: (event) {
+                      if (event is PointerScrollEvent) {
+                        setState(() {
+                          _distance = (_distance * (1 + event.scrollDelta.dy * 0.001))
+                              .clamp(1.0, 50.0);
+                        });
+                      }
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: () => setState(_resetCameraToModel),
+                      onPanStart: (_) {
+                        if (!_isInteracting) {
+                          setState(() => _isInteracting = true);
+                        }
+                      },
+                      onPanUpdate: (details) {
+                        setState(() {
+                          // Natural orbit: dragging right rotates model right; dragging up tilts view up.
+                          // Both axes maintain unified polarity across natural and inverted modes.
+                          final factor = _invertDrag ? 1.0 : -1.0;
+                          _azimuth += factor * details.delta.dx * 0.01;
+                          _elevation = (_elevation - factor * details.delta.dy * 0.01)
+                              .clamp(-1.5, 1.5);
+                        });
+                      },
+                      onPanEnd: (_) {
+                        if (_isInteracting) {
+                          setState(() => _isInteracting = false);
+                        }
+                      },
+                      onPanCancel: () {
+                        if (_isInteracting) {
+                          setState(() => _isInteracting = false);
+                        }
+                      },
+                      child: AnimatedBuilder(
+                        animation: _animController,
+                        builder: (context, _) {
+                          return RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _WireframeScenePainter(
+                                model: widget.model,
+                                detection: widget.detection,
+                                bodyNodeIndex: widget.bodyNodeIndex,
+                                selectedNodeIndex: widget.selectedNodeIndex,
+                                azimuth: _azimuth,
+                                elevation: _elevation,
+                                distance: _distance,
+                                target: _target,
+                                panX: _panX,
+                                panY: _panY,
+                                gridStyle: _gridStyle,
+                                lighting: _lighting,
+                                renderMode: _renderMode,
+                                showGrid: _showGrid,
+                                showMarkers: _showMarkers,
+                                denseWireframe: _denseWireframe,
+                                accentColor: widget.accentColor,
+                                bodyColor: widget.bodyColor,
+                                wheelColor: widget.wheelColor,
+                                wireColor: widget.wireColor,
+                                centerOfMassY: widget.centerOfMassY,
+                                pulseProgress: _animController.value,
+                                isInteracting: _isInteracting || _autoTurntable,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
           ),
 
           // ── Top Bar Controls ──────────────────────────────────────────────
