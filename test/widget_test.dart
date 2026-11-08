@@ -418,7 +418,7 @@ void main() {
       // Left sidebar renders exactly 5 pipeline step cards
       expect(find.text('RIGGING PIPELINE'), findsOneWidget);
       expect(find.text('Upload Vehicle'), findsWidgets);
-      expect(find.text('Auto Fix & Rig'), findsWidgets);
+      expect(find.text('Scan & Organize'), findsWidgets);
       expect(find.text('Add Physics'), findsWidgets);
       expect(find.text('Add Sound'), findsWidgets);
       expect(find.text('Export Rig'), findsWidgets);
@@ -431,16 +431,16 @@ void main() {
       expect(find.text('Package Godot 4 vehicle scene'), findsWidgets);
 
       // Right inspector fixed header and Step 1 view
-      expect(find.text('✨ Auto Path'), findsOneWidget);
-      expect(find.text('🛠 Manual Fix'), findsOneWidget);
+      expect(find.text('✨ Auto'), findsOneWidget);
+      expect(find.text('🛠 Custom'), findsOneWidget);
       expect(find.text('PROGRESS & BOUNDS VERIFICATION'), findsOneWidget);
       expect(find.text('Model Parsed'), findsOneWidget);
       expect(find.text('Bounding Box'), findsOneWidget);
       expect(find.text('Ground Plane Snap'), findsOneWidget);
       expect(find.text('Forward Axis'), findsOneWidget);
 
-      // Tap Step 2: Auto Fix & Rig
-      await tester.tap(find.text('Auto Fix & Rig').first);
+      // Tap Step 2: Scan & Organize
+      await tester.tap(find.text('Scan & Organize').first);
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
@@ -450,8 +450,8 @@ void main() {
       expect(find.text('4. Hub Center & Radius Math'), findsOneWidget);
       expect(find.text('Approve Auto Rig'), findsOneWidget);
 
-      // Switch to Manual Fix
-      await tester.tap(find.text('🛠 Manual Fix'));
+      // Switch to Custom
+      await tester.tap(find.text('🛠 Custom'));
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('A. DETECTED 2/4 GROUP CHECKLIST'), findsOneWidget);
@@ -464,8 +464,8 @@ void main() {
       await tester.tap(find.text('Add Physics').first);
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Switch back to Auto Path
-      await tester.tap(find.text('✨ Auto Path'));
+      // Switch back to Auto
+      await tester.tap(find.text('✨ Auto'));
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('HANDLING PRESETS'), findsOneWidget);
@@ -503,8 +503,8 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Step 1: Switch to Manual Fix
-      await tester.tap(find.text('🛠 Manual Fix'));
+      // Step 1: Switch to Custom
+      await tester.tap(find.text('🛠 Custom'));
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('ORIENTATION QUICK-FIX'), findsOneWidget);
@@ -524,11 +524,11 @@ void main() {
       await tester.tap(find.text('Apply Scale'));
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Step 2: Auto Fix & Rig
-      await tester.tap(find.text('Auto Fix & Rig').first);
+      // Step 2: Scan & Organize
+      await tester.tap(find.text('Scan & Organize').first);
       await tester.pump(const Duration(milliseconds: 100));
 
-      // In Manual Fix view
+      // In Custom view
       expect(find.text('Mirror Left → Right Hubs'), findsOneWidget);
       expect(find.text('Recenter Pivots to Cylinder'), findsOneWidget);
       await tester.ensureVisible(find.text('Mirror Left → Right Hubs'));

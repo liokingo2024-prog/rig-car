@@ -181,7 +181,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
       case 1:
         return 'Upload Vehicle';
       case 2:
-        return 'Auto Fix & Rig';
+        return 'Scan & Organize';
       case 3:
         return 'Add Physics';
       case 4:
@@ -210,7 +210,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
               Icon(Icons.circle, size: 5, color: _Palette.accentBlue),
               SizedBox(width: 4),
               Text(
-                'Manual Mode',
+                'Custom Mode',
                 style: TextStyle(
                   color: _Palette.accentBlue,
                   fontSize: 10,
@@ -349,7 +349,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
             ),
           ),
           const SizedBox(width: 8),
-          // 2-button segmented pill toggle: [ ✨ Auto Path | 🛠 Manual Fix ]
+          // 2-button segmented pill toggle: [ ✨ Auto | 🛠 Custom ]
           Flexible(
             child: Container(
               padding: const EdgeInsets.all(2.5),
@@ -364,12 +364,12 @@ class _InspectorPanelState extends State<InspectorPanel> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _HeaderSegmentButton(
-                      title: '✨ Auto Path',
+                      title: '✨ Auto',
                       selected: isAuto,
                       onTap: () => widget.onInspectModeChanged('auto'),
                     ),
                     _HeaderSegmentButton(
-                      title: '🛠 Manual Fix',
+                      title: '🛠 Custom',
                       selected: !isAuto,
                       onTap: () => widget.onInspectModeChanged('manual'),
                     ),

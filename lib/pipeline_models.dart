@@ -28,7 +28,7 @@ const List<PipelineStepInfo> kPipelineSteps = [
   ),
   PipelineStepInfo(
     number: 2,
-    title: 'Auto Fix & Rig',
+    title: 'Scan & Organize',
     subtitle: 'Loose parts, 4-wheel match & hubs',
   ),
   PipelineStepInfo(
