@@ -3,10 +3,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
+import 'package:rig_car/glb_parser.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
 import 'package:rig_car/physics_sim.dart';
 import 'package:rig_car/pre_rigged_cars.dart';
+import 'package:rig_car/solid_mesh_lod.dart';
 import 'package:rig_car/wireframe_viewer.dart';
 
 void main() {
@@ -953,5 +955,66 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    test('SolidScene eliminates LOD popping during orbit interaction', () {
+      final model = ParsedModel(
+        fileName: 'test_car.glb',
+        nodes: [
+          SceneNode(
+            index: 0,
+            name: 'Root',
+            localTransform: Mat4.identity(),
+            meshIndex: 0,
+            childIndices: const [],
+            parentIndex: null,
+          ),
+        ],
+        meshes: [
+          MeshData(
+            index: 0,
+            name: 'Body',
+            vertices: [
+              const Vec3(0, 0, 0),
+              const Vec3(1, 0, 0),
+              const Vec3(0, 1, 0),
+            ],
+            edges: [Edge(0, 1), Edge(1, 2), Edge(2, 0)],
+            triangles: [
+              const Triangle(0, 1, 2, Color(0xFFDC2626)),
+            ],
+            bbox: const BBox(Vec3.zero, Vec3(1, 1, 0)),
+          ),
+        ],
+        instances: [
+          MeshInstance(
+            nodeIndex: 0,
+            meshIndex: 0,
+            worldVertices: [
+              const Vec3(0, 0, 0),
+              const Vec3(1, 0, 0),
+              const Vec3(0, 1, 0),
+            ],
+            edges: [Edge(0, 1), Edge(1, 2), Edge(2, 0)],
+            triangles: [
+              const Triangle(0, 1, 2, Color(0xFFDC2626)),
+            ],
+            worldBBox: const BBox(Vec3.zero, Vec3(1, 1, 0)),
+          ),
+        ],
+        rootNodeIndices: [0],
+        worldBBox: const BBox(Vec3.zero, Vec3(1, 1, 0)),
+      );
+
+      final scene = SolidScene.of(model);
+      // Verify that interactive and full share the same mesh instance
+      expect(identical(scene.interactive, scene.full), isTrue);
+      expect(scene.interactive.triangleCount, scene.full.triangleCount);
+    });
+
+    test('AutomotivePaintSwatch includes Original Colors transparent option', () {
+      final original = automotivePaints.firstWhere((p) => p.name == 'Original Colors');
+      expect(original.color, Colors.transparent);
+      expect(original.color.toARGB32(), 0);
+    });
   });
 }

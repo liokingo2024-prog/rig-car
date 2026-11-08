@@ -210,12 +210,12 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         // This gives the viewport and exported Godot rig one stable vehicle
         // coordinate system regardless of whether the source used mm, cm, or
         // arbitrary units.
-        final parsed = GlbParser.parse(picked.name, picked.bytes);
+        final parsed = await GlbParser.parse(picked.name, picked.bytes);
         parsed.normalizeForRiggingInPlace();
 
         setState(() {
           _parsedModel = parsed;
-          _vehiclePaintColor = const Color(0xFFD6DBDF);
+          _vehiclePaintColor = Colors.transparent;
           _detection = null;
           _selectedBodyNodeIndex = null;
 
@@ -608,7 +608,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                   accentColor: _preset.accent,
                                                   bodyColor: _vehiclePaintColor ??
                                                       widget.initialCar?.accentColor ??
-                                                      const Color(0xFFD6DBDF),
+                                                      Colors.transparent,
                                                   onBodyColorChanged: (c) =>
                                                       setState(() => _vehiclePaintColor = c),
                                                   centerOfMassY: _centerOfMass,
@@ -661,7 +661,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                   accentColor: _preset.accent,
                                                   bodyColor: _vehiclePaintColor ??
                                                       widget.initialCar?.accentColor ??
-                                                      const Color(0xFFD6DBDF),
+                                                      Colors.transparent,
                                                   onBodyColorChanged: (c) =>
                                                       setState(() => _vehiclePaintColor = c),
                                                   centerOfMassY: _centerOfMass,

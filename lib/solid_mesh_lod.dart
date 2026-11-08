@@ -101,11 +101,9 @@ class SolidScene {
     maxEdgeFraction: 0.07,
   );
 
-  /// Light mesh used while orbiting or on the turntable.
-  late final SolidMesh interactive = _source.build(
-    targetTriangles: 45000,
-    maxEdgeFraction: 0.12,
-  );
+  /// Stable mesh used while orbiting or on the turntable.
+  /// Avoid decimating geometry while orbiting so parts never disappear or pop.
+  late final SolidMesh interactive = full;
 }
 
 class _Part {

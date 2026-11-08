@@ -76,6 +76,7 @@ class AutomotivePaintSwatch {
 }
 
 const automotivePaints = [
+  AutomotivePaintSwatch('Original Colors', Colors.transparent),
   AutomotivePaintSwatch('Studio Platinum', Color(0xFFD6DBDF)),
   AutomotivePaintSwatch('Polar White', Color(0xFFF8FAFC)),
   AutomotivePaintSwatch('Rosso Corsa Red', Color(0xFFDC2626)),
@@ -96,7 +97,7 @@ class WireframeViewer extends StatefulWidget {
     this.selectedNodeIndex,
     this.onNodeSelected,
     this.accentColor = const Color(0xFF10B981),
-    this.bodyColor = const Color(0xFFD6DBDF),
+    this.bodyColor = Colors.transparent,
     this.onBodyColorChanged,
     this.wheelColor = const Color(0xFF34D399),
     this.wireColor = const Color(0xFF455A64),
@@ -581,7 +582,19 @@ class _WireframeViewerState extends State<WireframeViewer>
                                             width: 14,
                                             height: 14,
                                             decoration: BoxDecoration(
-                                              color: paint.color,
+                                              gradient: paint.color == Colors.transparent
+                                                  ? const SweepGradient(colors: [
+                                                      Colors.red,
+                                                      Colors.yellow,
+                                                      Colors.green,
+                                                      Colors.blue,
+                                                      Colors.purple,
+                                                      Colors.red,
+                                                    ])
+                                                  : null,
+                                              color: paint.color == Colors.transparent
+                                                  ? null
+                                                  : paint.color,
                                               shape: BoxShape.circle,
                                               border: Border.all(
                                                 color: Colors.white30,
@@ -1947,7 +1960,21 @@ class _WireframeScenePainter extends CustomPainter {
       final toEyeZ = eye.z - cz;
 
       // Back-face culling: the face normal must point towards the eye.
-      if (nx * toEyeX + ny * toEyeY + nz * toEyeZ <= 0.0) continue;
+      // Glass, wings/spoilers, trim, headlights, taillights, interior, chassis, and translucent
+      // elements are double-sided so aerodynamic panels and windows never vanish from any angle.
+      final dotEye = nx * toEyeX + ny * toEyeY + nz * toEyeZ;
+      final isDoubleSided = triKind[t] == 1 ||
+          triKind[t] == 4 ||
+          triKind[t] == 5 ||
+          triKind[t] == 6 ||
+          triKind[t] == 7 ||
+          triKind[t] == 8 ||
+          (triColor[t] != 0 && (triColor[t] & 0xFF000000) != 0xFF000000);
+      if (dotEye <= 0.0 && !isDoubleSided) continue;
+
+      final effNx = dotEye < 0.0 ? -nx : nx;
+      final effNy = dotEye < 0.0 ? -ny : ny;
+      final effNz = dotEye < 0.0 ? -nz : nz;
 
       final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
       if (sw[ia] <= near || sw[ib] <= near || sw[ic] <= near) continue;
@@ -1977,33 +2004,38 @@ class _WireframeScenePainter extends CustomPainter {
         base = selectedArgb;
       } else {
         final materialColor = triColor[t];
-        if (materialColor != 0) {
+        final isCustomPaint = bodyColor != Colors.transparent &&
+            (bodyColor.toARGB32() & 0xFF000000) != 0;
+        final k = triKind[t];
+
+        if (isCustomPaint && k == 0 /* solidKindBody */) {
+          base = bodyColor.toARGB32();
+        } else if (materialColor != 0) {
           base = materialColor;
         } else {
-          final k = triKind[t];
           if (k == 2 /* solidKindWheel */) {
             // Intelligent Rim vs Tire separation:
             // Lateral outer normal (|nx| > 0.45) is the alloy wheel rim/spoke face!
             // Radial tread or inner cylinder (|nx| <= 0.45) is dark tire rubber!
-            base = nx.abs() > 0.45 ? 0xFFC8D1D7 : 0xFF191C1E;
+            base = effNx.abs() > 0.45 ? 0xFFC8D1D7 : 0xFF191C1E;
           } else if (k < kindColors.length) {
-            base = kindColors[k];
+            base = (k == 0 && !isCustomPaint) ? 0xFFD6DBDF : kindColors[k];
           } else {
-            base = bodyColor.toARGB32();
+            base = isCustomPaint ? bodyColor.toARGB32() : 0xFFD6DBDF;
           }
         }
       }
 
       int argb = base;
       if (!isFlat) {
-        final dotKey = nx * keyLight.x + ny * keyLight.y + nz * keyLight.z;
+        final dotKey = effNx * keyLight.x + effNy * keyLight.y + effNz * keyLight.z;
         final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
-        final dotFill = nx * fillLight.x + ny * fillLight.y + nz * fillLight.z;
+        final dotFill = effNx * fillLight.x + effNy * fillLight.y + effNz * fillLight.z;
         final diffuseFill = dotFill > 0.0 ? dotFill : 0.0;
-        final dotRim = nx * rimLight.x + ny * rimLight.y + nz * rimLight.z;
+        final dotRim = effNx * rimLight.x + effNy * rimLight.y + effNz * rimLight.z;
         final diffuseRim = dotRim > 0.0 ? dotRim : 0.0;
 
-        var ambient = ambientBase + ambientScale * ny;
+        var ambient = ambientBase + ambientScale * effNy;
         if (ambient < 0.12) ambient = 0.12;
         if (ambient > 0.40) ambient = 0.40;
 
@@ -2020,7 +2052,7 @@ class _WireframeScenePainter extends CustomPainter {
         var specKey = 0.0;
         if (hLenSq > 1e-6) {
           final invH = 1.0 / sqrt(hLenSq);
-          final ndoth = nx * hx * invH + ny * hy * invH + nz * hz * invH;
+          final ndoth = effNx * hx * invH + effNy * hy * invH + effNz * hz * invH;
           if (ndoth > 0.0) {
             final s2 = ndoth * ndoth;
             final s4 = s2 * s2;
@@ -2036,7 +2068,7 @@ class _WireframeScenePainter extends CustomPainter {
         var specRim = 0.0;
         if (hrLenSq > 1e-6) {
           final invH = 1.0 / sqrt(hrLenSq);
-          final ndoth = nx * hrx * invH + ny * hry * invH + nz * hrz * invH;
+          final ndoth = effNx * hrx * invH + effNy * hry * invH + effNz * hrz * invH;
           if (ndoth > 0.0) {
             final s2 = ndoth * ndoth;
             final s4 = s2 * s2;
@@ -2046,7 +2078,7 @@ class _WireframeScenePainter extends CustomPainter {
         }
 
         // Fresnel silhouette rim light at glancing angles
-        var ndotEye = nx * ex + ny * ey + nz * ez;
+        var ndotEye = effNx * ex + effNy * ey + effNz * ez;
         if (ndotEye > 1.0) ndotEye = 1.0;
         if (ndotEye < 0.0) ndotEye = 0.0;
         final oneMinus = 1.0 - ndotEye;

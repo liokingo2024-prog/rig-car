@@ -24,8 +24,27 @@ class GlbParser {
 
   // ── Public API ──────────────────────────────────────────────────────────
 
-  /// Parse a GLB binary blob.  Throws [FormatException] on invalid data.
-  static ParsedModel parse(String fileName, Uint8List bytes) {
+  /// Parse a GLB binary blob asynchronously, extracting embedded textures
+  /// and vertex colors so models render with their authentic authored materials.
+  static Future<ParsedModel> parse(String fileName, Uint8List bytes) async {
+    final (json, bin) = _unpackGlb(bytes);
+    final jsonImages = json['images'] as List<dynamic>? ?? [];
+    final jsonBufferViews = json['bufferViews'] as List<dynamic>? ?? [];
+    final textureColors = await _extractTextureColors(
+      jsonImages,
+      jsonBufferViews,
+      bin,
+    );
+    return _build(fileName, json, bin, textureColors: textureColors);
+  }
+
+  /// Synchronous fallback when async texture decoding is not needed.
+  static ParsedModel parseSync(String fileName, Uint8List bytes) {
+    final (json, bin) = _unpackGlb(bytes);
+    return _build(fileName, json, bin);
+  }
+
+  static (Map<String, dynamic>, Uint8List?) _unpackGlb(Uint8List bytes) {
     final data = ByteData.sublistView(bytes);
     if (bytes.length < 12) throw const FormatException('File too small');
 
@@ -58,16 +77,64 @@ class GlbParser {
     }
 
     if (json == null) throw const FormatException('No JSON chunk in GLB');
-    return _build(fileName, json, bin);
+    return (json, bin);
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
 
+  static Future<Map<int, Color>> _extractTextureColors(
+    List<dynamic> jsonImages,
+    List<dynamic> jsonBufferViews,
+    Uint8List? bin,
+  ) async {
+    final colors = <int, Color>{};
+    if (bin == null) return colors;
+
+    for (var i = 0; i < jsonImages.length; i++) {
+      try {
+        final img = jsonImages[i] as Map<String, dynamic>;
+        final bvIdx = img['bufferView'] as int?;
+        if (bvIdx == null || bvIdx < 0 || bvIdx >= jsonBufferViews.length) {
+          continue;
+        }
+        final bv = jsonBufferViews[bvIdx] as Map<String, dynamic>;
+        final byteOffset = bv['byteOffset'] as int? ?? 0;
+        final byteLength = bv['byteLength'] as int? ?? 0;
+        if (byteLength <= 0 || byteOffset + byteLength > bin.length) continue;
+
+        final imageBytes = bin.sublist(byteOffset, byteOffset + byteLength);
+        final codec = await instantiateImageCodec(
+          imageBytes,
+          targetWidth: 1,
+          targetHeight: 1,
+        );
+        final frame = await codec.getNextFrame();
+        final byteData = await frame.image.toByteData(
+          format: ImageByteFormat.rawRgba,
+        );
+        frame.image.dispose();
+        if (byteData != null && byteData.lengthInBytes >= 4) {
+          final r = byteData.getUint8(0);
+          final g = byteData.getUint8(1);
+          final b = byteData.getUint8(2);
+          final a = byteData.getUint8(3);
+          if (a > 10) {
+            colors[i] = Color.fromARGB(a, r, g, b);
+          }
+        }
+      } catch (_) {
+        // Continue if any image cannot be downscaled
+      }
+    }
+    return colors;
+  }
+
   static ParsedModel _build(
     String fileName,
     Map<String, dynamic> gltf,
-    Uint8List? bin,
-  ) {
+    Uint8List? bin, {
+    Map<int, Color>? textureColors,
+  }) {
     final jsonNodes = gltf['nodes'] as List<dynamic>? ?? [];
     final jsonMeshes = gltf['meshes'] as List<dynamic>? ?? [];
     final jsonAccessors = gltf['accessors'] as List<dynamic>? ?? [];
@@ -124,6 +191,7 @@ class GlbParser {
 
     // ── Parse meshes ────────────────────────────────────────────────────
     final jsonMaterials = gltf['materials'] as List<dynamic>? ?? [];
+    final jsonTextures = gltf['textures'] as List<dynamic>? ?? [];
     final meshes = <MeshData>[];
     for (var mi = 0; mi < jsonMeshes.length; mi++) {
       final m = jsonMeshes[mi] as Map<String, dynamic>;
@@ -144,14 +212,30 @@ class GlbParser {
         final matIdx = prim['material'] as int?;
         final meshName = m['name'] as String?;
         if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
-          materialColor = _materialColor(
+          materialColor = _resolveMaterialColor(
             jsonMaterials[matIdx] as Map<String, dynamic>?,
             meshName: meshName,
+            textureColors: textureColors,
+            jsonTextures: jsonTextures,
           );
         } else {
-          materialColor = _materialColor(
+          materialColor = _resolveMaterialColor(
             null,
             meshName: meshName,
+            textureColors: textureColors,
+            jsonTextures: jsonTextures,
+          );
+        }
+
+        List<Color>? vertexColors;
+        final colorIdx = attrs['COLOR_0'] as int?;
+        if (colorIdx != null &&
+            colorIdx >= 0 &&
+            colorIdx < jsonAccessors.length) {
+          vertexColors = _readColorAccessor(
+            jsonAccessors[colorIdx] as Map<String, dynamic>,
+            jsonBufferViews,
+            bin,
           );
         }
 
@@ -178,7 +262,8 @@ class GlbParser {
             mode,
             allTriangles,
             allEdges,
-            materialColor,
+            materialColor: materialColor,
+            vertexColors: vertexColors,
           );
         } else {
           // glTF's default primitive mode is TRIANGLES.
@@ -189,7 +274,8 @@ class GlbParser {
             mode,
             allTriangles,
             allEdges,
-            materialColor,
+            materialColor: materialColor,
+            vertexColors: vertexColors,
           );
         }
       }
@@ -309,6 +395,98 @@ class GlbParser {
     caseSensitive: false,
   );
 
+  /// Resolves an authored material colour using sampled embedded textures,
+  /// PBR baseColorFactor, and vertex colors, falling back to semantic recognition.
+  static Color? _resolveMaterialColor(
+    Map<String, dynamic>? material, {
+    String? meshName,
+    Map<int, Color>? textureColors,
+    List<dynamic>? jsonTextures,
+  }) {
+    Color? resolved;
+
+    if (material != null) {
+      final pbr = material['pbrMetallicRoughness'] as Map<String, dynamic>?;
+      Color? texColor;
+      if (pbr != null && textureColors != null) {
+        final baseColorTex = pbr['baseColorTexture'] as Map<String, dynamic>?;
+        if (baseColorTex != null) {
+          final texIdx = baseColorTex['index'] as int?;
+          if (texIdx != null) {
+            int imgIdx = texIdx;
+            if (jsonTextures != null &&
+                texIdx >= 0 &&
+                texIdx < jsonTextures.length) {
+              final texObj = jsonTextures[texIdx] as Map<String, dynamic>?;
+              imgIdx = texObj?['source'] as int? ?? texIdx;
+            }
+            if (textureColors.containsKey(imgIdx)) {
+              texColor = textureColors[imgIdx];
+            }
+          }
+        }
+      }
+
+      final factor = pbr?['baseColorFactor'] as List<dynamic>?;
+      double fr = 1.0, fg = 1.0, fb = 1.0, fa = 1.0;
+      bool hasCustomFactor = false;
+      if (factor != null && factor.length >= 3) {
+        fr = (factor[0] as num).toDouble().clamp(0.0, 1.0);
+        fg = (factor[1] as num).toDouble().clamp(0.0, 1.0);
+        fb = (factor[2] as num).toDouble().clamp(0.0, 1.0);
+        if (factor.length >= 4) {
+          fa = (factor[3] as num).toDouble().clamp(0.0, 1.0);
+        }
+        if ((fr - 1.0).abs() > 0.05 ||
+            (fg - 1.0).abs() > 0.05 ||
+            (fb - 1.0).abs() > 0.05 ||
+            (fa - 1.0).abs() > 0.05) {
+          hasCustomFactor = true;
+        }
+      }
+
+      if (texColor != null) {
+        final tr = (texColor.toARGB32() >> 16) & 0xFF;
+        final tg = (texColor.toARGB32() >> 8) & 0xFF;
+        final tb = texColor.toARGB32() & 0xFF;
+        final ta = (texColor.toARGB32() >> 24) & 0xFF;
+        final r = (tr * fr).round().clamp(0, 255);
+        final g = (tg * fg).round().clamp(0, 255);
+        final b = (tb * fb).round().clamp(0, 255);
+        final a = (ta * fa).round().clamp(0, 255);
+        resolved = Color.fromARGB(a, r, g, b);
+      } else if (hasCustomFactor) {
+        final r = (fr * 255.0).round().clamp(0, 255);
+        final g = (fg * 255.0).round().clamp(0, 255);
+        final b = (fb * 255.0).round().clamp(0, 255);
+        final a = (fa * 255.0).round().clamp(0, 255);
+        resolved = Color.fromARGB(a, r, g, b);
+      }
+    }
+
+    if (resolved == null) {
+      resolved = _materialColor(material, meshName: meshName);
+    } else {
+      final matName = (material?['name'] as String? ?? '').toLowerCase();
+      final mName = (meshName ?? '').toLowerCase();
+      final combined = '$matName $mName';
+      // If the material is glass and was authored opaque, give it realistic windshield tint
+      if (_glassMaterial.hasMatch(combined)) {
+        final a = (resolved.toARGB32() >> 24) & 0xFF;
+        if (a > 190) {
+          resolved = resolved.withAlpha(180);
+        }
+      }
+    }
+
+    if (material != null && (material['alphaMode'] as String?) == 'BLEND') {
+      final base = resolved ?? const Color(0xFF162A32);
+      final alpha = (base.toARGB32() >> 24) & 0xFF;
+      return base.withAlpha(alpha < 120 ? alpha : 120);
+    }
+    return resolved;
+  }
+
   /// Picks a flat viewport colour for a glTF material. When textured materials
   /// lack custom vertex colors, well-known material and mesh names get authentic
   /// automotive tints so glass, tyres, rims, interior, and lights are properly
@@ -354,7 +532,7 @@ class GlbParser {
     // drawn as opaque panels.
     if ((material['alphaMode'] as String?) == 'BLEND') {
       final base = color ?? const Color(0xFF162A32);
-      final alpha = (base.a * 255.0).round();
+      final alpha = (base.toARGB32() >> 24) & 0xFF;
       return base.withAlpha(alpha < 120 ? alpha : 120);
     }
     return color;
@@ -365,14 +543,23 @@ class GlbParser {
     int vertexOffset,
     int mode,
     List<Triangle> triangles,
-    Set<Edge> edges, [
+    Set<Edge> edges, {
     Color? materialColor,
-  ]) {
+    List<Color>? vertexColors,
+  }) {
+    Color? colorFor(int idx) {
+      if (vertexColors != null && idx >= 0 && idx < vertexColors.length) {
+        return vertexColors[idx];
+      }
+      return materialColor;
+    }
+
     void addTriangle(int a, int b, int c) {
       final i0 = a + vertexOffset;
       final i1 = b + vertexOffset;
       final i2 = c + vertexOffset;
-      triangles.add(Triangle(i0, i1, i2, materialColor));
+      final triCol = colorFor(a) ?? colorFor(b) ?? colorFor(c);
+      triangles.add(Triangle(i0, i1, i2, triCol));
     }
 
     void addEdge(int a, int b) {
@@ -527,6 +714,76 @@ class GlbParser {
           final o = byteOffset + i * 4;
           if (o + 4 <= bin.length) result.add(bd.getUint32(o, Endian.little));
       }
+    }
+    return result;
+  }
+
+  static List<Color> _readColorAccessor(
+    Map<String, dynamic> accessor,
+    List<dynamic> bufferViews,
+    Uint8List? bin,
+  ) {
+    if (bin == null) return const [];
+    final count = accessor['count'] as int? ?? 0;
+    final type = accessor['type'] as String? ?? 'VEC3';
+    final componentType = accessor['componentType'] as int? ?? 5126;
+    final bvIdx = accessor['bufferView'] as int?;
+    if (bvIdx == null || count <= 0) return const [];
+
+    final bv = bufferViews[bvIdx] as Map<String, dynamic>;
+    final baseOffset =
+        (bv['byteOffset'] as int? ?? 0) + (accessor['byteOffset'] as int? ?? 0);
+    final numComponents = type == 'VEC4' ? 4 : 3;
+
+    final defaultStride = switch (componentType) {
+      5121 => numComponents,
+      5123 => numComponents * 2,
+      5126 => numComponents * 4,
+      _ => numComponents * 4,
+    };
+    final byteStride = bv['byteStride'] as int? ?? defaultStride;
+
+    final bd = ByteData.sublistView(bin);
+    final result = <Color>[];
+
+    for (var i = 0; i < count; i++) {
+      final o = baseOffset + i * byteStride;
+      if (o >= bin.length) break;
+
+      double r = 1.0, g = 1.0, b = 1.0, a = 1.0;
+      switch (componentType) {
+        case 5121: // UNSIGNED_BYTE
+          if (o + numComponents <= bin.length) {
+            r = bd.getUint8(o) / 255.0;
+            g = bd.getUint8(o + 1) / 255.0;
+            b = bd.getUint8(o + 2) / 255.0;
+            if (numComponents == 4) a = bd.getUint8(o + 3) / 255.0;
+          }
+        case 5123: // UNSIGNED_SHORT
+          if (o + numComponents * 2 <= bin.length) {
+            r = bd.getUint16(o, Endian.little) / 65535.0;
+            g = bd.getUint16(o + 2, Endian.little) / 65535.0;
+            b = bd.getUint16(o + 4, Endian.little) / 65535.0;
+            if (numComponents == 4) {
+              a = bd.getUint16(o + 6, Endian.little) / 65535.0;
+            }
+          }
+        case 5126: // FLOAT
+          if (o + numComponents * 4 <= bin.length) {
+            r = bd.getFloat32(o, Endian.little).clamp(0.0, 1.0);
+            g = bd.getFloat32(o + 4, Endian.little).clamp(0.0, 1.0);
+            b = bd.getFloat32(o + 8, Endian.little).clamp(0.0, 1.0);
+            if (numComponents == 4) {
+              a = bd.getFloat32(o + 12, Endian.little).clamp(0.0, 1.0);
+            }
+          }
+      }
+
+      final ir = (r * 255.0).round().clamp(0, 255);
+      final ig = (g * 255.0).round().clamp(0, 255);
+      final ib = (b * 255.0).round().clamp(0, 255);
+      final ia = (a * 255.0).round().clamp(0, 255);
+      result.add(Color.fromARGB(ia, ir, ig, ib));
     }
     return result;
   }
