@@ -139,22 +139,13 @@ class GlbParser {
         final posIdx = attrs['POSITION'] as int?;
         if (posIdx == null) continue;
 
-        // Extract PBR material baseColorFactor if defined
+        // Resolve a viewport colour from the primitive's material.
         Color? materialColor;
         final matIdx = prim['material'] as int?;
         if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
-          final mat = jsonMaterials[matIdx] as Map<String, dynamic>?;
-          final pbr = mat?['pbrMetallicRoughness'] as Map<String, dynamic>?;
-          final baseColor = pbr?['baseColorFactor'] as List<dynamic>?;
-          if (baseColor != null && baseColor.length >= 3) {
-            final r = ((baseColor[0] as num).toDouble() * 255).round().clamp(0, 255);
-            final g = ((baseColor[1] as num).toDouble() * 255).round().clamp(0, 255);
-            final b = ((baseColor[2] as num).toDouble() * 255).round().clamp(0, 255);
-            final a = baseColor.length >= 4
-                ? ((baseColor[3] as num).toDouble() * 255).round().clamp(0, 255)
-                : 255;
-            materialColor = Color.fromARGB(a, r, g, b);
-          }
+          materialColor = _materialColor(
+            jsonMaterials[matIdx] as Map<String, dynamic>?,
+          );
         }
 
         final vOffset = allVerts.length;
@@ -272,6 +263,56 @@ class GlbParser {
       rootNodeIndices: roots,
       worldBBox: worldBBox,
     );
+  }
+
+  static final _glassMaterial = RegExp(
+    r'(glass|window|windshield|windscreen|visor)',
+    caseSensitive: false,
+  );
+  static final _tireMaterial = RegExp(
+    r'(tire|tyre|rubber)',
+    caseSensitive: false,
+  );
+  static final _metalMaterial = RegExp(
+    r'(chrome|alloy|aluminium|aluminum|steel|silver)',
+    caseSensitive: false,
+  );
+
+  /// Picks a flat viewport colour for a glTF material. The viewer cannot
+  /// sample textures, so textured materials fall back to the body colour
+  /// (null) rather than the white base factor, and well-known material names
+  /// get a sensible tint so glass, tyres and trim are distinguishable.
+  static Color? _materialColor(Map<String, dynamic>? material) {
+    if (material == null) return null;
+
+    final name = (material['name'] as String? ?? '').toLowerCase();
+    if (_glassMaterial.hasMatch(name)) return const Color(0xC0162A32);
+    if (_tireMaterial.hasMatch(name)) return const Color(0xFF1A1D1C);
+    if (_metalMaterial.hasMatch(name)) return const Color(0xFFB8C2C8);
+
+    final pbr = material['pbrMetallicRoughness'] as Map<String, dynamic>?;
+    final factor = pbr?['baseColorFactor'] as List<dynamic>?;
+    int channel(int i) =>
+        (((factor![i] as num).toDouble()) * 255).round().clamp(0, 255).toInt();
+
+    Color? color;
+    if (factor != null && factor.length >= 3) {
+      final r = channel(0), g = channel(1), b = channel(2);
+      final a = factor.length >= 4 ? channel(3) : 255;
+      final nearWhite = r > 240 && g > 240 && b > 240;
+      if (!(pbr?['baseColorTexture'] != null && nearWhite)) {
+        color = Color.fromARGB(a, r, g, b);
+      }
+    }
+
+    // Blended materials (light cones, glow planes, tinted glass) must not be
+    // drawn as opaque panels.
+    if ((material['alphaMode'] as String?) == 'BLEND') {
+      final base = color ?? const Color(0xFF162A32);
+      final alpha = (base.a * 255.0).round();
+      return base.withAlpha(alpha < 96 ? alpha : 96);
+    }
+    return color;
   }
 
   static void _appendTriangles(

@@ -1,11 +1,13 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'fullscreen.dart';
 import 'model_data.dart';
+import 'solid_mesh_lod.dart';
 
 // ── 3D Wireframe Viewer ─────────────────────────────────────────────────────
 //
@@ -1066,17 +1068,11 @@ class _TelemetryOverlay extends StatelessWidget {
 class _SolidTriangle {
   const _SolidTriangle({
     this.vertices,
-    this.p0,
-    this.p1,
-    this.p2,
     required this.depth,
     required this.color,
   });
 
   final List<Vec3>? vertices;
-  final Offset? p0;
-  final Offset? p1;
-  final Offset? p2;
   final double depth;
   final Color color;
 }
@@ -1700,28 +1696,22 @@ class _WireframeScenePainter extends CustomPainter {
     Offset? Function(Vec3) project,
     Vec3 eye,
   ) {
-    final totalTriangles = model!.instances.fold<int>(
-      0,
-      (sum, instance) => sum + instance.triangles.length,
-    );
-
-    if (totalTriangles == 0) {
-      // Fall back to clean wireframe of the original model if no triangle faces exist.
+    final scene = SolidScene.of(model!);
+    if (scene.isEmpty) {
+      // No triangle faces in the file: fall back to the wireframe.
       _drawModelWireframe(canvas, size, project);
       return;
     }
 
-    // Interactive budget: during active orbit/drag or auto-turntable, keep processed
-    // triangles bounded to ~3,200 for silky-smooth 60 FPS in Flutter CanvasKit.
-    // When stationary (isInteracting == false), allow full geometric detail (up to 16,000 front-faces)
-    // for a watertight, crisp representation matching Blender and Sketchfab.
-    // Note: since back-face culling eliminates ~50% of triangles, the effective front-face count is ~totalTriangles / 2.
-    final activeBudget = isInteracting ? 3200 : 16000;
-    final stride = totalTriangles <= (activeBudget * 2)
-        ? 1
-        : max(1, (totalTriangles / (activeBudget * 2)).ceil());
+    // A coherent level of detail (vertex-clustered, long triangles split)
+    // instead of skipping every Nth triangle, which left holes in the surface.
+    final mesh = isInteracting ? scene.interactive : scene.full;
+    final triCount = mesh.triangleCount;
+    if (triCount == 0) {
+      _drawModelWireframe(canvas, size, project);
+      return;
+    }
 
-    // Precalculate lighting directions once outside loop
     final keyLight = switch (lighting) {
       ViewerLighting.studio => const Vec3(-0.50, 0.82, 0.40),
       ViewerLighting.daylight => const Vec3(-0.55, 0.95, 0.15),
@@ -1733,242 +1723,211 @@ class _WireframeScenePainter extends CustomPainter {
     final fx = fillLight.x, fy = fillLight.y, fz = fillLight.z;
     final isFlat = lighting == ViewerLighting.flat;
 
-    final faces = <_SolidTriangle>[];
+    // ── 1. Project every vertex once ──────────────────────────────────────
+    final m = viewProj.m;
+    final m0 = m[0], m1 = m[1], m3 = m[3];
+    final m4 = m[4], m5 = m[5], m7 = m[7];
+    final m8 = m[8], m9 = m[9], m11 = m[11];
+    final m12 = m[12], m13 = m[13], m15 = m[15];
+    final width = size.width;
+    final height = size.height;
+    const near = 0.05;
 
-    for (final instance in model!.instances) {
-      final triangles = instance.triangles;
-      final numTriangles = triangles.length;
-      if (numTriangles == 0) continue;
-
-      final isSelected = instance.nodeIndex == selectedNodeIndex;
-      final nodeName = instance.nodeIndex < model!.nodes.length
-          ? model!.nodes[instance.nodeIndex].name.toLowerCase()
-          : '';
-      final isWheel = nodeName.contains('wheel') ||
-          nodeName.contains('tire') ||
-          nodeName.contains('rim');
-      final isGlass = nodeName.contains('glass') ||
-          nodeName.contains('window') ||
-          nodeName.contains('windshield');
-
-      final Color baseMeshColor;
-      if (isSelected) {
-        baseMeshColor = const Color(0xFF00E5FF);
-      } else if (isGlass) {
-        baseMeshColor = const Color(0xFF1E3A42);
-      } else if (isWheel) {
-        baseMeshColor = const Color(0xFF26322C);
-      } else {
-        baseMeshColor = bodyColor;
-      }
-
-      final verts = instance.worldVertices;
-      final numVerts = verts.length;
-      if (numVerts == 0) continue;
-
-      // Pre-transform unique vertices of this instance into clip and screen space
-      final projX = Float64List(numVerts);
-      final projY = Float64List(numVerts);
-      final projW = Float64List(numVerts);
-      final inFront = List<bool>.filled(numVerts, false);
-
-      for (var vIdx = 0; vIdx < numVerts; vIdx++) {
-        final v = verts[vIdx];
-        final clip = viewProj.transformClip(v);
-        final w = clip[3];
-        projW[vIdx] = w;
-        if (w > 0.05) {
-          inFront[vIdx] = true;
-          final invW = 1.0 / w;
-          projX[vIdx] = (clip[0] * invW * 0.5 + 0.5) * size.width + panX;
-          projY[vIdx] = (1.0 - (clip[1] * invW * 0.5 + 0.5)) * size.height + panY;
-        }
-      }
-
-      for (var i = 0; i < numTriangles; i += stride) {
-        final triangle = triangles[i];
-        final ia = triangle.a;
-        final ib = triangle.b;
-        final ic = triangle.c;
-
-        if (ia >= numVerts || ib >= numVerts || ic >= numVerts) {
-          continue;
-        }
-
-        final allInFront = inFront[ia] && inFront[ib] && inFront[ic];
-        if (!allInFront && projW[ia] <= 0.05 && projW[ib] <= 0.05 && projW[ic] <= 0.05) {
-          continue;
-        }
-
-        final v0 = verts[ia];
-        final v1 = verts[ib];
-        final v2 = verts[ic];
-
-        // Face normal in world space
-        final e1x = v1.x - v0.x;
-        final e1y = v1.y - v0.y;
-        final e1z = v1.z - v0.z;
-        final e2x = v2.x - v0.x;
-        final e2y = v2.y - v0.y;
-        final e2z = v2.z - v0.z;
-
-        final nx = e1y * e2z - e1z * e2y;
-        final ny = e1z * e2x - e1x * e2z;
-        final nz = e1x * e2y - e1y * e2x;
-
-        // Centroid & view vector
-        final cx = (v0.x + v1.x + v2.x) * (1.0 / 3.0);
-        final cy = (v0.y + v1.y + v2.y) * (1.0 / 3.0);
-        final cz = (v0.z + v1.z + v2.z) * (1.0 / 3.0);
-
-        final toEyeX = eye.x - cx;
-        final toEyeY = eye.y - cy;
-        final toEyeZ = eye.z - cz;
-
-        // Strict back-face culling: face normal must point towards eye
-        final dotEye = nx * toEyeX + ny * toEyeY + nz * toEyeZ;
-        if (dotEye <= 0.001) {
-          continue;
-        }
-
-        Offset? p0;
-        Offset? p1;
-        Offset? p2;
-        final double depth = (projW[ia] + projW[ib] + projW[ic]) * (1.0 / 3.0);
-
-        if (allInFront) {
-          final sx0 = projX[ia];
-          final sy0 = projY[ia];
-          final sx1 = projX[ib];
-          final sy1 = projY[ib];
-          final sx2 = projX[ic];
-          final sy2 = projY[ic];
-
-          // 2D screen viewport frustum culling
-          final minX = min(sx0, min(sx1, sx2));
-          final maxX = max(sx0, max(sx1, sx2));
-          if (maxX < 0 || minX > size.width) continue;
-          final minY = min(sy0, min(sy1, sy2));
-          final maxY = max(sy0, max(sy1, sy2));
-          if (maxY < 0 || minY > size.height) continue;
-
-          // Sub-pixel sliver culling (less than 0.6 px^2)
-          final signedArea = (sx1 - sx0) * (sy2 - sy0) - (sy1 - sy0) * (sx2 - sx0);
-          if (signedArea.abs() < 0.6) continue;
-
-          p0 = Offset(sx0, sy0);
-          p1 = Offset(sx1, sy1);
-          p2 = Offset(sx2, sy2);
-        }
-
-        final nLenSq = nx * nx + ny * ny + nz * nz;
-        if (nLenSq < 1e-10) continue;
-        final invNLen = 1.0 / sqrt(nLenSq);
-        final normX = nx * invNLen;
-        final normY = ny * invNLen;
-        final normZ = nz * invNLen;
-
-        final eyeDistSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
-        if (eyeDistSq < 1e-10) continue;
-        final invEyeDist = 1.0 / sqrt(eyeDistSq);
-        final eyex = toEyeX * invEyeDist;
-        final eyey = toEyeY * invEyeDist;
-        final eyez = toEyeZ * invEyeDist;
-
-        final ndotEye = normX * eyex + normY * eyey + normZ * eyez;
-
-        final Color baseColor = isSelected
-            ? const Color(0xFF00E5FF)
-            : (triangle.color ?? baseMeshColor);
-
-        final Color shadedColor;
-        if (isFlat) {
-          shadedColor = baseColor;
-        } else {
-          final dotKey = normX * kx + normY * ky + normZ * kz;
-          final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
-
-          final dotFill = normX * fx + normY * fy + normZ * fz;
-          final diffuseFill = dotFill > 0.0 ? dotFill * 0.22 : 0.0;
-
-          // Blinn-Phong specular highlight via 4 successive squarings
-          final hx = kx + eyex;
-          final hy = ky + eyey;
-          final hz = kz + eyez;
-          final hLenSq = hx * hx + hy * hy + hz * hz;
-          double specular = 0.0;
-          if (hLenSq > 1e-6) {
-            final invHLen = 1.0 / sqrt(hLenSq);
-            final ndoth = normX * (hx * invHLen) + normY * (hy * invHLen) + normZ * (hz * invHLen);
-            if (ndoth > 0.0) {
-              final x2 = ndoth * ndoth;
-              final x4 = x2 * x2;
-              final x8 = x4 * x4;
-              final x16 = x8 * x8;
-              specular = (x16 * x2) * 0.38;
-            }
-          }
-
-          // Fresnel rim light
-          final oneMinusNdot = 1.0 - (ndotEye > 1.0 ? 1.0 : (ndotEye < 0.0 ? 0.0 : ndotEye));
-          final f2 = oneMinusNdot * oneMinusNdot;
-          final fresnel = (f2 * sqrt(oneMinusNdot)) * 0.24;
-
-          final factor = (0.32 + diffuseKey * 0.55 + diffuseFill + specular + fresnel)
-              .clamp(0.20, 1.25);
-
-          final r = ((baseColor.r * 255.0) * factor).round().clamp(0, 255);
-          final g = ((baseColor.g * 255.0) * factor).round().clamp(0, 255);
-          final b = ((baseColor.b * 255.0) * factor).round().clamp(0, 255);
-          shadedColor = Color.fromARGB((baseColor.a * 255.0).round().clamp(0, 255), r, g, b);
-        }
-
-        if (p0 != null && p1 != null && p2 != null) {
-          faces.add(
-            _SolidTriangle(
-              p0: p0,
-              p1: p1,
-              p2: p2,
-              depth: depth,
-              color: shadedColor,
-            ),
-          );
-        } else {
-          faces.add(
-            _SolidTriangle(
-              vertices: [v0, v1, v2],
-              depth: depth,
-              color: shadedColor,
-            ),
-          );
-        }
+    final pos = mesh.positions;
+    final sx = mesh.screenX, sy = mesh.screenY, sw = mesh.screenW;
+    for (var v = 0, p = 0; v < mesh.vertexCount; v++, p += 3) {
+      final x = pos[p], y = pos[p + 1], z = pos[p + 2];
+      final w = m3 * x + m7 * y + m11 * z + m15;
+      sw[v] = w;
+      if (w > near) {
+        final invW = 1.0 / w;
+        final cx = m0 * x + m4 * y + m8 * z + m12;
+        final cy = m1 * x + m5 * y + m9 * z + m13;
+        sx[v] = (cx * invW * 0.5 + 0.5) * width + panX;
+        sy[v] = (1.0 - (cy * invW * 0.5 + 0.5)) * height + panY;
       }
     }
 
-    // Painter's algorithm: sort faces from furthest to nearest along view ray
-    faces.sort((a, b) => b.depth.compareTo(a.depth));
+    // ── 2. Cull, shade, and record visible triangles ───────────────────────
+    final normals = mesh.normals;
+    final centroids = mesh.centroids;
+    final indices = mesh.indices;
+    final triNode = mesh.triNode;
+    final triKind = mesh.triKind;
+    final triColor = mesh.triColor;
+    final visTri = mesh.visTri;
+    final visColor = mesh.visColor;
+    final visDepth = mesh.visDepth;
 
-    // Render all visible front-facing polygons with authentic anti-aliased solid fills
-    final fillPaint = Paint()..style = PaintingStyle.fill;
-    final path = Path();
+    const selectedArgb = 0xFF00E5FF;
+    final kindColors = <int>[
+      bodyColor.toARGB32(),
+      0xFF1E3A42, // glass
+      0xFF26322C, // wheel
+    ];
+    final selected = selectedNodeIndex ?? -1;
 
-    for (final face in faces) {
-      if (face.p0 != null && face.p1 != null && face.p2 != null) {
-        path.reset();
-        path.moveTo(face.p0!.dx, face.p0!.dy);
-        path.lineTo(face.p1!.dx, face.p1!.dy);
-        path.lineTo(face.p2!.dx, face.p2!.dy);
-        path.close();
-        canvas.drawPath(path, fillPaint..color = face.color);
-      } else if (face.vertices != null) {
-        _drawClippedPolygon(
-          canvas,
-          viewProj,
-          size,
-          face.vertices!,
-          fillPaint..color = face.color,
-        );
+    var visCount = 0;
+    var minDepth = double.infinity;
+    var maxDepth = double.negativeInfinity;
+
+    for (var t = 0; t < triCount; t++) {
+      final t3 = t * 3;
+      final nx = normals[t3], ny = normals[t3 + 1], nz = normals[t3 + 2];
+      final cx = centroids[t3], cy = centroids[t3 + 1], cz = centroids[t3 + 2];
+
+      final toEyeX = eye.x - cx;
+      final toEyeY = eye.y - cy;
+      final toEyeZ = eye.z - cz;
+
+      // Back-face culling: the face normal must point towards the eye.
+      if (nx * toEyeX + ny * toEyeY + nz * toEyeZ <= 0.0) continue;
+
+      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
+      if (sw[ia] <= near || sw[ib] <= near || sw[ic] <= near) continue;
+
+      final x0 = sx[ia], y0 = sy[ia];
+      final x1 = sx[ib], y1 = sy[ib];
+      final x2 = sx[ic], y2 = sy[ic];
+
+      // Off-screen culling.
+      if (max(x0, max(x1, x2)) < 0 || min(x0, min(x1, x2)) > width) continue;
+      if (max(y0, max(y1, y2)) < 0 || min(y0, min(y1, y2)) > height) continue;
+
+      // Only exactly-degenerate triangles are dropped. Small triangles are
+      // kept: culling them by area opened pinholes in dense models.
+      final area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+      if (area.abs() < 1e-6) continue;
+
+      final eyeDistSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
+      if (eyeDistSq < 1e-12) continue;
+      final invEye = 1.0 / sqrt(eyeDistSq);
+      final ex = toEyeX * invEye;
+      final ey = toEyeY * invEye;
+      final ez = toEyeZ * invEye;
+
+      final int base;
+      if (triNode[t] == selected) {
+        base = selectedArgb;
+      } else {
+        final materialColor = triColor[t];
+        base = materialColor != 0 ? materialColor : kindColors[triKind[t]];
       }
+
+      int argb = base;
+      if (!isFlat) {
+        final dotKey = nx * kx + ny * ky + nz * kz;
+        final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
+        final dotFill = nx * fx + ny * fy + nz * fz;
+        final diffuseFill = dotFill > 0.0 ? dotFill * 0.22 : 0.0;
+
+        // Blinn-Phong highlight via successive squarings.
+        final hx = kx + ex, hy = ky + ey, hz = kz + ez;
+        final hLenSq = hx * hx + hy * hy + hz * hz;
+        var specular = 0.0;
+        if (hLenSq > 1e-6) {
+          final invH = 1.0 / sqrt(hLenSq);
+          final ndoth = nx * hx * invH + ny * hy * invH + nz * hz * invH;
+          if (ndoth > 0.0) {
+            final s2 = ndoth * ndoth;
+            final s4 = s2 * s2;
+            final s8 = s4 * s4;
+            final s16 = s8 * s8;
+            specular = s16 * s2 * 0.38;
+          }
+        }
+
+        // Fresnel rim light.
+        var ndotEye = nx * ex + ny * ey + nz * ez;
+        if (ndotEye > 1.0) ndotEye = 1.0;
+        if (ndotEye < 0.0) ndotEye = 0.0;
+        final oneMinus = 1.0 - ndotEye;
+        final fresnel = oneMinus * oneMinus * sqrt(oneMinus) * 0.24;
+
+        var factor =
+            0.32 + diffuseKey * 0.55 + diffuseFill + specular + fresnel;
+        if (factor < 0.20) factor = 0.20;
+        if (factor > 1.25) factor = 1.25;
+
+        var r = (((base >> 16) & 0xFF) * factor).round();
+        var g = (((base >> 8) & 0xFF) * factor).round();
+        var b = ((base & 0xFF) * factor).round();
+        if (r > 255) r = 255;
+        if (g > 255) g = 255;
+        if (b > 255) b = 255;
+        argb = (base & 0xFF000000) | (r << 16) | (g << 8) | b;
+      }
+
+      final depth = m3 * cx + m7 * cy + m11 * cz + m15;
+      visTri[visCount] = t;
+      visColor[visCount] = argb;
+      visDepth[visCount] = depth;
+      if (depth < minDepth) minDepth = depth;
+      if (depth > maxDepth) maxDepth = depth;
+      visCount++;
+    }
+
+    if (visCount == 0) return;
+
+    // ── 3. Painter's order: far to near, bucket sort on view depth ─────────
+    // O(n) and based on the true view-space depth of each triangle's
+    // centroid; far cheaper than a comparison sort on tens of thousands of
+    // triangles per frame.
+    const bucketCount = 16384;
+    final range = maxDepth - minDepth;
+    final scale = range > 1e-9 ? (bucketCount - 1) / range : 0.0;
+    final visBucket = mesh.visBucket;
+    final cursor = Int32List(bucketCount + 1);
+    for (var i = 0; i < visCount; i++) {
+      var bucket = ((maxDepth - visDepth[i]) * scale).toInt();
+      if (bucket < 0) bucket = 0;
+      if (bucket > bucketCount - 1) bucket = bucketCount - 1;
+      visBucket[i] = bucket;
+      cursor[bucket + 1]++;
+    }
+    for (var b = 0; b < bucketCount; b++) {
+      cursor[b + 1] += cursor[b];
+    }
+    final order = mesh.sortedOrder;
+    for (var i = 0; i < visCount; i++) {
+      order[cursor[visBucket[i]]++] = i;
+    }
+
+    // ── 4. Emit sorted triangles as vertex-coloured geometry ───────────────
+    // drawVertices rasterises without per-triangle anti-aliasing, so there
+    // are no dark seams between neighbouring triangles, and it is one GPU
+    // draw per chunk instead of one drawPath per triangle.
+    final drawPos = mesh.drawPositions;
+    final drawCol = mesh.drawColors;
+    for (var k = 0; k < visCount; k++) {
+      final i = order[k];
+      final t3 = visTri[i] * 3;
+      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
+      final p = k * 6;
+      drawPos[p] = sx[ia];
+      drawPos[p + 1] = sy[ia];
+      drawPos[p + 2] = sx[ib];
+      drawPos[p + 3] = sy[ib];
+      drawPos[p + 4] = sx[ic];
+      drawPos[p + 5] = sy[ic];
+      final c = k * 3;
+      final argb = visColor[i];
+      drawCol[c] = argb;
+      drawCol[c + 1] = argb;
+      drawCol[c + 2] = argb;
+    }
+
+    final paint = Paint();
+    const chunk = 20000;
+    for (var start = 0; start < visCount; start += chunk) {
+      final count = min(chunk, visCount - start);
+      final vertices = ui.Vertices.raw(
+        ui.VertexMode.triangles,
+        Float32List.sublistView(drawPos, start * 6, (start + count) * 6),
+        colors: Int32List.sublistView(drawCol, start * 3, (start + count) * 3),
+      );
+      canvas.drawVertices(vertices, BlendMode.dst, paint);
+      vertices.dispose();
     }
   }
 
