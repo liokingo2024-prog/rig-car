@@ -69,25 +69,6 @@ enum GroundGridStyle {
   }
 }
 
-class AutomotivePaintSwatch {
-  const AutomotivePaintSwatch(this.name, this.color);
-  final String name;
-  final Color color;
-}
-
-const automotivePaints = [
-  AutomotivePaintSwatch('Original Colors', Colors.transparent),
-  AutomotivePaintSwatch('Studio Platinum', Color(0xFFD6DBDF)),
-  AutomotivePaintSwatch('Polar White', Color(0xFFF8FAFC)),
-  AutomotivePaintSwatch('Rosso Corsa Red', Color(0xFFDC2626)),
-  AutomotivePaintSwatch('Apex Sapphire Blue', Color(0xFF2563EB)),
-  AutomotivePaintSwatch('Obsidian Black', Color(0xFF1E2229)),
-  AutomotivePaintSwatch('Nardo Slate Grey', Color(0xFF64748B)),
-  AutomotivePaintSwatch('Cyber Mint Green', Color(0xFF10B981)),
-  AutomotivePaintSwatch('Sunset Amber Orange', Color(0xFFEA580C)),
-  AutomotivePaintSwatch('Speedway Yellow', Color(0xFFF59E0B)),
-];
-
 class WireframeViewer extends StatefulWidget {
   const WireframeViewer({
     super.key,
@@ -97,8 +78,7 @@ class WireframeViewer extends StatefulWidget {
     this.selectedNodeIndex,
     this.onNodeSelected,
     this.accentColor = const Color(0xFF10B981),
-    this.bodyColor = Colors.transparent,
-    this.onBodyColorChanged,
+    this.bodyColor = const Color(0xFFD6DBDF),
     this.wheelColor = const Color(0xFF34D399),
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
@@ -112,7 +92,6 @@ class WireframeViewer extends StatefulWidget {
   final ValueChanged<int>? onNodeSelected;
   final Color accentColor;
   final Color bodyColor;
-  final ValueChanged<Color>? onBodyColorChanged;
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
@@ -125,8 +104,6 @@ class WireframeViewer extends StatefulWidget {
 class _WireframeViewerState extends State<WireframeViewer>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animController;
-  Color? _activeBodyColor;
-  Color get _currentBodyColor => _activeBodyColor ?? widget.bodyColor;
   bool _autoTurntable = false;
   bool _isFullscreen = false;
   bool _isInteracting = false;
@@ -174,9 +151,6 @@ class _WireframeViewerState extends State<WireframeViewer>
     super.didUpdateWidget(oldWidget);
     if (widget.model != oldWidget.model && widget.model != null) {
       _resetCameraToModel();
-    }
-    if (widget.bodyColor != oldWidget.bodyColor) {
-      _activeBodyColor = widget.bodyColor;
     }
   }
 
@@ -313,7 +287,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           showMarkers: _showMarkers,
                           denseWireframe: _denseWireframe,
                           accentColor: widget.accentColor,
-                          bodyColor: _currentBodyColor,
+                          bodyColor: widget.bodyColor,
                           wheelColor: widget.wheelColor,
                           wireColor: widget.wireColor,
                           centerOfMassY: widget.centerOfMassY,
@@ -551,90 +525,6 @@ class _WireframeViewerState extends State<WireframeViewer>
                             ),
                             const SizedBox(width: 4),
 
-                            // 3b. Vehicle Paint Color Dropdown
-                            PopupMenuButton<Color>(
-                              tooltip: 'Vehicle paint color',
-                              initialValue: _currentBodyColor,
-                              onSelected: (color) {
-                                setState(() => _activeBodyColor = color);
-                                widget.onBodyColorChanged?.call(color);
-                              },
-                              color: const Color(0xFF111714),
-                              surfaceTintColor: Colors.transparent,
-                              elevation: 8,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: const BorderSide(
-                                  color: Color(0xFF223127),
-                                ),
-                              ),
-                              itemBuilder: (context) =>
-                                  automotivePaints.map((paint) {
-                                    final selected =
-                                        paint.color.toARGB32() ==
-                                        _currentBodyColor.toARGB32();
-                                    return PopupMenuItem<Color>(
-                                      value: paint.color,
-                                      height: 36,
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            width: 14,
-                                            height: 14,
-                                            decoration: BoxDecoration(
-                                              gradient: paint.color == Colors.transparent
-                                                  ? const SweepGradient(colors: [
-                                                      Colors.red,
-                                                      Colors.yellow,
-                                                      Colors.green,
-                                                      Colors.blue,
-                                                      Colors.purple,
-                                                      Colors.red,
-                                                    ])
-                                                  : null,
-                                              color: paint.color == Colors.transparent
-                                                  ? null
-                                                  : paint.color,
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: Colors.white30,
-                                                width: 1,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Text(
-                                            paint.name,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: selected
-                                                  ? const Color(0xFFF0FDF4)
-                                                  : const Color(0xFFC9D1D9),
-                                              fontWeight: selected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                          if (selected) ...[
-                                            const Spacer(),
-                                            const Icon(
-                                              Icons.check,
-                                              size: 14,
-                                              color: Color(0xFF10B981),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    );
-                                  }).toList(),
-                              child: _ViewerControl(
-                                icon: Icons.palette_outlined,
-                                label: isCompact ? '' : 'Paint',
-                                active: false,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-
                             // 4. Quick Actions Capsule (Turntable + Reset)
                             Container(
                               decoration: BoxDecoration(
@@ -796,7 +686,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                     _LegendItem(color: widget.wheelColor, label: 'Wheels'),
                     const SizedBox(width: 8),
                   ],
-                  _LegendItem(color: _currentBodyColor, label: 'Body'),
+                  _LegendItem(color: widget.bodyColor, label: 'Body'),
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
                   const SizedBox(width: 16),
@@ -1934,7 +1824,7 @@ class _WireframeScenePainter extends CustomPainter {
 
     const selectedArgb = 0xFF00E5FF;
     final kindColors = <int>[
-      bodyColor.toARGB32(), // 0: solidKindBody
+      0xFFD6DBDF,           // 0: solidKindBody (fallback neutral when model has no authored color)
       0xCC162832,           // 1: solidKindGlass (deep tinted cockpit glass)
       0xFF191C1E,           // 2: solidKindWheel (dark tire rubber)
       0xFFC8D1D7,           // 3: solidKindRim (satin metallic alloy)
@@ -2004,24 +1894,19 @@ class _WireframeScenePainter extends CustomPainter {
         base = selectedArgb;
       } else {
         final materialColor = triColor[t];
-        final isCustomPaint = bodyColor != Colors.transparent &&
-            (bodyColor.toARGB32() & 0xFF000000) != 0;
-        final k = triKind[t];
-
-        if (isCustomPaint && k == 0 /* solidKindBody */) {
-          base = bodyColor.toARGB32();
-        } else if (materialColor != 0) {
+        if (materialColor != 0) {
           base = materialColor;
         } else {
+          final k = triKind[t];
           if (k == 2 /* solidKindWheel */) {
             // Intelligent Rim vs Tire separation:
             // Lateral outer normal (|nx| > 0.45) is the alloy wheel rim/spoke face!
             // Radial tread or inner cylinder (|nx| <= 0.45) is dark tire rubber!
             base = effNx.abs() > 0.45 ? 0xFFC8D1D7 : 0xFF191C1E;
           } else if (k < kindColors.length) {
-            base = (k == 0 && !isCustomPaint) ? 0xFFD6DBDF : kindColors[k];
+            base = kindColors[k];
           } else {
-            base = isCustomPaint ? bodyColor.toARGB32() : 0xFFD6DBDF;
+            base = 0xFFD6DBDF;
           }
         }
       }
@@ -2036,17 +1921,17 @@ class _WireframeScenePainter extends CustomPainter {
         final diffuseRim = dotRim > 0.0 ? dotRim : 0.0;
 
         var ambient = ambientBase + ambientScale * effNy;
-        if (ambient < 0.12) ambient = 0.12;
-        if (ambient > 0.40) ambient = 0.40;
+        if (ambient < 0.20) ambient = 0.20;
+        if (ambient > 0.45) ambient = 0.45;
 
         var diffuse = ambient +
             diffuseKey * keyIntensity +
             diffuseFill * fillIntensity +
             diffuseRim * rimIntensity;
-        if (diffuse < 0.15) diffuse = 0.15;
-        if (diffuse > 1.15) diffuse = 1.15;
+        if (diffuse < 0.25) diffuse = 0.25;
+        if (diffuse > 1.05) diffuse = 1.05;
 
-        // Blinn-Phong highlight via successive squarings (reflection of white light sources)
+        // Clean specular highlight (reflection of key light source)
         final hx = keyLight.x + ex, hy = keyLight.y + ey, hz = keyLight.z + ez;
         final hLenSq = hx * hx + hy * hy + hz * hz;
         var specKey = 0.0;
@@ -2059,32 +1944,11 @@ class _WireframeScenePainter extends CustomPainter {
             final s8 = s4 * s4;
             final s16 = s8 * s8;
             final s32 = s16 * s16;
-            specKey = s32 * 0.50;
+            specKey = s32 * 0.35;
           }
         }
 
-        final hrx = rimLight.x + ex, hry = rimLight.y + ey, hrz = rimLight.z + ez;
-        final hrLenSq = hrx * hrx + hry * hry + hrz * hrz;
-        var specRim = 0.0;
-        if (hrLenSq > 1e-6) {
-          final invH = 1.0 / sqrt(hrLenSq);
-          final ndoth = effNx * hrx * invH + effNy * hry * invH + effNz * hrz * invH;
-          if (ndoth > 0.0) {
-            final s2 = ndoth * ndoth;
-            final s4 = s2 * s2;
-            final s8 = s4 * s4;
-            specRim = s8 * 0.20;
-          }
-        }
-
-        // Fresnel silhouette rim light at glancing angles
-        var ndotEye = effNx * ex + effNy * ey + effNz * ez;
-        if (ndotEye > 1.0) ndotEye = 1.0;
-        if (ndotEye < 0.0) ndotEye = 0.0;
-        final oneMinus = 1.0 - ndotEye;
-        final fresnel = oneMinus * oneMinus * oneMinus * 0.22;
-
-        final whiteGloss = ((specKey + specRim) * 255.0 + fresnel * 110.0);
+        final whiteGloss = specKey * 255.0;
 
         final baseR = (base >> 16) & 0xFF;
         final baseG = (base >> 8) & 0xFF;

@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:convert' hide Codec;
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -88,38 +88,91 @@ class GlbParser {
     Uint8List? bin,
   ) async {
     final colors = <int, Color>{};
-    if (bin == null) return colors;
 
     for (var i = 0; i < jsonImages.length; i++) {
       try {
         final img = jsonImages[i] as Map<String, dynamic>;
+        Uint8List? imageBytes;
         final bvIdx = img['bufferView'] as int?;
-        if (bvIdx == null || bvIdx < 0 || bvIdx >= jsonBufferViews.length) {
-          continue;
+        if (bvIdx != null &&
+            bvIdx >= 0 &&
+            bvIdx < jsonBufferViews.length &&
+            bin != null) {
+          final bv = jsonBufferViews[bvIdx] as Map<String, dynamic>;
+          final byteOffset = bv['byteOffset'] as int? ?? 0;
+          final byteLength = bv['byteLength'] as int? ?? 0;
+          if (byteLength > 0 && byteOffset + byteLength <= bin.length) {
+            imageBytes = bin.sublist(byteOffset, byteOffset + byteLength);
+          }
+        } else if (img['uri'] is String) {
+          final uri = img['uri'] as String;
+          if (uri.startsWith('data:')) {
+            final comma = uri.indexOf(',');
+            if (comma != -1) {
+              imageBytes = base64Decode(uri.substring(comma + 1));
+            }
+          }
         }
-        final bv = jsonBufferViews[bvIdx] as Map<String, dynamic>;
-        final byteOffset = bv['byteOffset'] as int? ?? 0;
-        final byteLength = bv['byteLength'] as int? ?? 0;
-        if (byteLength <= 0 || byteOffset + byteLength > bin.length) continue;
 
-        final imageBytes = bin.sublist(byteOffset, byteOffset + byteLength);
-        final codec = await instantiateImageCodec(
-          imageBytes,
-          targetWidth: 1,
-          targetHeight: 1,
-        );
+        if (imageBytes == null || imageBytes.isEmpty) continue;
+
+        Codec codec;
+        try {
+          codec = await instantiateImageCodec(
+            imageBytes,
+            targetWidth: 1,
+            targetHeight: 1,
+          );
+        } catch (_) {
+          codec = await instantiateImageCodec(imageBytes);
+        }
+
         final frame = await codec.getNextFrame();
-        final byteData = await frame.image.toByteData(
+        final uiImg = frame.image;
+        final byteData = await uiImg.toByteData(
           format: ImageByteFormat.rawRgba,
         );
-        frame.image.dispose();
+        final w = uiImg.width;
+        final h = uiImg.height;
+        uiImg.dispose();
+
         if (byteData != null && byteData.lengthInBytes >= 4) {
-          final r = byteData.getUint8(0);
-          final g = byteData.getUint8(1);
-          final b = byteData.getUint8(2);
-          final a = byteData.getUint8(3);
-          if (a > 10) {
-            colors[i] = Color.fromARGB(a, r, g, b);
+          final cx = w ~/ 2;
+          final cy = h ~/ 2;
+          final offset = (cy * w + cx) * 4;
+          if (offset + 4 <= byteData.lengthInBytes) {
+            final r = byteData.getUint8(offset);
+            final g = byteData.getUint8(offset + 1);
+            final b = byteData.getUint8(offset + 2);
+            final a = byteData.getUint8(offset + 3);
+            if (a > 10) {
+              colors[i] = Color.fromARGB(a, r, g, b);
+            }
+          }
+        }
+
+        // Direct PNG PLTE palette fallback
+        if (!colors.containsKey(i) &&
+            imageBytes.length > 20 &&
+            imageBytes[0] == 0x89 &&
+            imageBytes[1] == 0x50 &&
+            imageBytes[2] == 0x4E &&
+            imageBytes[3] == 0x47) {
+          for (var p = 8; p < imageBytes.length - 12;) {
+            final len =
+                ByteData.sublistView(imageBytes).getUint32(p, Endian.big);
+            final name =
+                String.fromCharCodes(imageBytes.sublist(p + 4, p + 8));
+            if (name == 'PLTE' && len >= 3) {
+              colors[i] = Color.fromARGB(
+                255,
+                imageBytes[p + 8],
+                imageBytes[p + 9],
+                imageBytes[p + 10],
+              );
+              break;
+            }
+            p += 12 + len;
           }
         }
       } catch (_) {
@@ -429,19 +482,12 @@ class GlbParser {
 
       final factor = pbr?['baseColorFactor'] as List<dynamic>?;
       double fr = 1.0, fg = 1.0, fb = 1.0, fa = 1.0;
-      bool hasCustomFactor = false;
       if (factor != null && factor.length >= 3) {
         fr = (factor[0] as num).toDouble().clamp(0.0, 1.0);
         fg = (factor[1] as num).toDouble().clamp(0.0, 1.0);
         fb = (factor[2] as num).toDouble().clamp(0.0, 1.0);
         if (factor.length >= 4) {
           fa = (factor[3] as num).toDouble().clamp(0.0, 1.0);
-        }
-        if ((fr - 1.0).abs() > 0.05 ||
-            (fg - 1.0).abs() > 0.05 ||
-            (fb - 1.0).abs() > 0.05 ||
-            (fa - 1.0).abs() > 0.05) {
-          hasCustomFactor = true;
         }
       }
 
@@ -455,12 +501,30 @@ class GlbParser {
         final b = (tb * fb).round().clamp(0, 255);
         final a = (ta * fa).round().clamp(0, 255);
         resolved = Color.fromARGB(a, r, g, b);
-      } else if (hasCustomFactor) {
+      } else if (factor != null && factor.length >= 3) {
         final r = (fr * 255.0).round().clamp(0, 255);
         final g = (fg * 255.0).round().clamp(0, 255);
         final b = (fb * 255.0).round().clamp(0, 255);
         final a = (fa * 255.0).round().clamp(0, 255);
         resolved = Color.fromARGB(a, r, g, b);
+      }
+
+      // Check emissive factor for lights and displays
+      if (resolved == null) {
+        final emissive = material['emissiveFactor'] as List<dynamic>?;
+        if (emissive != null && emissive.length >= 3) {
+          final er = (emissive[0] as num).toDouble().clamp(0.0, 1.0);
+          final eg = (emissive[1] as num).toDouble().clamp(0.0, 1.0);
+          final eb = (emissive[2] as num).toDouble().clamp(0.0, 1.0);
+          if (er > 0.05 || eg > 0.05 || eb > 0.05) {
+            resolved = Color.fromARGB(
+              255,
+              (er * 255).round().clamp(0, 255),
+              (eg * 255).round().clamp(0, 255),
+              (eb * 255).round().clamp(0, 255),
+            );
+          }
+        }
       }
     }
 
