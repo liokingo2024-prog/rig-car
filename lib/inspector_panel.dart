@@ -194,7 +194,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
   }
 
   Widget _buildStatusBadge() {
-    if (widget.inspectMode == 'manual') {
+    if (widget.activeStep != 1 && widget.inspectMode == 'manual') {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
         decoration: BoxDecoration(
@@ -348,36 +348,38 @@ class _InspectorPanelState extends State<InspectorPanel> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          // 2-button segmented pill toggle: [ ✨ Auto | 🛠 Custom ]
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.all(2.5),
-              decoration: BoxDecoration(
-                color: _Palette.bgDark,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _Palette.borderDefault),
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _HeaderSegmentButton(
-                      title: '✨ Auto',
-                      selected: isAuto,
-                      onTap: () => widget.onInspectModeChanged('auto'),
-                    ),
-                    _HeaderSegmentButton(
-                      title: '🛠 Custom',
-                      selected: !isAuto,
-                      onTap: () => widget.onInspectModeChanged('manual'),
-                    ),
-                  ],
+          if (widget.activeStep != 1) ...[
+            const SizedBox(width: 8),
+            // 2-button segmented pill toggle: [ ✨ Auto | 🛠 Custom ]
+            Flexible(
+              child: Container(
+                padding: const EdgeInsets.all(2.5),
+                decoration: BoxDecoration(
+                  color: _Palette.bgDark,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _Palette.borderDefault),
+                ),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _HeaderSegmentButton(
+                        title: '✨ Auto',
+                        selected: isAuto,
+                        onTap: () => widget.onInspectModeChanged('auto'),
+                      ),
+                      _HeaderSegmentButton(
+                        title: '🛠 Custom',
+                        selected: !isAuto,
+                        onTap: () => widget.onInspectModeChanged('manual'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -386,9 +388,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
   Widget _buildStepBody() {
     switch (widget.activeStep) {
       case 1:
-        return widget.inspectMode == 'auto'
-            ? _buildStep1Auto()
-            : _buildStep1Manual();
+        return _buildStep1Merged();
       case 2:
         return widget.inspectMode == 'auto'
             ? _buildStep2Auto()
@@ -408,9 +408,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
     }
   }
 
-  // ── STEP 1: UPLOAD VEHICLE ────────────────────────────────────────────────
+  // ── STEP 1: UPLOAD VEHICLE (MERGED) ────────────────────────────────────────
 
-  Widget _buildStep1Auto() {
+  Widget _buildStep1Merged() {
     final model = widget.parsedModel;
     final hasModel = model != null;
 
@@ -427,6 +427,20 @@ class _InspectorPanelState extends State<InspectorPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        FilledButton.icon(
+          onPressed: widget.onPickModel,
+          icon: const Icon(Icons.file_upload_outlined, size: 16),
+          label: const Text('Import 3D Model (.glb, .gltf, .obj)'),
+          style: FilledButton.styleFrom(
+            backgroundColor: _Palette.accentEmerald,
+            foregroundColor: const Color(0xFF041D14),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         const _SectionHeader('PROGRESS & BOUNDS VERIFICATION'),
         const SizedBox(height: 8),
         _InspectCheckCard(
@@ -466,28 +480,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           description: 'Heading aligns with standard Godot 4 VehicleBody3D forward.',
           onHover: (hover) => widget.onHoverPart(hover ? 'forward_axis' : null),
         ),
-        const SizedBox(height: 18),
-        FilledButton.icon(
-          onPressed: widget.onPickModel,
-          icon: const Icon(Icons.file_upload_outlined, size: 16),
-          label: const Text('Import 3D Model (.glb, .gltf, .obj)'),
-          style: FilledButton.styleFrom(
-            backgroundColor: _Palette.accentEmerald,
-            foregroundColor: const Color(0xFF041D14),
-            padding: const EdgeInsets.symmetric(vertical: 11),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStep1Manual() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+        const SizedBox(height: 16),
         const _SectionHeader('ORIENTATION QUICK-FIX'),
         const SizedBox(height: 8),
         Container(
@@ -637,7 +630,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
     );
   }
 
-  // ── STEP 2: AUTO FIX & RIG ────────────────────────────────────────────────
+  // ── STEP 2: SCAN & ORGANIZE ────────────────────────────────────────────────
 
   Widget _buildStep2Auto() {
     final model = widget.parsedModel;

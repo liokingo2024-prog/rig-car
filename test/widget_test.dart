@@ -430,18 +430,25 @@ void main() {
       expect(find.text('Engine RPM, skid & siren audio'), findsWidgets);
       expect(find.text('Package Godot 4 vehicle scene'), findsWidgets);
 
-      // Right inspector fixed header and Step 1 view
-      expect(find.text('✨ Auto'), findsOneWidget);
-      expect(find.text('🛠 Custom'), findsOneWidget);
+      // Right inspector fixed header and Step 1 merged view (no auto/custom toggle)
+      expect(find.text('✨ Auto'), findsNothing);
+      expect(find.text('🛠 Custom'), findsNothing);
       expect(find.text('PROGRESS & BOUNDS VERIFICATION'), findsOneWidget);
       expect(find.text('Model Parsed'), findsOneWidget);
       expect(find.text('Bounding Box'), findsOneWidget);
       expect(find.text('Ground Plane Snap'), findsOneWidget);
       expect(find.text('Forward Axis'), findsOneWidget);
+      expect(find.text('ORIENTATION QUICK-FIX'), findsOneWidget);
+      expect(find.text('SCALE NORMALIZATION'), findsOneWidget);
+      expect(find.text('BOUNDS FILTER'), findsOneWidget);
 
       // Tap Step 2: Scan & Organize
       await tester.tap(find.text('Scan & Organize').first);
       await tester.pump(const Duration(milliseconds: 100));
+
+      // Steps 2-4 display Auto & Custom toggle
+      expect(find.text('✨ Auto'), findsOneWidget);
+      expect(find.text('🛠 Custom'), findsOneWidget);
 
       expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
       expect(find.text('1. Separate Loose Parts'), findsOneWidget);
@@ -503,10 +510,7 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Step 1: Switch to Custom
-      await tester.tap(find.text('🛠 Custom'));
-      await tester.pump(const Duration(milliseconds: 100));
-
+      // Step 1: Merged view contains orientation, scale, and bounds controls directly
       expect(find.text('ORIENTATION QUICK-FIX'), findsOneWidget);
       expect(find.text('Rotate +90° Yaw'), findsOneWidget);
       expect(find.text('Flip Front/Back'), findsOneWidget);
@@ -515,17 +519,25 @@ void main() {
       expect(find.text('Exclude roof/antenna parts from chassis bounds'), findsOneWidget);
 
       // Tap orientation buttons
+      await tester.ensureVisible(find.text('Rotate +90° Yaw'));
       await tester.tap(find.text('Rotate +90° Yaw'));
       await tester.pump(const Duration(milliseconds: 50));
+      await tester.ensureVisible(find.text('Flip Front/Back'));
       await tester.tap(find.text('Flip Front/Back'));
       await tester.pump(const Duration(milliseconds: 50));
+      await tester.ensureVisible(find.text('Snap to Ground (Y = 0.0m)'));
       await tester.tap(find.text('Snap to Ground (Y = 0.0m)'));
       await tester.pump(const Duration(milliseconds: 50));
+      await tester.ensureVisible(find.text('Apply Scale'));
       await tester.tap(find.text('Apply Scale'));
       await tester.pump(const Duration(milliseconds: 50));
 
       // Step 2: Scan & Organize
       await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Switch to Custom view in Step 2
+      await tester.tap(find.text('🛠 Custom'));
       await tester.pump(const Duration(milliseconds: 100));
 
       // In Custom view
