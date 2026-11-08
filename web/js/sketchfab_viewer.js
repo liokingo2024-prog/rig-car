@@ -9,7 +9,9 @@
 
   let renderer, scene, camera, controls;
   let currentModel = null;
-  let groundGrid = null;
+  let gridGroup = null;
+  let currentGridStyle = 'cad';
+  const gridStyleMap = {};
   let groundShadow = null;
   let dirLightKey, dirLightFill, dirLightRim, hemiLight;
   let originalMaterials = new Map();
@@ -178,13 +180,15 @@
   }
 
   function createGround(sc) {
-    if (groundGrid) sc.remove(groundGrid);
-    if (groundShadow) sc.remove(groundShadow);
+    if (gridGroup) {
+      sc.remove(gridGroup);
+      disposeObject(gridGroup);
+      for (const k in gridStyleMap) delete gridStyleMap[k];
+    }
+    gridGroup = new THREE.Group();
+    sc.add(gridGroup);
 
-    // Dark CAD Ground Grid
-    groundGrid = new THREE.GridHelper(30, 60, 0x10b981, 0x1b2820);
-    groundGrid.position.y = 0.0005;
-    sc.add(groundGrid);
+    if (groundShadow) sc.remove(groundShadow);
 
     // Soft Radial Contact Shadow Plane
     const shadowCanvas = document.createElement('canvas');
@@ -210,6 +214,9 @@
     groundShadow.rotation.x = -Math.PI / 2;
     groundShadow.position.y = 0.0001;
     sc.add(groundShadow);
+
+    // Instantiate and show active grid style
+    setGridStyle(currentGridStyle);
   }
 
   function onWindowResize() {
@@ -745,12 +752,340 @@
     controls.autoRotateSpeed = 2.0;
   }
 
+  function buildCadGrid() {
+    const grp = new THREE.Group();
+    // 30m x 30m CAD grid with 60 subdivisions (0.5m spacing)
+    const grid = new THREE.GridHelper(30, 60, 0x10b981, 0x182c22);
+    grid.position.y = 0.0004;
+    if (grid.material) {
+      grid.material.transparent = true;
+      grid.material.opacity = 0.75;
+      grid.material.depthWrite = false;
+    }
+    grp.add(grid);
+
+    // Outer boundary frame
+    const hw = 15;
+    const framePoints = [
+      new THREE.Vector3(-hw, 0.0004, -hw),
+      new THREE.Vector3(hw, 0.0004, -hw),
+      new THREE.Vector3(hw, 0.0004, hw),
+      new THREE.Vector3(-hw, 0.0004, hw),
+      new THREE.Vector3(-hw, 0.0004, -hw)
+    ];
+    const frameGeo = new THREE.BufferGeometry().setFromPoints(framePoints);
+    const frameMat = new THREE.LineBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false
+    });
+    grp.add(new THREE.Line(frameGeo, frameMat));
+    return grp;
+  }
+
+  function buildRadialGrid() {
+    const grp = new THREE.Group();
+    const radii = [0.8, 1.6, 2.5, 3.5, 4.8, 6.5];
+    const segments = 64;
+
+    // Dark turntable stage floor
+    const stageGeo = new THREE.CircleGeometry(radii[radii.length - 1], 64);
+    const stageMat = new THREE.MeshBasicMaterial({
+      color: 0x05140e,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false
+    });
+    const stage = new THREE.Mesh(stageGeo, stageMat);
+    stage.rotation.x = -Math.PI / 2;
+    stage.position.y = 0.0002;
+    grp.add(stage);
+
+    // Concentric turntable rings
+    for (let rIdx = 0; rIdx < radii.length; rIdx++) {
+      const r = radii[rIdx];
+      const isOuter = (rIdx === radii.length - 1);
+      const points = [];
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        points.push(new THREE.Vector3(Math.cos(theta) * r, 0.0004, Math.sin(theta) * r));
+      }
+      const ringGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const ringMat = new THREE.LineBasicMaterial({
+        color: isOuter ? 0x34d399 : 0x10b981,
+        transparent: true,
+        opacity: isOuter ? 0.8 : 0.35,
+        depthWrite: false
+      });
+      grp.add(new THREE.Line(ringGeo, ringMat));
+    }
+
+    // 12 Radial turntable spokes
+    const spokeCount = 12;
+    const maxR = radii[radii.length - 1];
+    const spokePoints = [];
+    const spokePointsCard = [];
+
+    for (let i = 0; i < spokeCount; i++) {
+      const theta = (i / spokeCount) * Math.PI * 2;
+      const isCard = (i % 3 === 0);
+      const target = isCard ? spokePointsCard : spokePoints;
+      target.push(
+        new THREE.Vector3(0, 0.0004, 0),
+        new THREE.Vector3(Math.cos(theta) * maxR, 0.0004, Math.sin(theta) * maxR)
+      );
+    }
+
+    if (spokePoints.length > 0) {
+      const geo = new THREE.BufferGeometry().setFromPoints(spokePoints);
+      const mat = new THREE.LineBasicMaterial({
+        color: 0x34d399,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false
+      });
+      grp.add(new THREE.LineSegments(geo, mat));
+    }
+
+    if (spokePointsCard.length > 0) {
+      const geoCard = new THREE.BufferGeometry().setFromPoints(spokePointsCard);
+      const matCard = new THREE.LineBasicMaterial({
+        color: 0x10b981,
+        transparent: true,
+        opacity: 0.65,
+        depthWrite: false
+      });
+      grp.add(new THREE.LineSegments(geoCard, matCard));
+    }
+
+    // Degree tick marks on 4.8m ring
+    const tickR1 = 4.65;
+    const tickR2 = 4.95;
+    const tickCount = 36;
+    const tickPoints = [];
+    for (let i = 0; i < tickCount; i++) {
+      const theta = (i / tickCount) * Math.PI * 2;
+      tickPoints.push(
+        new THREE.Vector3(Math.cos(theta) * tickR1, 0.0004, Math.sin(theta) * tickR1),
+        new THREE.Vector3(Math.cos(theta) * tickR2, 0.0004, Math.sin(theta) * tickR2)
+      );
+    }
+    const tickGeo = new THREE.BufferGeometry().setFromPoints(tickPoints);
+    const tickMat = new THREE.LineBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false
+    });
+    grp.add(new THREE.LineSegments(tickGeo, tickMat));
+
+    return grp;
+  }
+
+  function buildHexGrid() {
+    const grp = new THREE.Group();
+    const r = 0.65;
+    const dx = 1.5 * r;
+    const dz = 1.7320508 * r;
+    const range = 6;
+    const maxDist = 7.2;
+
+    const centerPoints = [];
+    const outerPoints = [];
+    const edgeMap = new Set();
+
+    function addEdge(x1, z1, x2, z2, isCenter) {
+      const k1 = Math.round(x1 * 1000) + '_' + Math.round(z1 * 1000);
+      const k2 = Math.round(x2 * 1000) + '_' + Math.round(z2 * 1000);
+      const key = k1 < k2 ? (k1 + ':' + k2) : (k2 + ':' + k1);
+      if (edgeMap.has(key)) return;
+      edgeMap.add(key);
+
+      const target = isCenter ? centerPoints : outerPoints;
+      target.push(
+        new THREE.Vector3(x1, 0.0004, z1),
+        new THREE.Vector3(x2, 0.0004, z2)
+      );
+    }
+
+    for (let q = -range; q <= range; q++) {
+      for (let rCol = -range; rCol <= range; rCol++) {
+        const cx = q * dx;
+        const cz = (rCol * dz) + (Math.abs(q) % 2 === 1 ? dz * 0.5 : 0.0);
+        const dist = Math.sqrt(cx * cx + cz * cz);
+        if (dist > maxDist) continue;
+
+        const isCenter = dist < 2.2;
+
+        for (let i = 0; i < 6; i++) {
+          const a0 = i * Math.PI / 3.0;
+          const a1 = (i + 1) * Math.PI / 3.0;
+          const x0 = cx + r * Math.cos(a0);
+          const z0 = cz + r * Math.sin(a0);
+          const x1 = cx + r * Math.cos(a1);
+          const z1 = cz + r * Math.sin(a1);
+          addEdge(x0, z0, x1, z1, isCenter);
+        }
+      }
+    }
+
+    if (centerPoints.length > 0) {
+      const centerGeo = new THREE.BufferGeometry().setFromPoints(centerPoints);
+      const centerMat = new THREE.LineBasicMaterial({
+        color: 0x34d399,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false
+      });
+      grp.add(new THREE.LineSegments(centerGeo, centerMat));
+    }
+
+    if (outerPoints.length > 0) {
+      const outerGeo = new THREE.BufferGeometry().setFromPoints(outerPoints);
+      const outerMat = new THREE.LineBasicMaterial({
+        color: 0x10b981,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false
+      });
+      grp.add(new THREE.LineSegments(outerGeo, outerMat));
+    }
+
+    return grp;
+  }
+
+  function buildCheckerGrid() {
+    const grp = new THREE.Group();
+    const size = 20;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0a1d15';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = '#040d09';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillRect(128, 128, 128, 128);
+
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.12)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, 128, 128);
+    ctx.strokeRect(128, 0, 128, 128);
+    ctx.strokeRect(0, 128, 128, 128);
+    ctx.strokeRect(128, 128, 128, 128);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(size / 2, size / 2);
+
+    const floorGeo = new THREE.PlaneGeometry(size, size);
+    const floorMat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.0002;
+    grp.add(floor);
+
+    const grid = new THREE.GridHelper(size, size, 0x10b981, 0x1b382a);
+    grid.position.y = 0.0004;
+    if (grid.material) {
+      grid.material.transparent = true;
+      grid.material.opacity = 0.45;
+      grid.material.depthWrite = false;
+    }
+    grp.add(grid);
+
+    const crossPoints = [
+      new THREE.Vector3(-size / 2, 0.0005, 0),
+      new THREE.Vector3(size / 2, 0.0005, 0),
+      new THREE.Vector3(0, 0.0005, -size / 2),
+      new THREE.Vector3(0, 0.0005, size / 2)
+    ];
+    const crossGeo = new THREE.BufferGeometry().setFromPoints(crossPoints);
+    const crossMat = new THREE.LineBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    });
+    grp.add(new THREE.LineSegments(crossGeo, crossMat));
+
+    const hw = size / 2;
+    const borderPoints = [
+      new THREE.Vector3(-hw, 0.0005, -hw),
+      new THREE.Vector3(hw, 0.0005, -hw),
+      new THREE.Vector3(hw, 0.0005, hw),
+      new THREE.Vector3(-hw, 0.0005, hw),
+      new THREE.Vector3(-hw, 0.0005, -hw)
+    ];
+    const borderGeo = new THREE.BufferGeometry().setFromPoints(borderPoints);
+    const borderMat = new THREE.LineBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false
+    });
+    grp.add(new THREE.Line(borderGeo, borderMat));
+
+    return grp;
+  }
+
+  function getOrCreateGrid(style) {
+    if (gridStyleMap[style]) {
+      return gridStyleMap[style];
+    }
+    let grp = null;
+    switch (style) {
+      case 'radial':
+        grp = buildRadialGrid();
+        break;
+      case 'hex':
+        grp = buildHexGrid();
+        break;
+      case 'checker':
+        grp = buildCheckerGrid();
+        break;
+      case 'cad':
+      default:
+        grp = buildCadGrid();
+        break;
+    }
+    if (grp) {
+      gridStyleMap[style] = grp;
+      if (gridGroup) gridGroup.add(grp);
+    }
+    return grp;
+  }
+
   function setGridStyle(style) {
-    if (!groundGrid) return;
-    if (style === 'off') {
-      groundGrid.visible = false;
-    } else {
-      groundGrid.visible = true;
+    const s = (style || 'cad').toLowerCase();
+    currentGridStyle = s;
+
+    if (!gridGroup) return;
+
+    if (s === 'off') {
+      gridGroup.visible = false;
+      return;
+    }
+
+    gridGroup.visible = true;
+
+    for (const key in gridStyleMap) {
+      if (gridStyleMap[key]) {
+        gridStyleMap[key].visible = false;
+      }
+    }
+
+    const target = getOrCreateGrid(s);
+    if (target) {
+      target.visible = true;
     }
   }
 
