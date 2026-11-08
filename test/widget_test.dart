@@ -1305,5 +1305,39 @@ endsolid sports_car''';
       expect(nodeNames.contains('Wheel_FR'), isTrue);
       expect(nodeNames.contains('Car_Body'), isTrue);
     });
+
+    testWidgets('Orientation quick-fix rotates, flips, snaps and scales vehicle with visible feedback', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Rotate +90° Yaw
+      await tester.ensureVisible(find.text('Rotate +90° Yaw'));
+      await tester.tap(find.text('Rotate +90° Yaw'));
+      await tester.pump();
+      expect(find.textContaining('Rotated vehicle model by 90°'), findsOneWidget);
+
+      // Flip Front/Back
+      await tester.ensureVisible(find.text('Flip Front/Back'));
+      await tester.tap(find.text('Flip Front/Back'));
+      await tester.pump();
+      expect(find.textContaining('Flipped vehicle front to back'), findsOneWidget);
+
+      // Snap to Ground
+      await tester.ensureVisible(find.text('Snap to Ground (Y = 0.0m)'));
+      await tester.tap(find.text('Snap to Ground (Y = 0.0m)'));
+      await tester.pump();
+      expect(find.textContaining('Snapped lowest vertices to ground plane'), findsOneWidget);
+
+      // Apply Scale
+      await tester.ensureVisible(find.text('Apply Scale'));
+      await tester.tap(find.text('Apply Scale'));
+      await tester.pump();
+      expect(find.textContaining('Normalized vehicle footprint'), findsOneWidget);
+    });
   });
 }

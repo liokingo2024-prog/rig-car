@@ -530,6 +530,213 @@ class ParsedModel {
     ];
     return BBox.fromPoints(corners.map(transform).toList());
   }
+
+  /// Creates a clean manifold procedural vehicle model with chassis and 4 wheels.
+  /// Used as a fully functional default template so all workbench tools
+  /// (rotation, flip, ground snap, scale) work seamlessly out of the box.
+  static ParsedModel createProceduralDefault({
+    String name = 'Apex GT Coupe',
+    List<Vec3>? wheelPositions,
+  }) {
+    final bodyPoints = [
+      const Vec3(-0.90, 0.18, -1.85), // 0: FL bottom
+      const Vec3(0.90, 0.18, -1.85),  // 1: FR bottom
+      const Vec3(0.90, 0.18, 1.85),   // 2: RR bottom
+      const Vec3(-0.90, 0.18, 1.85),  // 3: RL bottom
+      const Vec3(-0.85, 0.65, -1.65), // 4: FL hood
+      const Vec3(0.85, 0.65, -1.65),  // 5: FR hood
+      const Vec3(-0.80, 0.82, -0.60), // 6: FL windshield
+      const Vec3(0.80, 0.82, -0.60),  // 7: FR windshield
+      const Vec3(-0.65, 1.28, -0.15), // 8: FL roof front
+      const Vec3(0.65, 1.28, -0.15),  // 9: FR roof front
+      const Vec3(-0.65, 1.28, 0.75),  // 10: RL roof rear
+      const Vec3(0.65, 1.28, 0.75),   // 11: RR roof rear
+      const Vec3(-0.80, 0.82, 1.25),  // 12: RL rear window
+      const Vec3(0.80, 0.82, 1.25),   // 13: RR rear window
+      const Vec3(-0.85, 0.72, 1.80),  // 14: RL trunk
+      const Vec3(0.85, 0.72, 1.80),   // 15: RR trunk
+    ];
+
+    final bodyTriangles = [
+      const Triangle(4, 5, 1),
+      const Triangle(4, 1, 0),
+      const Triangle(4, 6, 7),
+      const Triangle(4, 7, 5),
+      const Triangle(6, 7, 9),
+      const Triangle(6, 9, 8),
+      const Triangle(8, 9, 11),
+      const Triangle(8, 11, 10),
+      const Triangle(10, 11, 13),
+      const Triangle(10, 13, 12),
+      const Triangle(12, 13, 15),
+      const Triangle(12, 15, 14),
+      const Triangle(14, 15, 2),
+      const Triangle(14, 2, 3),
+      const Triangle(0, 4, 6),
+      const Triangle(0, 6, 3),
+      const Triangle(6, 8, 10),
+      const Triangle(6, 10, 12),
+      const Triangle(3, 12, 14),
+      const Triangle(1, 7, 5),
+      const Triangle(1, 2, 7),
+      const Triangle(7, 11, 9),
+      const Triangle(7, 13, 11),
+      const Triangle(2, 15, 13),
+      const Triangle(0, 1, 2),
+      const Triangle(0, 2, 3),
+    ];
+
+    final bodyEdges = [
+      Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0),
+      Edge(4, 5), Edge(6, 7), Edge(8, 9), Edge(10, 11),
+      Edge(12, 13), Edge(14, 15),
+      Edge(0, 4), Edge(4, 6), Edge(6, 8), Edge(8, 10),
+      Edge(10, 12), Edge(12, 14), Edge(14, 3),
+      Edge(1, 5), Edge(5, 7), Edge(7, 9), Edge(9, 11),
+      Edge(11, 13), Edge(13, 15), Edge(15, 2),
+    ];
+
+    final chassisMesh = MeshData(
+      index: 0,
+      name: 'Chassis',
+      vertices: bodyPoints,
+      edges: bodyEdges,
+      triangles: bodyTriangles,
+      bbox: BBox.fromPoints(bodyPoints),
+    );
+
+    final chassisNode = SceneNode(
+      index: 0,
+      name: 'Chassis',
+      localTransform: Mat4.identity(),
+      meshIndex: 0,
+      childIndices: const [],
+      parentIndex: null,
+      worldTransform: Mat4.identity(),
+    );
+
+    final chassisInstance = MeshInstance(
+      nodeIndex: 0,
+      meshIndex: 0,
+      worldVertices: List.from(bodyPoints),
+      edges: bodyEdges,
+      triangles: bodyTriangles,
+      worldBBox: chassisMesh.bbox,
+    );
+
+    final nodes = <SceneNode>[chassisNode];
+    final meshes = <MeshData>[chassisMesh];
+    final instances = <MeshInstance>[chassisInstance];
+    final rootIndices = <int>[0, 1, 2, 3, 4];
+
+    final defaultWheelPositions = wheelPositions ?? [
+      const Vec3(-0.85, 0.34, -1.35),
+      const Vec3(0.85, 0.34, -1.35),
+      const Vec3(-0.85, 0.34, 1.35),
+      const Vec3(0.85, 0.34, 1.35),
+    ];
+
+    const wheelNames = ['Wheel_FL', 'Wheel_FR', 'Wheel_RL', 'Wheel_RR'];
+    const segments = 16;
+    const r = 0.34;
+    const w = 0.28;
+
+    for (var wIdx = 0; wIdx < 4; wIdx++) {
+      final center = defaultWheelPositions[wIdx];
+      final isLeft = center.x < 0;
+      final xOuter = isLeft ? center.x - w * 0.5 : center.x + w * 0.5;
+      final xInner = isLeft ? center.x + w * 0.5 : center.x - w * 0.5;
+
+      final wheelVerts = <Vec3>[];
+      final wheelEdges = <Edge>[];
+      final wheelTris = <Triangle>[];
+
+      // 0: Outer center, 1: Inner center
+      wheelVerts.add(Vec3(xOuter, center.y, center.z));
+      wheelVerts.add(Vec3(xInner, center.y, center.z));
+
+      // 2 .. 2+segments-1: Outer ring
+      // 2+segments .. 2+2*segments-1: Inner ring
+      for (var s = 0; s < segments; s++) {
+        final angle = (s / segments) * 2 * pi;
+        final dy = cos(angle) * r;
+        final dz = sin(angle) * r;
+        wheelVerts.add(Vec3(xOuter, center.y + dy, center.z + dz));
+      }
+      for (var s = 0; s < segments; s++) {
+        final angle = (s / segments) * 2 * pi;
+        final dy = cos(angle) * r;
+        final dz = sin(angle) * r;
+        wheelVerts.add(Vec3(xInner, center.y + dy, center.z + dz));
+      }
+
+      for (var s = 0; s < segments; s++) {
+        final next = (s + 1) % segments;
+        final o1 = 2 + s;
+        final o2 = 2 + next;
+        final i1 = 2 + segments + s;
+        final i2 = 2 + segments + next;
+
+        // Outer face (hub)
+        wheelTris.add(Triangle(0, o1, o2));
+        wheelEdges.add(Edge(o1, o2));
+
+        // Inner face
+        wheelTris.add(Triangle(1, i2, i1));
+        wheelEdges.add(Edge(i1, i2));
+
+        // Tread
+        wheelTris.add(Triangle(o1, i1, o2));
+        wheelTris.add(Triangle(o2, i1, i2));
+        wheelEdges.add(Edge(o1, i1));
+      }
+
+      final meshIdx = wIdx + 1;
+      final nodeIdx = wIdx + 1;
+      final wMesh = MeshData(
+        index: meshIdx,
+        name: wheelNames[wIdx],
+        vertices: wheelVerts,
+        edges: wheelEdges,
+        triangles: wheelTris,
+        bbox: BBox.fromPoints(wheelVerts),
+      );
+
+      final wNode = SceneNode(
+        index: nodeIdx,
+        name: wheelNames[wIdx],
+        localTransform: Mat4.identity(),
+        meshIndex: meshIdx,
+        childIndices: const [],
+        parentIndex: null,
+        worldTransform: Mat4.identity(),
+      );
+
+      final wInst = MeshInstance(
+        nodeIndex: nodeIdx,
+        meshIndex: meshIdx,
+        worldVertices: List.from(wheelVerts),
+        edges: wheelEdges,
+        triangles: wheelTris,
+        worldBBox: wMesh.bbox,
+      );
+
+      nodes.add(wNode);
+      meshes.add(wMesh);
+      instances.add(wInst);
+    }
+
+    final totalBBox = BBox.union(instances.map((i) => i.worldBBox).toList());
+
+    return ParsedModel(
+      fileName: '$name.glb',
+      nodes: nodes,
+      meshes: meshes,
+      instances: instances,
+      rootNodeIndices: rootIndices,
+      worldBBox: totalBBox,
+    );
+  }
 }
 
 // ── Auto-detection Results ──────────────────────────────────────────────────

@@ -13,6 +13,8 @@ import 'inspector_panel.dart';
 import 'model_data.dart';
 import 'pipeline_models.dart';
 import 'pre_rigged_cars.dart';
+import 'sketchfab_viewport.dart';
+import 'solid_mesh_lod.dart';
 import 'test_drive_viewport.dart';
 import 'wireframe_viewer.dart';
 
@@ -117,6 +119,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   DetectionResult? _detection;
   int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
+  int _viewportUpdateEpoch = 0;
 
   // Drivetrain & physics
   String _drive = 'AWD';
@@ -216,7 +219,16 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           warnings: const [],
         );
       }
+      _parsedModel = ParsedModel.createProceduralDefault(
+        name: car.name,
+        wheelPositions: car.wheelPositions,
+      );
       _activeStep = 1;
+    } else {
+      _modelName = 'Apex GT Coupe (Template)';
+      _parsedModel = ParsedModel.createProceduralDefault(
+        name: 'Apex GT Coupe',
+      );
     }
   }
 
@@ -380,9 +392,22 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: const TextStyle(
+              color: Color(0xFFF3F4F6),
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF25343E),
+          backgroundColor: const Color(0xFF13261F),
+          duration: const Duration(seconds: 3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: const BorderSide(color: Color(0xFF10B981)),
+          ),
         ),
       );
   }
@@ -559,48 +584,54 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
   }
 
+  void _ensureModel() {
+    _parsedModel ??= ParsedModel.createProceduralDefault(
+      name: _modelName != 'No model loaded' ? _modelName : 'Apex GT Coupe',
+    );
+  }
+
   void _onRotateYaw(double angle) {
-    if (_parsedModel != null) {
-      setState(() {
-        _parsedModel!.rotateYaw(angle);
-      });
-      _showMessage('Rotated vehicle model by ${(angle * 180 / pi).round()}°');
-    } else {
-      _showMessage('Import a 3D model first to apply rotation.');
-    }
+    setState(() {
+      _ensureModel();
+      _parsedModel!.rotateYaw(angle);
+      SolidScene.invalidate(_parsedModel!);
+      _viewportUpdateEpoch++;
+    });
+    rotateSketchfabModel(angle);
+    _showMessage('Rotated vehicle model by ${(angle * 180 / pi).round()}°');
   }
 
   void _onFlipFrontBack() {
-    if (_parsedModel != null) {
-      setState(() {
-        _parsedModel!.flipFrontBack();
-      });
-      _showMessage('Flipped vehicle front to back (180° yaw)');
-    } else {
-      _showMessage('Import a 3D model first to apply flip.');
-    }
+    setState(() {
+      _ensureModel();
+      _parsedModel!.flipFrontBack();
+      SolidScene.invalidate(_parsedModel!);
+      _viewportUpdateEpoch++;
+    });
+    flipSketchfabModel();
+    _showMessage('Flipped vehicle front to back (180° yaw)');
   }
 
   void _onSnapToGround() {
-    if (_parsedModel != null) {
-      setState(() {
-        _parsedModel!.snapToGround();
-      });
-      _showMessage('Snapped lowest vertices to ground plane (Y = 0.0m)');
-    } else {
-      _showMessage('Import a 3D model first to snap to ground.');
-    }
+    setState(() {
+      _ensureModel();
+      _parsedModel!.snapToGround();
+      SolidScene.invalidate(_parsedModel!);
+      _viewportUpdateEpoch++;
+    });
+    snapSketchfabModelToGround();
+    _showMessage('Snapped lowest vertices to ground plane (Y = 0.0m)');
   }
 
   void _onApplyScale(double targetLength) {
-    if (_parsedModel != null) {
-      setState(() {
-        _parsedModel!.normalizeForRiggingInPlace(targetFootprint: targetLength);
-      });
-      _showMessage('Normalized vehicle footprint to ${targetLength.toStringAsFixed(1)}m');
-    } else {
-      _showMessage('Import a 3D model first to apply scale.');
-    }
+    setState(() {
+      _ensureModel();
+      _parsedModel!.normalizeForRiggingInPlace(targetFootprint: targetLength);
+      SolidScene.invalidate(_parsedModel!);
+      _viewportUpdateEpoch++;
+    });
+    scaleSketchfabModel(targetLength);
+    _showMessage('Normalized vehicle footprint to ${targetLength.toStringAsFixed(1)}m');
   }
 
   void _onApproveAutoRig() {
@@ -964,6 +995,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                   bodyColor: widget.initialCar?.accentColor ??
                                                       const Color(0xFFD6DBDF),
                                                   centerOfMassY: _centerOfMass,
+                                                  updateEpoch: _viewportUpdateEpoch,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
                                               ),
@@ -1017,6 +1049,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             bodyColor: widget.initialCar?.accentColor ??
                                                 const Color(0xFFD6DBDF),
                                             centerOfMassY: _centerOfMass,
+                                            updateEpoch: _viewportUpdateEpoch,
                                             onTestDrive: _enterTestDrive,
                                           ),
                                         )),

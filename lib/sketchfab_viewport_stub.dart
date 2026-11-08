@@ -32,3 +32,8 @@ class SketchfabViewport extends StatelessWidget {
     return fallbackWidget ?? const SizedBox.shrink();
   }
 }
+
+void rotateSketchfabModel(double yawAngle) {}
+void flipSketchfabModel() {}
+void snapSketchfabModelToGround() {}
+void scaleSketchfabModel(double targetLength) {}

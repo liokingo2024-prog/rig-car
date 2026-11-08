@@ -158,3 +158,47 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
     return HtmlElementView(viewType: _viewType);
   }
 }
+
+void rotateSketchfabModel(double yawAngle) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('rotateModel', [yawAngle]);
+    }
+  } catch (e) {
+    debugPrint('rotateSketchfabModel error: $e');
+  }
+}
+
+void flipSketchfabModel() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('flipModel');
+    }
+  } catch (e) {
+    debugPrint('flipSketchfabModel error: $e');
+  }
+}
+
+void snapSketchfabModelToGround() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('snapToGround');
+    }
+  } catch (e) {
+    debugPrint('snapSketchfabModelToGround error: $e');
+  }
+}
+
+void scaleSketchfabModel(double targetLength) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('applyScale', [targetLength]);
+    }
+  } catch (e) {
+    debugPrint('scaleSketchfabModel error: $e');
+  }
+}

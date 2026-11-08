@@ -91,6 +91,10 @@ class SolidScene {
   static SolidScene of(ParsedModel model) =>
       _cache[model] ??= SolidScene._(model);
 
+  static void invalidate(ParsedModel model) {
+    _cache[model] = null;
+  }
+
   final _Source _source;
 
   bool get isEmpty => _source.totalTriangles == 0;

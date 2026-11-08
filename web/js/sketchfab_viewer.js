@@ -9,6 +9,7 @@
 
   let renderer, scene, camera, controls;
   let currentModel = null;
+  let modelPivotGroup = null;
   let gridGroup = null;
   let currentGridStyle = 'cad';
   const gridStyleMap = {};
@@ -493,6 +494,11 @@
    */
   function applyLoadedModel(model, callback) {
     if (!scene) return;
+    if (modelPivotGroup) {
+      scene.remove(modelPivotGroup);
+      disposeObject(modelPivotGroup);
+      modelPivotGroup = null;
+    }
     if (currentModel) {
       scene.remove(currentModel);
       disposeObject(currentModel);
@@ -501,6 +507,11 @@
     originalMaterials.clear();
 
     currentModel = model;
+    modelPivotGroup = new THREE.Group();
+    modelPivotGroup.name = 'ModelPivotGroup';
+    modelPivotGroup.position.set(0, 0, 0);
+    modelPivotGroup.rotation.set(0, 0, 0);
+    modelPivotGroup.scale.set(1, 1, 1);
 
     let meshCount = 0;
     let triCount = 0;
@@ -590,7 +601,8 @@
       groundShadow.position.set(0, 0.0005, 0);
     }
 
-    scene.add(model);
+    modelPivotGroup.add(model);
+    scene.add(modelPivotGroup);
 
     // Fit camera to vehicle
     resetCamera();
@@ -600,6 +612,57 @@
 
     console.log('SketchfabViewer: Model successfully rendered! Meshes:', meshCount, 'Triangles:', triCount);
     if (callback) callback({ success: true, size: size, center: center });
+  }
+
+  function rotateModel(yawAngle) {
+    if (!modelPivotGroup) {
+      if (currentModel) {
+        currentModel.rotation.y += yawAngle;
+        currentModel.updateMatrixWorld(true);
+      }
+      return;
+    }
+    modelPivotGroup.rotation.y += yawAngle;
+    modelPivotGroup.updateMatrixWorld(true);
+    if (wireframeOverlayGroup) {
+      applyRenderMode(currentRenderMode);
+    }
+    console.log('SketchfabViewer: Rotated model by yaw:', yawAngle, 'new rotation Y:', modelPivotGroup.rotation.y);
+  }
+
+  function flipModel() {
+    rotateModel(Math.PI);
+  }
+
+  function snapToGround() {
+    if (!modelPivotGroup || !currentModel) return;
+    modelPivotGroup.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(modelPivotGroup);
+    const minY = box.min.y;
+    currentModel.position.y -= minY;
+    modelPivotGroup.updateMatrixWorld(true);
+    if (wireframeOverlayGroup) {
+      applyRenderMode(currentRenderMode);
+    }
+    console.log('SketchfabViewer: Snapped model to ground Y = 0.0m (adjusted by', -minY, ')');
+  }
+
+  function applyScale(targetLength) {
+    if (!modelPivotGroup || !currentModel) return;
+    modelPivotGroup.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(modelPivotGroup);
+    const size = box.getSize(new THREE.Vector3());
+    const currentLength = Math.max(size.z, size.x);
+    if (currentLength > 0.01 && targetLength > 0.01) {
+      const factor = targetLength / currentLength;
+      modelPivotGroup.scale.multiplyScalar(factor);
+      snapToGround();
+      resetCamera();
+      if (wireframeOverlayGroup) {
+        applyRenderMode(currentRenderMode);
+      }
+      console.log('SketchfabViewer: Scaled model to length:', targetLength, 'factor:', factor);
+    }
   }
 
   function resetCamera() {
@@ -1135,6 +1198,10 @@
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
     setWheelMarkers: setWheelMarkers,
+    rotateModel: rotateModel,
+    flipModel: flipModel,
+    snapToGround: snapToGround,
+    applyScale: applyScale,
     isInitialized: function() { return isInitialized; }
   };
 })();

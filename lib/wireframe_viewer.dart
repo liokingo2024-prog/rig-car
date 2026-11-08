@@ -85,6 +85,7 @@ class WireframeViewer extends StatefulWidget {
     this.wheelColor = const Color(0xFF34D399),
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
+    this.updateEpoch = 0,
     this.onTestDrive,
   });
 
@@ -100,6 +101,7 @@ class WireframeViewer extends StatefulWidget {
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
+  final int updateEpoch;
   final VoidCallback? onTestDrive;
 
   @override
@@ -155,6 +157,9 @@ class _WireframeViewerState extends State<WireframeViewer>
   @override
   void didUpdateWidget(covariant WireframeViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.updateEpoch != oldWidget.updateEpoch && widget.model != null) {
+      SolidScene.invalidate(widget.model!);
+    }
     if (widget.model != oldWidget.model && widget.model != null) {
       _resetCameraToModel();
     }
@@ -269,6 +274,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           wheelColor: widget.wheelColor,
                           wireColor: widget.wireColor,
                           centerOfMassY: widget.centerOfMassY,
+                          updateEpoch: widget.updateEpoch,
                           pulseProgress: _animController.value,
                           isInteracting: _isInteracting || _autoTurntable,
                         ),
@@ -340,6 +346,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                 wheelColor: widget.wheelColor,
                                 wireColor: widget.wireColor,
                                 centerOfMassY: widget.centerOfMassY,
+                                updateEpoch: widget.updateEpoch,
                                 pulseProgress: _animController.value,
                                 isInteracting: _isInteracting || _autoTurntable,
                               ),
@@ -1053,6 +1060,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.wheelColor,
     required this.wireColor,
     required this.centerOfMassY,
+    this.updateEpoch = 0,
     this.pulseProgress = 0.0,
     this.isInteracting = false,
   });
@@ -1079,12 +1087,14 @@ class _WireframeScenePainter extends CustomPainter {
   final Color wheelColor;
   final Color wireColor;
   final double centerOfMassY;
+  final int updateEpoch;
   final double pulseProgress;
   final bool isInteracting;
 
   @override
   bool shouldRepaint(covariant _WireframeScenePainter oldDelegate) {
     return oldDelegate.model != model ||
+        oldDelegate.updateEpoch != updateEpoch ||
         oldDelegate.detection != detection ||
         oldDelegate.bodyNodeIndex != bodyNodeIndex ||
         oldDelegate.selectedNodeIndex != selectedNodeIndex ||
