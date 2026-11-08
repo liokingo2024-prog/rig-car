@@ -350,361 +350,336 @@ class _WireframeViewerState extends State<WireframeViewer>
           // ── Top Bar Controls ──────────────────────────────────────────────
           Positioned(
             top: 12,
-            left: 12,
             right: 12,
+            left: 12,
             child: LayoutBuilder(
               builder: (context, box) {
-                final isUltraCompact = box.maxWidth < 640;
                 final isCompact = box.maxWidth < 780;
 
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: _VehicleStatusBadge(
-                        fileName: widget.model != null
-                            ? widget.model!.fileName
-                            : 'Procedural 3D Rig',
-                        wheelCount: widget.detection?.wheels.length ?? 0,
-                        compact: isCompact,
-                      ),
+                return Align(
+                  alignment: Alignment.topRight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
                     ),
-                    const SizedBox(width: 6),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                            if (widget.onTestDrive != null) ...[
-                              FilledButton.icon(
-                                onPressed: widget.onTestDrive,
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF10B981),
-                                  foregroundColor: const Color(0xFF041D14),
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: isUltraCompact ? 7 : 9,
-                                    vertical: 5,
-                                  ),
-                                  minimumSize: Size.zero,
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: VisualDensity.compact,
-                                  elevation: 3,
-                                  shadowColor: const Color(0x6010B981),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.sports_motorsports_rounded,
-                                  size: 13,
-                                ),
-                                label: Text(
-                                  isUltraCompact ? 'DRIVE' : 'TEST DRIVE',
-                                  style: const TextStyle(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                            ],
-
-                            // 1. View Selection (Render Mode: Solid / Wireframe / Hybrid)
-                            PopupMenuButton<ViewerRenderMode>(
-                              tooltip: 'Render mode: ${_renderMode.label}',
-                              initialValue: _renderMode,
-                              onSelected: (mode) =>
-                                  setState(() => _renderMode = mode),
-                              color: const Color(0xFF111714),
-                              surfaceTintColor: Colors.transparent,
-                              elevation: 8,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: const BorderSide(
-                                  color: Color(0xFF223127),
-                                ),
-                              ),
-                              itemBuilder: (context) =>
-                                  ViewerRenderMode.values.map((mode) {
-                                    final selected = mode == _renderMode;
-                                    return PopupMenuItem<ViewerRenderMode>(
-                                      value: mode,
-                                      height: 38,
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            mode.icon,
-                                            size: 16,
-                                            color: selected
-                                                ? const Color(0xFF10B981)
-                                                : const Color(0xFF86978C),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            mode.label,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: selected
-                                                  ? const Color(0xFFF0FDF4)
-                                                  : const Color(0xFFC9D1D9),
-                                              fontWeight: selected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                          if (selected) ...[
-                                            const Spacer(),
-                                            const Icon(
-                                              Icons.check,
-                                              size: 14,
-                                              color: Color(0xFF10B981),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    );
-                                  }).toList(),
-                              child: _ViewerControl(
-                                icon: _renderMode.icon,
-                                label: _renderMode.label,
-                                active:
-                                    _renderMode != ViewerRenderMode.wireframe,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-
-                            // 2. Camera View Angle Dropdown
-                            PopupMenuButton<CameraPreset>(
-                              tooltip: 'Camera angle: ${_preset.label}',
-                              initialValue: _preset,
-                              onSelected: _setPreset,
-                              color: const Color(0xFF111714),
-                              surfaceTintColor: Colors.transparent,
-                              elevation: 8,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: const BorderSide(
-                                  color: Color(0xFF223127),
-                                ),
-                              ),
-                              itemBuilder: (context) =>
-                                  CameraPreset.values.map((preset) {
-                                    final selected = preset == _preset;
-                                    return PopupMenuItem<CameraPreset>(
-                                      value: preset,
-                                      height: 38,
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            preset.icon,
-                                            size: 16,
-                                            color: selected
-                                                ? const Color(0xFF10B981)
-                                                : const Color(0xFF86978C),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            preset.label,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: selected
-                                                  ? const Color(0xFFF0FDF4)
-                                                  : const Color(0xFFC9D1D9),
-                                              fontWeight: selected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                          if (selected) ...[
-                                            const Spacer(),
-                                            const Icon(
-                                              Icons.check,
-                                              size: 14,
-                                              color: Color(0xFF10B981),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    );
-                                  }).toList(),
-                              child: _ViewerControl(
-                                icon: _preset.icon,
-                                label: _preset.shortName,
-                                active: true,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-
-                            // 3. Viewport Lighting Dropdown
-                            PopupMenuButton<ViewerLighting>(
-                              tooltip: 'Viewport lighting: ${_lighting.label}',
-                              initialValue: _lighting,
-                              onSelected: (lighting) =>
-                                  setState(() => _lighting = lighting),
-                              color: const Color(0xFF111714),
-                              surfaceTintColor: Colors.transparent,
-                              elevation: 8,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: const BorderSide(
-                                  color: Color(0xFF223127),
-                                ),
-                              ),
-                              itemBuilder: (context) =>
-                                  ViewerLighting.values.map((lighting) {
-                                    return PopupMenuItem<ViewerLighting>(
-                                      value: lighting,
-                                      child: Row(
-                                        children: [
-                                          Icon(lighting.icon, size: 16),
-                                          const SizedBox(width: 8),
-                                          Text(lighting.label),
-                                        ],
-                                      ),
-                                    );
-                                  }).toList(),
-                              child: _ViewerControl(
-                                icon: _lighting.icon,
-                                label: isCompact ? '' : _lighting.label,
-                                active: false,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-
-                            // 4. Quick Actions Capsule (Turntable + Reset)
-                            Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xC0111714),
-                                borderRadius: BorderRadius.circular(5),
-                                border: Border.all(
-                                  color: const Color(0xFF223127),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Tooltip(
-                                    message: _autoTurntable
-                                        ? 'Pause Turntable'
-                                        : 'Auto 360° Turntable',
-                                    child: InkWell(
-                                      onTap: _toggleTurntable,
-                                      borderRadius:
-                                          const BorderRadius.horizontal(
-                                        left: Radius.circular(5),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 5,
-                                        ),
-                                        child: Icon(
-                                          _autoTurntable
-                                              ? Icons.pause_circle_filled_rounded
-                                              : Icons.rotate_right_rounded,
-                                          size: 15,
-                                          color: _autoTurntable
-                                              ? const Color(0xFF10B981)
-                                              : const Color(0xFFBAC7CE),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 1,
-                                    height: 14,
-                                    color: const Color(0xFF223127),
-                                  ),
-                                  Tooltip(
-                                    message: 'Reset View',
-                                    child: InkWell(
-                                      onTap: () =>
-                                          setState(_resetCameraToModel),
-                                      borderRadius:
-                                          const BorderRadius.horizontal(
-                                        right: Radius.circular(5),
-                                      ),
-                                      child: const Padding(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 5,
-                                        ),
-                                        child: Icon(
-                                          Icons.refresh_rounded,
-                                          size: 15,
-                                          color: Color(0xFFBAC7CE),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-
-                            // 5. Prominent Fullscreen Button
-                            Tooltip(
-                              message: _isFullscreen
-                                  ? 'Exit Fullscreen'
-                                  : 'Fullscreen Viewport',
-                              child: InkWell(
-                                onTap: _toggleFullscreen,
-                                borderRadius: BorderRadius.circular(5),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 7,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _isFullscreen
-                                        ? const Color(0x3310B981)
-                                        : const Color(0xC0111714),
-                                    borderRadius: BorderRadius.circular(5),
-                                    border: Border.all(
-                                      color: _isFullscreen
-                                          ? const Color(0xFF10B981)
-                                          : const Color(0xFF223127),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        _isFullscreen
-                                            ? Icons.fullscreen_exit_rounded
-                                            : Icons.fullscreen_rounded,
-                                        size: 14,
-                                        color: _isFullscreen
-                                            ? const Color(0xFF10B981)
-                                            : const Color(0xFF34D399),
-                                      ),
-                                      if (!isCompact) ...[
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _isFullscreen
-                                              ? 'EXIT FULL'
-                                              : 'FULLSCREEN',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.5,
-                                            color: _isFullscreen
-                                                ? const Color(0xFF10B981)
-                                                : const Color(0xFFE2E8F0),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
+                    decoration: BoxDecoration(
+                      color: const Color(0xE60D1511),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF1E2E23)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x60000000),
+                          blurRadius: 14,
+                          offset: Offset(0, 3),
                         ),
                       ],
-                    );
-                  },
-                ),
-              ),
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 1. View Selection (Render Mode: Solid / Wireframe / Hybrid)
+                          PopupMenuButton<ViewerRenderMode>(
+                            tooltip: 'Render mode: ${_renderMode.label}',
+                            initialValue: _renderMode,
+                            onSelected: (mode) =>
+                                setState(() => _renderMode = mode),
+                            color: const Color(0xFF111714),
+                            surfaceTintColor: Colors.transparent,
+                            elevation: 8,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(
+                                color: Color(0xFF223127),
+                              ),
+                            ),
+                            itemBuilder: (context) =>
+                                ViewerRenderMode.values.map((mode) {
+                                  final selected = mode == _renderMode;
+                                  return PopupMenuItem<ViewerRenderMode>(
+                                    value: mode,
+                                    height: 38,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          mode.icon,
+                                          size: 16,
+                                          color: selected
+                                              ? const Color(0xFF10B981)
+                                              : const Color(0xFF86978C),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          mode.label,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: selected
+                                                ? const Color(0xFFF0FDF4)
+                                                : const Color(0xFFC9D1D9),
+                                            fontWeight: selected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                        if (selected) ...[
+                                          const Spacer(),
+                                          const Icon(
+                                            Icons.check,
+                                            size: 14,
+                                            color: Color(0xFF10B981),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                            child: _ViewerControl(
+                              icon: _renderMode.icon,
+                              label: _renderMode.label,
+                              active:
+                                  _renderMode != ViewerRenderMode.wireframe,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+
+                          // 2. Camera View Angle Dropdown
+                          PopupMenuButton<CameraPreset>(
+                            tooltip: 'Camera angle: ${_preset.label}',
+                            initialValue: _preset,
+                            onSelected: _setPreset,
+                            color: const Color(0xFF111714),
+                            surfaceTintColor: Colors.transparent,
+                            elevation: 8,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(
+                                color: Color(0xFF223127),
+                              ),
+                            ),
+                            itemBuilder: (context) =>
+                                CameraPreset.values.map((preset) {
+                                  final selected = preset == _preset;
+                                  return PopupMenuItem<CameraPreset>(
+                                    value: preset,
+                                    height: 38,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          preset.icon,
+                                          size: 16,
+                                          color: selected
+                                              ? const Color(0xFF10B981)
+                                              : const Color(0xFF86978C),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          preset.label,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: selected
+                                                ? const Color(0xFFF0FDF4)
+                                                : const Color(0xFFC9D1D9),
+                                            fontWeight: selected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                        if (selected) ...[
+                                          const Spacer(),
+                                          const Icon(
+                                            Icons.check,
+                                            size: 14,
+                                            color: Color(0xFF10B981),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                            child: _ViewerControl(
+                              icon: _preset.icon,
+                              label: _preset.shortName,
+                              active: true,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+
+                          // 3. Viewport Lighting Dropdown
+                          PopupMenuButton<ViewerLighting>(
+                            tooltip: 'Viewport lighting: ${_lighting.label}',
+                            initialValue: _lighting,
+                            onSelected: (lighting) =>
+                                setState(() => _lighting = lighting),
+                            color: const Color(0xFF111714),
+                            surfaceTintColor: Colors.transparent,
+                            elevation: 8,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(
+                                color: Color(0xFF223127),
+                              ),
+                            ),
+                            itemBuilder: (context) =>
+                                ViewerLighting.values.map((lighting) {
+                                  return PopupMenuItem<ViewerLighting>(
+                                    value: lighting,
+                                    child: Row(
+                                      children: [
+                                        Icon(lighting.icon, size: 16),
+                                        const SizedBox(width: 8),
+                                        Text(lighting.label),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                            child: _ViewerControl(
+                              icon: _lighting.icon,
+                              label: isCompact ? '' : _lighting.label,
+                              active: false,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+
+                          // 4. Quick Actions Capsule (Turntable + Reset)
+                          Container(
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: const Color(0xC0111714),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: const Color(0xFF223127),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Tooltip(
+                                  message: _autoTurntable
+                                      ? 'Pause Turntable'
+                                      : 'Auto 360° Turntable',
+                                  child: InkWell(
+                                    onTap: _toggleTurntable,
+                                    borderRadius:
+                                        const BorderRadius.horizontal(
+                                      left: Radius.circular(6),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 4,
+                                      ),
+                                      child: Icon(
+                                        _autoTurntable
+                                            ? Icons.pause_circle_filled_rounded
+                                            : Icons.rotate_right_rounded,
+                                        size: 15,
+                                        color: _autoTurntable
+                                            ? const Color(0xFF10B981)
+                                            : const Color(0xFFBAC7CE),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  width: 1,
+                                  height: 14,
+                                  color: const Color(0xFF223127),
+                                ),
+                                Tooltip(
+                                  message: 'Reset View',
+                                  child: InkWell(
+                                    onTap: () =>
+                                        setState(_resetCameraToModel),
+                                    borderRadius:
+                                        const BorderRadius.horizontal(
+                                      right: Radius.circular(6),
+                                    ),
+                                    child: const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 4,
+                                      ),
+                                      child: Icon(
+                                        Icons.refresh_rounded,
+                                        size: 15,
+                                        color: Color(0xFFBAC7CE),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+
+                          // 5. Prominent Fullscreen Button
+                          Tooltip(
+                            message: _isFullscreen
+                                ? 'Exit Fullscreen'
+                                : 'Fullscreen Viewport',
+                            child: InkWell(
+                              onTap: _toggleFullscreen,
+                              borderRadius: BorderRadius.circular(6),
+                              child: Container(
+                                height: 28,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _isFullscreen
+                                      ? const Color(0x3310B981)
+                                      : const Color(0xC0111714),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: _isFullscreen
+                                        ? const Color(0xFF10B981)
+                                        : const Color(0xFF223127),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _isFullscreen
+                                          ? Icons.fullscreen_exit_rounded
+                                          : Icons.fullscreen_rounded,
+                                      size: 15,
+                                      color: _isFullscreen
+                                          ? const Color(0xFF10B981)
+                                          : const Color(0xFF34D399),
+                                    ),
+                                    if (!isCompact) ...[
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _isFullscreen
+                                            ? 'EXIT FULL'
+                                            : 'FULLSCREEN',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.5,
+                                          color: _isFullscreen
+                                              ? const Color(0xFF10B981)
+                                              : const Color(0xFFE2E8F0),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
 
           // ── HUD Telemetry Overlay ─────────────────────────────────────────
           Positioned(
@@ -888,85 +863,6 @@ class _WireframeViewerState extends State<WireframeViewer>
 
 // ── Small UI Widgets ────────────────────────────────────────────────────────
 
-class _VehicleStatusBadge extends StatelessWidget {
-  const _VehicleStatusBadge({
-    required this.fileName,
-    required this.wheelCount,
-    this.compact = false,
-  });
-
-  final String fileName;
-  final int wheelCount;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xC0111714),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFF223127)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.view_in_ar_rounded,
-            size: 13,
-            color: Color(0xFF10B981),
-          ),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Tooltip(
-              message: fileName,
-              child: Text(
-                fileName,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFE2E8F0),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-          if (wheelCount > 0) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 5),
-              width: 1,
-              height: 10,
-              color: const Color(0xFF223127),
-            ),
-            Icon(
-              wheelCount >= 4
-                  ? Icons.check_circle_rounded
-                  : Icons.pending_rounded,
-              size: 11,
-              color: wheelCount >= 4
-                  ? const Color(0xFF10B981)
-                  : const Color(0xFF34D399),
-            ),
-            const SizedBox(width: 3),
-            Text(
-              compact ? '$wheelCount/4' : '$wheelCount/4 Rigged',
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                color: wheelCount >= 4
-                    ? const Color(0xFF10B981)
-                    : const Color(0xFF34D399),
-                letterSpacing: 0.3,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _ViewerControl extends StatelessWidget {
   const _ViewerControl({
     required this.icon,
@@ -982,10 +878,11 @@ class _ViewerControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = active ? const Color(0xFF10B981) : const Color(0xFF8BA2B0);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xC0111714),
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: active ? color : const Color(0xFF223127)),
       ),
       child: Row(
@@ -1000,6 +897,7 @@ class _ViewerControl extends StatelessWidget {
                 fontSize: 9,
                 color: active ? const Color(0xFF34D399) : const Color(0xFFC9D1D9),
                 fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
               ),
             ),
           ],

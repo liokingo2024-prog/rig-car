@@ -369,7 +369,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('CAR RIGGER'), findsOneWidget);
-      expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
+      expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
 
       // Back button exists and navigates back
       expect(find.text('Fleet Library'), findsWidgets);
@@ -390,8 +390,9 @@ void main() {
 
       expect(find.text('RIG-CAR'), findsWidgets);
       expect(find.text('CAR RIGGER'), findsOneWidget);
-      expect(find.text('Mixamo-Style Auto-Rig'), findsOneWidget);
-      expect(find.text('Procedural 3D Rig'), findsOneWidget);
+      // Car name label and right sidepanel content are removed as requested
+      expect(find.text('Procedural 3D Rig'), findsNothing);
+      expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
       expect(find.byTooltip('Auto-rig vehicle'), findsOneWidget);
       expect(find.text('ISO'), findsOneWidget);
       expect(find.byTooltip('Viewport lighting: Studio'), findsOneWidget);
@@ -425,9 +426,10 @@ void main() {
       expect(find.text('Export to Godot'), findsNothing);
       expect(find.text('Scan Results'), findsNothing);
 
-      // Upload controls exist
-      expect(find.text('Upload 3D Model'), findsOneWidget);
-      expect(find.text('Geometry Preset'), findsOneWidget);
+      // Content of right sidepanel removed as requested
+      expect(find.text('Upload 3D Model'), findsNothing);
+      expect(find.text('Geometry Preset'), findsNothing);
+      expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
     });
   });
 
