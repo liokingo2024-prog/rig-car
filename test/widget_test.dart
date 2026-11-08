@@ -371,8 +371,8 @@ void main() {
       expect(find.text('CAR RIGGER'), findsOneWidget);
       expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
 
-      // Back button exists and navigates back
-      expect(find.text('Fleet Library'), findsWidgets);
+      // Back button exists on nav and navigates back
+      expect(find.byTooltip('Back to Fleet Library'), findsOneWidget);
     });
   });
 

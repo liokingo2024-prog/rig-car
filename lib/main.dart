@@ -817,46 +817,7 @@ class _DesktopSidebar extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          InkWell(
-            onTap: () {
-              if (Navigator.of(context).canPop()) {
-                Navigator.of(context).pop();
-              } else {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const RigHomeScreen()),
-                );
-              }
-            },
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A231E),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF223127)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(
-                    Icons.arrow_back_rounded,
-                    size: 14,
-                    color: Color(0xFF34D399),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Fleet Library',
-                    style: TextStyle(
-                      color: Color(0xFFC9D1D9),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           const _SmallLabel('RIGGING PIPELINE'),
           const SizedBox(height: 10),
           _SidebarStep(
