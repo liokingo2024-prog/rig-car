@@ -1,7 +1,8 @@
 /**
  * Sketchfab-grade WebGL 3D Viewer for RIG-CAR
- * Powered by Three.js with full PBR textures, environment lighting,
- * and 60 FPS hardware acceleration.
+ * Multi-format 3D engine powered by Three.js
+ * Supports .glb, .gltf, .obj, .stl, .fbx, and .zip (Sketchfab download packs)
+ * with full PBR textures, environment lighting, and 60 FPS hardware acceleration.
  */
 (function() {
   'use strict';
@@ -23,6 +24,16 @@
   let currentRenderMode = 'solid'; // 'solid' | 'wireframe' | 'hybrid'
   let currentLighting = 'studio'; // 'studio' | 'daylight' | 'night' | 'flat'
   let pendingModelBuffer = null;
+  let createdBlobUrls = [];
+
+  function cleanBlobUrls() {
+    if (createdBlobUrls.length > 0) {
+      createdBlobUrls.forEach(url => {
+        try { URL.revokeObjectURL(url); } catch (_) {}
+      });
+      createdBlobUrls = [];
+    }
+  }
 
   function ensureArrayBuffer(input) {
     if (!input) return null;
@@ -162,7 +173,7 @@
     if (pendingModelBuffer) {
       const p = pendingModelBuffer;
       pendingModelBuffer = null;
-      loadGlbFromArrayBuffer(p.buffer, p.callback);
+      loadModel(p.buffer, p.fileName, p.callback);
     }
   }
 
@@ -219,140 +230,369 @@
     }
   }
 
-  function loadGlbFromArrayBuffer(rawBuffer, callback) {
+  /**
+   * Universal Model Loader supporting GLB, GLTF, OBJ, STL, FBX, and ZIP.
+   */
+  function loadModel(rawBuffer, fileName, callback) {
     if (!scene) {
-      pendingModelBuffer = { buffer: rawBuffer, callback: callback };
+      pendingModelBuffer = { buffer: rawBuffer, fileName: fileName, callback: callback };
       return;
     }
 
     const arrayBuffer = ensureArrayBuffer(rawBuffer);
     if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
-      console.error('SketchfabViewer: Invalid buffer passed to loadGlbFromArrayBuffer', rawBuffer);
+      console.error('SketchfabViewer: Invalid buffer passed to loadModel', rawBuffer);
       if (callback) callback({ success: false, error: 'Invalid buffer' });
       return;
     }
 
-    console.log('SketchfabViewer: Parsing GLB model, byteLength =', arrayBuffer.byteLength);
-    const loader = new THREE.GLTFLoader();
+    cleanBlobUrls();
 
+    const name = (fileName || '').toLowerCase();
+    const u8 = new Uint8Array(arrayBuffer, 0, Math.min(64, arrayBuffer.byteLength));
+
+    // Check magic bytes
+    const isZip = u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04;
+    const isGlb = u8[0] === 0x67 && u8[1] === 0x6C && u8[2] === 0x54 && u8[3] === 0x46; // 'glTF'
+    const isFbx = arrayBuffer.byteLength > 20 &&
+      (name.endsWith('.fbx') || String.fromCharCode.apply(null, u8.subarray(0, 18)).startsWith('Kaydara FBX'));
+
+    console.log('SketchfabViewer: loadModel for file:', fileName, 'byteLength:', arrayBuffer.byteLength);
+
+    if (isZip || name.endsWith('.zip')) {
+      loadZip(arrayBuffer, callback);
+    } else if (isGlb || name.endsWith('.glb')) {
+      loadGlb(arrayBuffer, callback);
+    } else if (name.endsWith('.gltf') || (u8[0] === 0x7B /* '{' */)) {
+      loadGltf(arrayBuffer, callback);
+    } else if (name.endsWith('.obj')) {
+      loadObj(arrayBuffer, callback);
+    } else if (name.endsWith('.stl')) {
+      loadStl(arrayBuffer, callback);
+    } else if (isFbx || name.endsWith('.fbx')) {
+      loadFbx(arrayBuffer, callback);
+    } else {
+      // Auto-detect: GLB/GLTF -> OBJ -> STL -> FBX
+      loadGlb(arrayBuffer, function(res) {
+        if (res && res.success) {
+          if (callback) callback(res);
+        } else {
+          loadObj(arrayBuffer, function(resObj) {
+            if (resObj && resObj.success) {
+              if (callback) callback(resObj);
+            } else {
+              loadStl(arrayBuffer, callback);
+            }
+          });
+        }
+      });
+    }
+  }
+
+  function loadGlb(arrayBuffer, callback) {
+    const loader = new THREE.GLTFLoader();
     loader.parse(
       arrayBuffer,
       '',
       function(gltf) {
-        if (currentModel) {
-          scene.remove(currentModel);
-          disposeObject(currentModel);
-          currentModel = null;
-        }
-        originalMaterials.clear();
-
-        const model = gltf.scene || gltf.scenes[0];
-        currentModel = model;
-
-        let meshCount = 0;
-        let triCount = 0;
-
-        // Process materials and textures
-        model.traverse(function(child) {
-          if (child.isMesh) {
-            meshCount++;
-            if (child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
-              const pos = child.geometry.attributes.position;
-              if (child.geometry.index) {
-                triCount += Math.floor(child.geometry.index.count / 3);
-              } else {
-                triCount += Math.floor(pos.count / 3);
-              }
-            }
-
-            child.castShadow = true;
-            child.receiveShadow = true;
-
-            if (child.material) {
-              const mats = Array.isArray(child.material) ? child.material : [child.material];
-              mats.forEach(mat => {
-                // Enable anisotropic filtering on all textures
-                const textures = [
-                  mat.map, mat.normalMap, mat.roughnessMap,
-                  mat.metalnessMap, mat.aoMap, mat.emissiveMap
-                ];
-                textures.forEach(tex => {
-                  if (tex) {
-                    tex.encoding = THREE.sRGBEncoding;
-                    tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
-                  }
-                });
-
-                // Glass / windshield handling
-                const name = (mat.name || '').toLowerCase();
-                const isGlass = name.includes('glass') || name.includes('windshield') ||
-                                name.includes('window') || name.includes('wnd') ||
-                                name.includes('visor');
-                if (isGlass || (mat.transparent && mat.opacity < 0.98)) {
-                  mat.transparent = true;
-                  mat.depthWrite = true;
-                  mat.side = THREE.DoubleSide;
-                  if (mat.opacity >= 1.0) mat.opacity = 0.55;
-                } else {
-                  // Double-sided for thin aero panels (spoilers, wings, diffusers)
-                  mat.side = THREE.DoubleSide;
-                }
-
-                originalMaterials.set(mat.uuid, mat.clone());
-              });
-            }
-          }
-        });
-
-        // Compute BBox and center
-        model.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(model);
-        modelBBox = box;
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const maxDim = Math.max(size.x, Math.max(size.y, size.z));
-        // Normalize unit scale if author exported in millimeters (>20) or decimeters
-        if (maxDim > 20.0 || (maxDim < 0.2 && maxDim > 0)) {
-          const s = 4.2 / maxDim;
-          model.scale.set(s, s, s);
-          model.updateMatrixWorld(true);
-          box.setFromObject(model);
-          box.getSize(size);
-          box.getCenter(center);
-        }
-
-        // Center on floor (y=0)
-        model.position.x = -center.x;
-        model.position.y = -box.min.y;
-        model.position.z = -center.z;
-        model.updateMatrixWorld(true);
-
-        modelRadius = Math.max(Math.max(size.x, Math.max(size.y, size.z)) * 0.5, 0.5);
-        modelCenter = new THREE.Vector3(0, size.y * 0.5, 0);
-
-        // Adjust shadow plane to vehicle size
-        if (groundShadow) {
-          groundShadow.scale.set(Math.max(size.x * 0.7, 4), Math.max(size.z * 0.7, 4), 1);
-          groundShadow.position.set(0, 0.0005, 0);
-        }
-
-        scene.add(model);
-
-        // Fit camera to vehicle
-        resetCamera();
-
-        // Apply current render mode
-        applyRenderMode(currentRenderMode);
-
-        console.log('SketchfabViewer: GLB successfully loaded! Meshes:', meshCount, 'Triangles:', triCount);
-        if (callback) callback({ success: true, size: size, center: center });
+        applyLoadedModel(gltf.scene || gltf.scenes[0], callback);
       },
       function(error) {
-        console.error('SketchfabViewer: Error parsing GLB in WebGL viewer:', error);
+        console.error('SketchfabViewer: Error parsing GLB:', error);
         if (callback) callback({ success: false, error: error });
       }
     );
+  }
+
+  function loadGltf(arrayBuffer, callback) {
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(arrayBuffer));
+    const loader = new THREE.GLTFLoader();
+    loader.parse(
+      text,
+      '',
+      function(gltf) {
+        applyLoadedModel(gltf.scene || gltf.scenes[0], callback);
+      },
+      function(error) {
+        console.error('SketchfabViewer: Error parsing GLTF JSON:', error);
+        if (callback) callback({ success: false, error: error });
+      }
+    );
+  }
+
+  function loadObj(arrayBuffer, callback) {
+    if (typeof THREE.OBJLoader === 'undefined') {
+      console.error('SketchfabViewer: OBJLoader not available');
+      if (callback) callback({ success: false, error: 'OBJLoader missing' });
+      return;
+    }
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(arrayBuffer));
+    try {
+      const loader = new THREE.OBJLoader();
+      const obj = loader.parse(text);
+
+      // Enhance with studio automotive PBR materials
+      obj.traverse(function(child) {
+        if (child.isMesh) {
+          const name = (child.name || '').toLowerCase();
+          const isGlass = name.includes('glass') || name.includes('windshield') || name.includes('window');
+          const isWheel = name.includes('wheel') || name.includes('tire') || name.includes('rubber');
+          const isChrome = name.includes('rim') || name.includes('chrome') || name.includes('mirror');
+
+          child.material = new THREE.MeshStandardMaterial({
+            color: isGlass ? 0x223344 : (isWheel ? 0x1f2224 : (isChrome ? 0xd0d4d8 : 0xcccccc)),
+            metalness: isGlass ? 0.9 : (isWheel ? 0.15 : (isChrome ? 0.95 : 0.65)),
+            roughness: isGlass ? 0.1 : (isWheel ? 0.8 : (isChrome ? 0.1 : 0.28)),
+            transparent: isGlass,
+            opacity: isGlass ? 0.55 : 1.0,
+            depthWrite: true,
+            side: THREE.DoubleSide
+          });
+        }
+      });
+      applyLoadedModel(obj, callback);
+    } catch (e) {
+      console.error('SketchfabViewer: Error parsing OBJ:', e);
+      if (callback) callback({ success: false, error: e });
+    }
+  }
+
+  function loadStl(arrayBuffer, callback) {
+    if (typeof THREE.STLLoader === 'undefined') {
+      console.error('SketchfabViewer: STLLoader not available');
+      if (callback) callback({ success: false, error: 'STLLoader missing' });
+      return;
+    }
+    try {
+      const loader = new THREE.STLLoader();
+      const geometry = loader.parse(arrayBuffer);
+      geometry.computeVertexNormals();
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xc8cdd0,
+        metalness: 0.55,
+        roughness: 0.32,
+        side: THREE.DoubleSide
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      const group = new THREE.Group();
+      group.add(mesh);
+      applyLoadedModel(group, callback);
+    } catch (e) {
+      console.error('SketchfabViewer: Error parsing STL:', e);
+      if (callback) callback({ success: false, error: e });
+    }
+  }
+
+  function loadFbx(arrayBuffer, callback) {
+    if (typeof THREE.FBXLoader === 'undefined') {
+      console.error('SketchfabViewer: FBXLoader not available');
+      if (callback) callback({ success: false, error: 'FBXLoader missing' });
+      return;
+    }
+    try {
+      const loader = new THREE.FBXLoader();
+      const group = loader.parse(arrayBuffer, '');
+      applyLoadedModel(group, callback);
+    } catch (e) {
+      console.error('SketchfabViewer: Error parsing FBX:', e);
+      if (callback) callback({ success: false, error: e });
+    }
+  }
+
+  function loadZip(arrayBuffer, callback) {
+    if (typeof JSZip === 'undefined') {
+      console.error('SketchfabViewer: JSZip not available');
+      if (callback) callback({ success: false, error: 'JSZip missing' });
+      return;
+    }
+
+    JSZip.loadAsync(arrayBuffer).then(async function(zip) {
+      let glbFile = null;
+      let gltfFile = null;
+      let fbxFile = null;
+      let objFile = null;
+      let stlFile = null;
+
+      const fileMap = {};
+
+      zip.forEach(function(relativePath, file) {
+        if (file.dir) return;
+        const low = relativePath.toLowerCase();
+        fileMap[low] = file;
+        const base = low.split('/').pop();
+        if (base.endsWith('.glb') && !glbFile) glbFile = file;
+        if (base.endsWith('.gltf') && !gltfFile) gltfFile = file;
+        if (base.endsWith('.fbx') && !fbxFile) fbxFile = file;
+        if (base.endsWith('.obj') && !objFile) objFile = file;
+        if (base.endsWith('.stl') && !stlFile) stlFile = file;
+      });
+
+      if (glbFile) {
+        console.log('SketchfabViewer: Extracted GLB from ZIP:', glbFile.name);
+        const buf = await glbFile.async('arraybuffer');
+        loadGlb(buf, callback);
+      } else if (gltfFile) {
+        console.log('SketchfabViewer: Extracted GLTF from ZIP with textures:', gltfFile.name);
+        const urlMap = {};
+        for (const [path, file] of Object.entries(fileMap)) {
+          const blob = new Blob([await file.async('arraybuffer')]);
+          const url = URL.createObjectURL(blob);
+          createdBlobUrls.push(url);
+          urlMap[path] = url;
+          const baseName = path.split('/').pop();
+          urlMap[baseName] = url;
+        }
+
+        const manager = new THREE.LoadingManager();
+        manager.setURLModifier(function(url) {
+          const base = url.split('/').pop().split('\\').pop().toLowerCase();
+          if (urlMap[base]) return urlMap[base];
+          return url;
+        });
+
+        const gltfText = await gltfFile.async('text');
+        const loader = new THREE.GLTFLoader(manager);
+        loader.parse(gltfText, '', function(gltf) {
+          applyLoadedModel(gltf.scene || gltf.scenes[0], callback);
+        }, function(err) {
+          console.error('SketchfabViewer: Error parsing GLTF from ZIP:', err);
+          if (callback) callback({ success: false, error: err });
+        });
+      } else if (fbxFile) {
+        console.log('SketchfabViewer: Extracted FBX from ZIP:', fbxFile.name);
+        const buf = await fbxFile.async('arraybuffer');
+        loadFbx(buf, callback);
+      } else if (objFile) {
+        console.log('SketchfabViewer: Extracted OBJ from ZIP:', objFile.name);
+        const buf = await objFile.async('arraybuffer');
+        loadObj(buf, callback);
+      } else if (stlFile) {
+        console.log('SketchfabViewer: Extracted STL from ZIP:', stlFile.name);
+        const buf = await stlFile.async('arraybuffer');
+        loadStl(buf, callback);
+      } else {
+        console.error('SketchfabViewer: No supported 3D model found inside zip archive');
+        if (callback) callback({ success: false, error: 'No 3D model found in zip' });
+      }
+    }).catch(function(err) {
+      console.error('SketchfabViewer: Error reading zip archive:', err);
+      if (callback) callback({ success: false, error: err });
+    });
+  }
+
+  /**
+   * Unified Post-Processing Pipeline for all loaded models.
+   */
+  function applyLoadedModel(model, callback) {
+    if (!scene) return;
+    if (currentModel) {
+      scene.remove(currentModel);
+      disposeObject(currentModel);
+      currentModel = null;
+    }
+    originalMaterials.clear();
+
+    currentModel = model;
+
+    let meshCount = 0;
+    let triCount = 0;
+
+    // Process materials and textures
+    model.traverse(function(child) {
+      if (child.isMesh) {
+        meshCount++;
+        if (child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
+          const pos = child.geometry.attributes.position;
+          if (child.geometry.index) {
+            triCount += Math.floor(child.geometry.index.count / 3);
+          } else {
+            triCount += Math.floor(pos.count / 3);
+          }
+        }
+
+        child.castShadow = true;
+        child.receiveShadow = true;
+
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach(mat => {
+            // Enable anisotropic filtering on all textures
+            const textures = [
+              mat.map, mat.normalMap, mat.roughnessMap,
+              mat.metalnessMap, mat.aoMap, mat.emissiveMap
+            ];
+            textures.forEach(tex => {
+              if (tex) {
+                tex.encoding = THREE.sRGBEncoding;
+                tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
+              }
+            });
+
+            // Glass / windshield handling
+            const name = (mat.name || '').toLowerCase();
+            const isGlass = name.includes('glass') || name.includes('windshield') ||
+                            name.includes('window') || name.includes('wnd') ||
+                            name.includes('visor');
+            if (isGlass || (mat.transparent && mat.opacity < 0.98)) {
+              mat.transparent = true;
+              mat.depthWrite = true;
+              mat.side = THREE.DoubleSide;
+              if (mat.opacity >= 1.0) mat.opacity = 0.55;
+            } else {
+              // Double-sided for thin aero panels (spoilers, wings, diffusers)
+              mat.side = THREE.DoubleSide;
+            }
+
+            originalMaterials.set(mat.uuid, mat.clone());
+          });
+        }
+      }
+    });
+
+    // Compute BBox and center
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    modelBBox = box;
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z));
+    // Normalize unit scale if author exported in millimeters (>20) or decimeters
+    if (maxDim > 20.0 || (maxDim < 0.2 && maxDim > 0)) {
+      const s = 4.2 / maxDim;
+      model.scale.set(s, s, s);
+      model.updateMatrixWorld(true);
+      box.setFromObject(model);
+      box.getSize(size);
+      box.getCenter(center);
+    }
+
+    // Center on floor (y=0)
+    model.position.x = -center.x;
+    model.position.y = -box.min.y;
+    model.position.z = -center.z;
+    model.updateMatrixWorld(true);
+
+    modelRadius = Math.max(Math.max(size.x, Math.max(size.y, size.z)) * 0.5, 0.5);
+    modelCenter = new THREE.Vector3(0, size.y * 0.5, 0);
+
+    // Adjust shadow plane to vehicle size
+    if (groundShadow) {
+      groundShadow.scale.set(Math.max(size.x * 0.7, 4), Math.max(size.z * 0.7, 4), 1);
+      groundShadow.position.set(0, 0.0005, 0);
+    }
+
+    scene.add(model);
+
+    // Fit camera to vehicle
+    resetCamera();
+
+    // Apply current render mode
+    applyRenderMode(currentRenderMode);
+
+    console.log('SketchfabViewer: Model successfully rendered! Meshes:', meshCount, 'Triangles:', triCount);
+    if (callback) callback({ success: true, size: size, center: center });
   }
 
   function resetCamera() {
@@ -428,7 +668,6 @@
     });
 
     if (mode === 'hybrid') {
-      // Add subtle wireframe lines over the textured solid model
       wireframeOverlayGroup = new THREE.Group();
       currentModel.traverse(function(child) {
         if (child.isMesh && child.geometry) {
@@ -550,7 +789,10 @@
   // Global API attached to window
   window.SketchfabViewer = {
     init: init,
-    loadGlbFromArrayBuffer: loadGlbFromArrayBuffer,
+    loadModel: loadModel,
+    loadGlbFromArrayBuffer: function(buf, cb) {
+      return loadModel(buf, 'model.glb', cb);
+    },
     setRenderMode: applyRenderMode,
     setCameraPreset: setCameraPreset,
     setLighting: setLighting,

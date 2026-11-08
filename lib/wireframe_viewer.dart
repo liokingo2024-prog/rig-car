@@ -235,6 +235,7 @@ class _WireframeViewerState extends State<WireframeViewer>
             child: widget.modelBytes != null && widget.modelBytes!.isNotEmpty
                 ? SketchfabViewport(
                     bytes: widget.modelBytes,
+                    fileName: widget.model?.fileName,
                     renderMode: _renderMode.name,
                     lighting: _lighting.name,
                     gridStyle: _gridStyle.name,

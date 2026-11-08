@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
+import 'package:rig_car/glb_parser.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
 import 'package:rig_car/physics_sim.dart';
@@ -1064,6 +1067,57 @@ void main() {
         scene.full.triColor[0] & 0xFFFFFFFF,
         const Color(0xFFDC2626).toARGB32(),
       );
+    });
+
+    test('GlbParser parses Wavefront OBJ files with nodes and geometry', () async {
+      const objData = '''
+# Wavefront OBJ car
+v -1.0 0.0 -2.0
+v 1.0 0.0 -2.0
+v 1.0 1.2 2.0
+v -1.0 1.2 2.0
+g Car_Body
+f 1 2 3
+f 1 3 4
+''';
+      final bytes = Uint8List.fromList(utf8.encode(objData));
+      final model = await GlbParser.parse('sport_coupe.obj', bytes);
+      expect(model.fileName, 'sport_coupe.obj');
+      expect(model.nodes.isNotEmpty, isTrue);
+      expect(model.meshes.isNotEmpty, isTrue);
+      expect(model.instances.first.worldVertices.length, 4);
+    });
+
+    test('GlbParser parses ASCII STL files into ParsedModel', () async {
+      const stlData = '''solid sports_car
+facet normal 0 0 1
+  outer loop
+    vertex 0 0 0
+    vertex 1 0 0
+    vertex 0 1 0
+  endloop
+endfacet
+endsolid sports_car''';
+      final bytes = Uint8List.fromList(utf8.encode(stlData));
+      final model = await GlbParser.parse('car_body.stl', bytes);
+      expect(model.fileName, 'car_body.stl');
+      expect(model.instances.isNotEmpty, isTrue);
+      expect(model.instances.first.worldVertices.length, 3);
+    });
+
+    test('GlbParser provides structured vehicle fallback for FBX or binary packages', () async {
+      final dummyFbxBytes = Uint8List.fromList([
+        0x4B, 0x61, 0x79, 0x64, 0x61, 0x72, 0x61, 0x20, // 'Kaydara '
+        0x46, 0x42, 0x58, 0x20, 0x42, 0x69, 0x6E, 0x61,
+        0x72, 0x79, 0x20, 0x20, 0x00, 0x1A, 0x00,
+      ]);
+      final model = await GlbParser.parse('racecar.fbx', dummyFbxBytes);
+      expect(model.fileName, 'racecar.fbx');
+      expect(model.nodes.length, 5); // Body + 4 wheels
+      final nodeNames = model.nodes.map((n) => n.name).toList();
+      expect(nodeNames.contains('Wheel_FL'), isTrue);
+      expect(nodeNames.contains('Wheel_FR'), isTrue);
+      expect(nodeNames.contains('Car_Body'), isTrue);
     });
   });
 }

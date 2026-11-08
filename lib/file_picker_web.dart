@@ -7,7 +7,8 @@ import 'dart:typed_data';
 import 'model_data.dart';
 
 Future<PickedFile?> pickModelFile() async {
-  final input = html.FileUploadInputElement()..accept = '.glb,.gltf';
+  final input = html.FileUploadInputElement()
+    ..accept = '.glb,.gltf,.obj,.fbx,.stl,.zip,.dae';
   input.click();
   await input.onChange.first;
   final files = input.files;

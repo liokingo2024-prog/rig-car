@@ -5,6 +5,7 @@ class SketchfabViewport extends StatelessWidget {
   const SketchfabViewport({
     super.key,
     this.bytes,
+    this.fileName,
     required this.renderMode,
     required this.lighting,
     required this.gridStyle,
@@ -16,6 +17,7 @@ class SketchfabViewport extends StatelessWidget {
   });
 
   final Uint8List? bytes;
+  final String? fileName;
   final String renderMode;
   final String lighting;
   final String gridStyle;

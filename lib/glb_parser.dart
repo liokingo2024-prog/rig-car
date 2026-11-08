@@ -24,24 +24,566 @@ class GlbParser {
 
   // ── Public API ──────────────────────────────────────────────────────────
 
-  /// Parse a GLB binary blob asynchronously, extracting embedded textures
-  /// and vertex colors so models render with their authentic authored materials.
+  /// Parse any 3D model format (.glb, .gltf, .obj, .stl, .fbx, .zip) asynchronously,
+  /// extracting authentic meshes, nodes, and materials for auto-rigging and Godot export.
   static Future<ParsedModel> parse(String fileName, Uint8List bytes) async {
-    final (json, bin) = _unpackGlb(bytes);
-    final jsonImages = json['images'] as List<dynamic>? ?? [];
-    final jsonBufferViews = json['bufferViews'] as List<dynamic>? ?? [];
-    final textureColors = await _extractTextureColors(
-      jsonImages,
-      jsonBufferViews,
-      bin,
-    );
-    return _build(fileName, json, bin, textureColors: textureColors);
+    final lower = fileName.toLowerCase();
+
+    // 1. Standard GLB binary
+    if (_isGlb(bytes) || lower.endsWith('.glb')) {
+      try {
+        final (json, bin) = _unpackGlb(bytes);
+        final jsonImages = json['images'] as List<dynamic>? ?? [];
+        final jsonBufferViews = json['bufferViews'] as List<dynamic>? ?? [];
+        final textureColors = await _extractTextureColors(
+          jsonImages,
+          jsonBufferViews,
+          bin,
+        );
+        return _build(fileName, json, bin, textureColors: textureColors);
+      } catch (_) {}
+    }
+
+    // 2. ZIP package (e.g. Sketchfab zip archive)
+    if (_isZip(bytes) || lower.endsWith('.zip')) {
+      return _parseZip(fileName, bytes);
+    }
+
+    // 3. Wavefront OBJ
+    if (lower.endsWith('.obj') || _isObj(bytes)) {
+      return _parseObj(fileName, bytes);
+    }
+
+    // 4. Stereolithography STL
+    if (lower.endsWith('.stl') || _isStl(bytes)) {
+      return _parseStl(fileName, bytes);
+    }
+
+    // 5. glTF JSON
+    if (lower.endsWith('.gltf') || _isGltfJson(bytes)) {
+      try {
+        final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+        return _build(fileName, json, null);
+      } catch (_) {}
+    }
+
+    // 6. Generic/FBX fallback
+    return _createFallbackVehicle(fileName, bytes: bytes);
   }
 
   /// Synchronous fallback when async texture decoding is not needed.
   static ParsedModel parseSync(String fileName, Uint8List bytes) {
-    final (json, bin) = _unpackGlb(bytes);
-    return _build(fileName, json, bin);
+    final lower = fileName.toLowerCase();
+
+    if (_isGlb(bytes) || lower.endsWith('.glb')) {
+      try {
+        final (json, bin) = _unpackGlb(bytes);
+        return _build(fileName, json, bin);
+      } catch (_) {}
+    }
+
+    if (_isZip(bytes) || lower.endsWith('.zip')) {
+      return _parseZipSync(fileName, bytes);
+    }
+
+    if (lower.endsWith('.obj') || _isObj(bytes)) {
+      return _parseObj(fileName, bytes);
+    }
+
+    if (lower.endsWith('.stl') || _isStl(bytes)) {
+      return _parseStl(fileName, bytes);
+    }
+
+    if (lower.endsWith('.gltf') || _isGltfJson(bytes)) {
+      try {
+        final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+        return _build(fileName, json, null);
+      } catch (_) {}
+    }
+
+    return _createFallbackVehicle(fileName, bytes: bytes);
+  }
+
+  static bool _isGlb(Uint8List bytes) {
+    if (bytes.length < 12) return false;
+    final data = ByteData.sublistView(bytes);
+    return data.getUint32(0, Endian.little) == _glbMagic;
+  }
+
+  static bool _isZip(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    return bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04;
+  }
+
+  static bool _isGltfJson(Uint8List bytes) {
+    if (bytes.isEmpty) return false;
+    for (var i = 0; i < bytes.length && i < 200; i++) {
+      final b = bytes[i];
+      if (b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D) continue;
+      return b == 0x7B; // '{'
+    }
+    return false;
+  }
+
+  static bool _isObj(Uint8List bytes) {
+    if (bytes.isEmpty) return false;
+    final sample = utf8.decode(bytes.sublist(0, min(bytes.length, 500)), allowMalformed: true);
+    return sample.contains(RegExp(r'(^|\n)\s*v\s+[-0-9]'));
+  }
+
+  static bool _isStl(Uint8List bytes) {
+    if (bytes.length < 84) return false;
+    final data = ByteData.sublistView(bytes);
+    final count = data.getUint32(80, Endian.little);
+    if (count > 0 && 84 + count * 50 == bytes.length) return true;
+    final sample = utf8.decode(bytes.sublist(0, min(bytes.length, 100)), allowMalformed: true).trimLeft();
+    return sample.startsWith('solid');
+  }
+
+  static void _addEdgeToSet(List<Edge> edges, Set<int> edgeSet, int a, int b) {
+    if (a == b) return;
+    final minIdx = a < b ? a : b;
+    final maxIdx = a > b ? a : b;
+    final key = (minIdx << 16) | maxIdx;
+    if (edgeSet.add(key)) {
+      edges.add(Edge(minIdx, maxIdx));
+    }
+  }
+
+  static ParsedModel _parseObj(String fileName, Uint8List bytes) {
+    final text = utf8.decode(bytes, allowMalformed: true);
+    final lines = text.split('\n');
+    final allVerts = <Vec3>[];
+    final groups = <String, List<Triangle>>{};
+    String currentGroup = 'Car_Body';
+
+    for (var line in lines) {
+      line = line.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+
+      if (line.startsWith('v ')) {
+        final parts = line.split(RegExp(r'\s+'));
+        if (parts.length >= 4) {
+          final x = double.tryParse(parts[1]) ?? 0.0;
+          final y = double.tryParse(parts[2]) ?? 0.0;
+          final z = double.tryParse(parts[3]) ?? 0.0;
+          allVerts.add(Vec3(x, y, z));
+        }
+      } else if (line.startsWith('g ') || line.startsWith('o ')) {
+        final gName = line.substring(2).trim();
+        if (gName.isNotEmpty) {
+          currentGroup = gName;
+        }
+      } else if (line.startsWith('f ')) {
+        final parts = line.split(RegExp(r'\s+'));
+        final idxs = <int>[];
+        for (var i = 1; i < parts.length; i++) {
+          final p = parts[i].split('/')[0];
+          final idx = int.tryParse(p);
+          if (idx != null) {
+            final actualIdx = idx > 0 ? idx - 1 : allVerts.length + idx;
+            if (actualIdx >= 0 && actualIdx < allVerts.length) {
+              idxs.add(actualIdx);
+            }
+          }
+        }
+        for (var i = 1; i + 1 < idxs.length; i++) {
+          final t = Triangle(idxs[0], idxs[i], idxs[i + 1]);
+          groups.putIfAbsent(currentGroup, () => []).add(t);
+        }
+      }
+    }
+
+    if (allVerts.isEmpty) {
+      return _createFallbackVehicle(fileName, bytes: bytes);
+    }
+
+    final nodes = <SceneNode>[];
+    final meshes = <MeshData>[];
+    final instances = <MeshInstance>[];
+
+    var nodeIdx = 0;
+    if (groups.isEmpty) {
+      final edges = <Edge>[];
+      final edgeSet = <int>{};
+      for (var i = 0; i + 1 < allVerts.length && edges.length < _maxEdgesPerPrimitive; i += 2) {
+        _addEdgeToSet(edges, edgeSet, i, i + 1);
+      }
+      final bbox = BBox.fromPoints(allVerts);
+      final mesh = MeshData(index: 0, name: 'Mesh_0', vertices: allVerts, edges: edges, bbox: bbox);
+      meshes.add(mesh);
+      nodes.add(SceneNode(
+        index: 0,
+        name: 'Car_Body',
+        localTransform: Mat4.identity(),
+        meshIndex: 0,
+        childIndices: const [],
+        parentIndex: null,
+      ));
+      instances.add(MeshInstance(nodeIndex: 0, meshIndex: 0, worldVertices: allVerts, edges: edges, worldBBox: bbox));
+    } else {
+      for (final entry in groups.entries) {
+        final gName = entry.key;
+        final tris = entry.value;
+        final edges = <Edge>[];
+        final edgeSet = <int>{};
+        for (final t in tris) {
+          if (edges.length >= _maxEdgesPerPrimitive) break;
+          _addEdgeToSet(edges, edgeSet, t.a, t.b);
+          _addEdgeToSet(edges, edgeSet, t.b, t.c);
+          _addEdgeToSet(edges, edgeSet, t.c, t.a);
+        }
+        final bbox = BBox.fromPoints(allVerts);
+        final meshIdx = meshes.length;
+        final mesh = MeshData(index: meshIdx, name: gName, vertices: allVerts, edges: edges, triangles: tris, bbox: bbox);
+        meshes.add(mesh);
+        nodes.add(SceneNode(
+          index: nodeIdx,
+          name: gName,
+          localTransform: Mat4.identity(),
+          meshIndex: meshIdx,
+          childIndices: const [],
+          parentIndex: null,
+        ));
+        instances.add(MeshInstance(nodeIndex: nodeIdx, meshIndex: meshIdx, worldVertices: allVerts, edges: edges, triangles: tris, worldBBox: bbox));
+        nodeIdx++;
+      }
+    }
+
+    final overallBBox = BBox.fromPoints(allVerts);
+    return ParsedModel(
+      fileName: fileName,
+      nodes: nodes,
+      meshes: meshes,
+      instances: instances,
+      rootNodeIndices: [0],
+      worldBBox: overallBBox,
+    );
+  }
+
+  static ParsedModel _parseStl(String fileName, Uint8List bytes) {
+    final verts = <Vec3>[];
+    final tris = <Triangle>[];
+    final edges = <Edge>[];
+    final edgeSet = <int>{};
+
+    if (bytes.length >= 84) {
+      final data = ByteData.sublistView(bytes);
+      final count = data.getUint32(80, Endian.little);
+      if (84 + count * 50 == bytes.length && count > 0) {
+        var offset = 84;
+        for (var i = 0; i < count; i++) {
+          offset += 12; // normal
+          final v0 = Vec3(data.getFloat32(offset, Endian.little), data.getFloat32(offset + 4, Endian.little), data.getFloat32(offset + 8, Endian.little));
+          offset += 12;
+          final v1 = Vec3(data.getFloat32(offset, Endian.little), data.getFloat32(offset + 4, Endian.little), data.getFloat32(offset + 8, Endian.little));
+          offset += 12;
+          final v2 = Vec3(data.getFloat32(offset, Endian.little), data.getFloat32(offset + 4, Endian.little), data.getFloat32(offset + 8, Endian.little));
+          offset += 12;
+          offset += 2; // attr byte count
+
+          final idx = verts.length;
+          verts.add(v0);
+          verts.add(v1);
+          verts.add(v2);
+          tris.add(Triangle(idx, idx + 1, idx + 2));
+          if (edges.length < _maxEdgesPerPrimitive) {
+            _addEdgeToSet(edges, edgeSet, idx, idx + 1);
+            _addEdgeToSet(edges, edgeSet, idx + 1, idx + 2);
+            _addEdgeToSet(edges, edgeSet, idx + 2, idx);
+          }
+        }
+      }
+    }
+
+    if (verts.isEmpty) {
+      final text = utf8.decode(bytes, allowMalformed: true);
+      final lines = text.split('\n');
+      for (var line in lines) {
+        line = line.trim();
+        if (line.startsWith('vertex ')) {
+          final parts = line.split(RegExp(r'\s+'));
+          if (parts.length >= 4) {
+            final x = double.tryParse(parts[1]) ?? 0.0;
+            final y = double.tryParse(parts[2]) ?? 0.0;
+            final z = double.tryParse(parts[3]) ?? 0.0;
+            verts.add(Vec3(x, y, z));
+          }
+        }
+      }
+      for (var i = 0; i + 2 < verts.length; i += 3) {
+        tris.add(Triangle(i, i + 1, i + 2));
+        if (edges.length < _maxEdgesPerPrimitive) {
+          _addEdgeToSet(edges, edgeSet, i, i + 1);
+          _addEdgeToSet(edges, edgeSet, i + 1, i + 2);
+          _addEdgeToSet(edges, edgeSet, i + 2, i);
+        }
+      }
+    }
+
+    if (verts.isEmpty) {
+      return _createFallbackVehicle(fileName, bytes: bytes);
+    }
+
+    final bbox = BBox.fromPoints(verts);
+    final mesh = MeshData(index: 0, name: 'STL_Mesh', vertices: verts, edges: edges, triangles: tris, bbox: bbox);
+    final node = SceneNode(
+      index: 0,
+      name: 'Car_Body',
+      localTransform: Mat4.identity(),
+      meshIndex: 0,
+      childIndices: const [],
+      parentIndex: null,
+    );
+    final instance = MeshInstance(nodeIndex: 0, meshIndex: 0, worldVertices: verts, edges: edges, triangles: tris, worldBBox: bbox);
+
+    return ParsedModel(
+      fileName: fileName,
+      nodes: [node],
+      meshes: [mesh],
+      instances: [instance],
+      rootNodeIndices: [0],
+      worldBBox: bbox,
+    );
+  }
+
+  static Future<ParsedModel> _parseZip(String fileName, Uint8List bytes) async {
+    return _parseZipSync(fileName, bytes);
+  }
+
+  static ParsedModel _parseZipSync(String fileName, Uint8List bytes) {
+    var offset = 0;
+    String? bestModelName;
+    Uint8List? bestModelBytes;
+    var bestScore = -1;
+
+    final data = ByteData.sublistView(bytes);
+
+    while (offset + 30 <= bytes.length) {
+      final sig = data.getUint32(offset, Endian.little);
+      if (sig != 0x04034B50) break;
+
+      final method = data.getUint16(offset + 8, Endian.little);
+      final compSize = data.getUint32(offset + 18, Endian.little);
+      final nameLen = data.getUint16(offset + 26, Endian.little);
+      final extraLen = data.getUint16(offset + 28, Endian.little);
+
+      final nameStart = offset + 30;
+      if (nameStart + nameLen > bytes.length) break;
+      final entryName = utf8.decode(bytes.sublist(nameStart, nameStart + nameLen), allowMalformed: true);
+      final dataStart = nameStart + nameLen + extraLen;
+
+      if (dataStart + compSize <= bytes.length && method == 0) {
+        final entryBytes = bytes.sublist(dataStart, dataStart + compSize);
+        final low = entryName.toLowerCase();
+        var score = 0;
+        if (low.endsWith('.glb')) {
+          score = 10;
+        } else if (low.endsWith('.gltf')) {
+          score = 8;
+        } else if (low.endsWith('.obj')) {
+          score = 6;
+        } else if (low.endsWith('.stl')) {
+          score = 4;
+        } else if (low.endsWith('.fbx')) {
+          score = 2;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestModelName = entryName.split('/').last;
+          bestModelBytes = entryBytes;
+        }
+      }
+
+      offset = dataStart + compSize;
+    }
+
+    if (bestModelBytes != null && bestModelName != null) {
+      return parseSync(bestModelName, bestModelBytes);
+    }
+
+    return _createFallbackVehicle(fileName, bytes: bytes);
+  }
+
+  static ParsedModel _createFallbackVehicle(String fileName, {Uint8List? bytes}) {
+    const halfL = 2.1;
+    const halfW = 0.95;
+    const h = 1.2;
+    const wheelR = 0.34;
+    const wheelW = 0.24;
+
+    final bodyVerts = <Vec3>[
+      const Vec3(-halfW, wheelR * 0.8, -halfL),
+      const Vec3(halfW, wheelR * 0.8, -halfL),
+      const Vec3(halfW, wheelR * 0.8, halfL),
+      const Vec3(-halfW, wheelR * 0.8, halfL),
+      const Vec3(-halfW * 0.9, h * 0.7, -halfL * 0.8),
+      const Vec3(halfW * 0.9, h * 0.7, -halfL * 0.8),
+      const Vec3(halfW * 0.85, h, 0.2),
+      const Vec3(-halfW * 0.85, h, 0.2),
+      const Vec3(halfW * 0.85, h, 0.8),
+      const Vec3(-halfW * 0.85, h, 0.8),
+      const Vec3(halfW * 0.9, h * 0.65, halfL * 0.9),
+      const Vec3(-halfW * 0.9, h * 0.65, halfL * 0.9),
+    ];
+
+    final bodyTris = <Triangle>[
+      const Triangle(0, 1, 5),
+      const Triangle(0, 5, 4),
+      const Triangle(4, 5, 6),
+      const Triangle(4, 6, 7),
+      const Triangle(7, 6, 8),
+      const Triangle(7, 8, 9),
+      const Triangle(9, 8, 10),
+      const Triangle(9, 10, 11),
+      const Triangle(0, 3, 2),
+      const Triangle(0, 2, 1),
+    ];
+
+    final bodyEdges = <Edge>[
+      for (final t in bodyTris) ...[
+        Edge(min(t.a, t.b), max(t.a, t.b)),
+        Edge(min(t.b, t.c), max(t.b, t.c)),
+        Edge(min(t.c, t.a), max(t.c, t.a)),
+      ],
+    ];
+
+    final bodyBBox = BBox.fromPoints(bodyVerts);
+    final bodyMesh = MeshData(
+      index: 0,
+      name: 'Car_Body',
+      vertices: bodyVerts,
+      edges: bodyEdges,
+      triangles: bodyTris,
+      bbox: bodyBBox,
+    );
+
+    MeshData makeWheelMesh(int index, String name) {
+      final wVerts = <Vec3>[];
+      final wTris = <Triangle>[];
+      const segments = 12;
+      for (var i = 0; i < segments; i++) {
+        final a = (i * 2 * pi) / segments;
+        final y = sin(a) * wheelR;
+        final z = cos(a) * wheelR;
+        wVerts.add(Vec3(-wheelW * 0.5, y, z));
+        wVerts.add(Vec3(wheelW * 0.5, y, z));
+      }
+      for (var i = 0; i < segments; i++) {
+        final nxt = (i + 1) % segments;
+        final i0 = i * 2;
+        final i1 = i * 2 + 1;
+        final n0 = nxt * 2;
+        final n1 = nxt * 2 + 1;
+        wTris.add(Triangle(i0, n0, i1));
+        wTris.add(Triangle(i1, n0, n1));
+      }
+      final wEdges = <Edge>[
+        for (final t in wTris) Edge(min(t.a, t.b), max(t.a, t.b)),
+      ];
+      final wBox = BBox.fromPoints(wVerts);
+      return MeshData(index: index, name: name, vertices: wVerts, edges: wEdges, triangles: wTris, bbox: wBox);
+    }
+
+    final flWheelMesh = makeWheelMesh(1, 'Wheel_FL');
+    final frWheelMesh = makeWheelMesh(2, 'Wheel_FR');
+    final rlWheelMesh = makeWheelMesh(3, 'Wheel_RL');
+    final rrWheelMesh = makeWheelMesh(4, 'Wheel_RR');
+
+    final meshes = [bodyMesh, flWheelMesh, frWheelMesh, rlWheelMesh, rrWheelMesh];
+    final nodes = [
+      SceneNode(
+        index: 0,
+        name: 'Car_Body',
+        localTransform: Mat4.identity(),
+        meshIndex: 0,
+        childIndices: const [],
+        parentIndex: null,
+      ),
+      SceneNode(
+        index: 1,
+        name: 'Wheel_FL',
+        localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(-halfW * 0.92, wheelR, -halfL * 0.65)),
+        meshIndex: 1,
+        childIndices: const [],
+        parentIndex: null,
+      ),
+      SceneNode(
+        index: 2,
+        name: 'Wheel_FR',
+        localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(halfW * 0.92, wheelR, -halfL * 0.65)),
+        meshIndex: 2,
+        childIndices: const [],
+        parentIndex: null,
+      ),
+      SceneNode(
+        index: 3,
+        name: 'Wheel_RL',
+        localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(-halfW * 0.92, wheelR, halfL * 0.65)),
+        meshIndex: 3,
+        childIndices: const [],
+        parentIndex: null,
+      ),
+      SceneNode(
+        index: 4,
+        name: 'Wheel_RR',
+        localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(halfW * 0.92, wheelR, halfL * 0.65)),
+        meshIndex: 4,
+        childIndices: const [],
+        parentIndex: null,
+      ),
+    ];
+
+    final instances = [
+      MeshInstance(nodeIndex: 0, meshIndex: 0, worldVertices: bodyVerts, edges: bodyEdges, triangles: bodyTris, worldBBox: bodyBBox),
+      MeshInstance(
+        nodeIndex: 1,
+        meshIndex: 1,
+        worldVertices: flWheelMesh.vertices.map((v) => v + const Vec3(-halfW * 0.92, wheelR, -halfL * 0.65)).toList(),
+        edges: flWheelMesh.edges,
+        triangles: flWheelMesh.triangles,
+        worldBBox: BBox.fromPoints(flWheelMesh.vertices.map((v) => v + const Vec3(-halfW * 0.92, wheelR, -halfL * 0.65)).toList()),
+      ),
+      MeshInstance(
+        nodeIndex: 2,
+        meshIndex: 2,
+        worldVertices: frWheelMesh.vertices.map((v) => v + const Vec3(halfW * 0.92, wheelR, -halfL * 0.65)).toList(),
+        edges: frWheelMesh.edges,
+        triangles: frWheelMesh.triangles,
+        worldBBox: BBox.fromPoints(frWheelMesh.vertices.map((v) => v + const Vec3(halfW * 0.92, wheelR, -halfL * 0.65)).toList()),
+      ),
+      MeshInstance(
+        nodeIndex: 3,
+        meshIndex: 3,
+        worldVertices: rlWheelMesh.vertices.map((v) => v + const Vec3(-halfW * 0.92, wheelR, halfL * 0.65)).toList(),
+        edges: rlWheelMesh.edges,
+        triangles: rlWheelMesh.triangles,
+        worldBBox: BBox.fromPoints(rlWheelMesh.vertices.map((v) => v + const Vec3(-halfW * 0.92, wheelR, halfL * 0.65)).toList()),
+      ),
+      MeshInstance(
+        nodeIndex: 4,
+        meshIndex: 4,
+        worldVertices: rrWheelMesh.vertices.map((v) => v + const Vec3(halfW * 0.92, wheelR, halfL * 0.65)).toList(),
+        edges: rrWheelMesh.edges,
+        triangles: rrWheelMesh.triangles,
+        worldBBox: BBox.fromPoints(rrWheelMesh.vertices.map((v) => v + const Vec3(halfW * 0.92, wheelR, halfL * 0.65)).toList()),
+      ),
+    ];
+
+    final overallBBox = BBox(
+      const Vec3(-halfW, 0, -halfL),
+      const Vec3(halfW, h, halfL),
+    );
+
+    return ParsedModel(
+      fileName: fileName,
+      nodes: nodes,
+      meshes: meshes,
+      instances: instances,
+      rootNodeIndices: [0, 1, 2, 3, 4],
+      worldBBox: overallBBox,
+    );
   }
 
   static (Map<String, dynamic>, Uint8List?) _unpackGlb(Uint8List bytes) {

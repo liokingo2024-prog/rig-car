@@ -11,6 +11,7 @@ class SketchfabViewport extends StatefulWidget {
   const SketchfabViewport({
     super.key,
     this.bytes,
+    this.fileName,
     required this.renderMode,
     required this.lighting,
     required this.gridStyle,
@@ -22,6 +23,7 @@ class SketchfabViewport extends StatefulWidget {
   });
 
   final Uint8List? bytes;
+  final String? fileName;
   final String renderMode;
   final String lighting;
   final String gridStyle;
@@ -90,8 +92,8 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
     try {
       final viewer = js.context['SketchfabViewer'];
       if (viewer != null) {
-        // Pass Uint8List directly to JS
-        viewer.callMethod('loadGlbFromArrayBuffer', [bytes]);
+        // Pass Uint8List directly to JS with filename
+        viewer.callMethod('loadModel', [bytes, widget.fileName ?? 'model.glb']);
       } else {
         Future.delayed(const Duration(milliseconds: 60), () {
           if (mounted && _loadedBytes == bytes) {
