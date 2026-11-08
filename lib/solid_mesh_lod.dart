@@ -91,13 +91,13 @@ class SolidScene {
 
   /// Detailed mesh used while the camera is still.
   late final SolidMesh full = _source.build(
-    targetTriangles: 90000,
+    targetTriangles: 120000,
     maxEdgeFraction: 0.07,
   );
 
   /// Light mesh used while orbiting or on the turntable.
   late final SolidMesh interactive = _source.build(
-    targetTriangles: 14000,
+    targetTriangles: 45000,
     maxEdgeFraction: 0.12,
   );
 }
@@ -201,7 +201,10 @@ class _Source {
       }
     }
 
-    if (diagonal > 1e-9) {
+    // Only subdivide coarse low-poly meshes (< 3,000 triangles) where large
+    // triangles cause depth sorting artifacts. Avoid subdividing models that
+    // already have high geometric resolution, as it distorts authentic body lines.
+    if (diagonal > 1e-9 && totalTriangles < 3000) {
       builder.subdivide(
         maxEdge: diagonal * maxEdgeFraction,
         cap: (targetTriangles * 1.6).ceil(),

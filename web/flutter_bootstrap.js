@@ -25,11 +25,7 @@
 
     if ('caches' in window) {
       const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames
-            .filter((name) => name.includes('flutter-app-cache'))
-            .map((name) => caches.delete(name)),
-      );
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
     }
   } catch (_) {
     // The app can still load when storage APIs are unavailable.
@@ -41,8 +37,21 @@
     return;
   }
 
+  // Force-bust main.dart.js caching so the browser never serves stale JS
+  const buildTag = 'build_' + Date.now();
+  if (window._flutter?.buildConfig?.builds) {
+    for (const build of window._flutter.buildConfig.builds) {
+      if (build.mainJsPath) {
+        build.mainJsPath = build.mainJsPath.split('?')[0] + '?v=' + buildTag;
+      }
+    }
+  }
+
   try {
     await _flutter.loader.load({
+      config: {
+        entrypointUrl: 'main.dart.js?v=' + buildTag,
+      },
       onEntrypointLoaded: async (engineInitializer) => {
         const appRunner = await engineInitializer.initializeEngine();
         await appRunner.runApp();

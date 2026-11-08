@@ -1927,7 +1927,6 @@ class _WireframeScenePainter extends CustomPainter {
         colors: Int32List.sublistView(drawCol, start * 3, (start + count) * 3),
       );
       canvas.drawVertices(vertices, BlendMode.dst, paint);
-      vertices.dispose();
     }
   }
 
