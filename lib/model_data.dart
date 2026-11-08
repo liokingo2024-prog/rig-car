@@ -457,6 +457,66 @@ class ParsedModel {
     );
   }
 
+  /// Rotates the model around the vertical Y axis by [angleRadians].
+  void rotateYaw(double angleRadians) {
+    if (instances.isEmpty) return;
+    final cosA = cos(angleRadians);
+    final sinA = sin(angleRadians);
+    final rot = Mat4([
+      cosA, 0, -sinA, 0,
+      0, 1, 0, 0,
+      sinA, 0, cosA, 0,
+      0, 0, 0, 1,
+    ]);
+    for (final node in nodes) {
+      node.worldTransform = rot * node.worldTransform;
+    }
+    for (final instance in instances) {
+      for (var i = 0; i < instance.worldVertices.length; i++) {
+        final p = instance.worldVertices[i];
+        instance.worldVertices[i] = Vec3(
+          p.x * cosA + p.z * sinA,
+          p.y,
+          -p.x * sinA + p.z * cosA,
+        );
+      }
+      instance.worldBBox = instance.worldVertices.isEmpty
+          ? _normalizeBounds(instance.worldBBox, rot.transformPoint)
+          : BBox.fromPoints(instance.worldVertices);
+    }
+    worldBBox = BBox.union(
+      instances.map((instance) => instance.worldBBox).toList(),
+    );
+  }
+
+  /// Flips vehicle front to back (180 degree yaw rotation).
+  void flipFrontBack() {
+    rotateYaw(pi);
+  }
+
+  /// Snaps vehicle geometry so lowest tire vertices touch Y=0.0m.
+  void snapToGround() {
+    if (instances.isEmpty) return;
+    final minY = worldBBox.lo.y;
+    if (minY.abs() < 1e-4) return;
+    final trans = Mat4.uniformScaleTranslate(1.0, Vec3(0, -minY, 0));
+    for (final node in nodes) {
+      node.worldTransform = trans * node.worldTransform;
+    }
+    for (final instance in instances) {
+      for (var i = 0; i < instance.worldVertices.length; i++) {
+        final p = instance.worldVertices[i];
+        instance.worldVertices[i] = Vec3(p.x, p.y - minY, p.z);
+      }
+      instance.worldBBox = instance.worldVertices.isEmpty
+          ? _normalizeBounds(instance.worldBBox, trans.transformPoint)
+          : BBox.fromPoints(instance.worldVertices);
+    }
+    worldBBox = BBox.union(
+      instances.map((instance) => instance.worldBBox).toList(),
+    );
+  }
+
   static BBox _normalizeBounds(BBox bounds, Vec3 Function(Vec3) transform) {
     final corners = [
       Vec3(bounds.lo.x, bounds.lo.y, bounds.lo.z),

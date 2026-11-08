@@ -78,6 +78,7 @@ class WireframeViewer extends StatefulWidget {
     required this.detection,
     this.bodyNodeIndex,
     this.selectedNodeIndex,
+    this.hoveredNodeIndex,
     this.onNodeSelected,
     this.accentColor = const Color(0xFF10B981),
     this.bodyColor = const Color(0xFFD6DBDF),
@@ -92,6 +93,7 @@ class WireframeViewer extends StatefulWidget {
   final DetectionResult? detection;
   final int? bodyNodeIndex;
   final int? selectedNodeIndex;
+  final int? hoveredNodeIndex;
   final ValueChanged<int>? onNodeSelected;
   final Color accentColor;
   final Color bodyColor;
@@ -249,6 +251,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           detection: widget.detection,
                           bodyNodeIndex: widget.bodyNodeIndex,
                           selectedNodeIndex: widget.selectedNodeIndex,
+                          hoveredNodeIndex: widget.hoveredNodeIndex,
                           azimuth: _azimuth,
                           elevation: _elevation,
                           distance: _distance,
@@ -319,6 +322,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                 detection: widget.detection,
                                 bodyNodeIndex: widget.bodyNodeIndex,
                                 selectedNodeIndex: widget.selectedNodeIndex,
+                                hoveredNodeIndex: widget.hoveredNodeIndex,
                                 azimuth: _azimuth,
                                 elevation: _elevation,
                                 distance: _distance,
@@ -1030,7 +1034,8 @@ class _WireframeScenePainter extends CustomPainter {
     required this.model,
     required this.detection,
     this.bodyNodeIndex,
-    required this.selectedNodeIndex,
+    this.selectedNodeIndex,
+    this.hoveredNodeIndex,
     required this.azimuth,
     required this.elevation,
     required this.distance,
@@ -1056,6 +1061,7 @@ class _WireframeScenePainter extends CustomPainter {
   final DetectionResult? detection;
   final int? bodyNodeIndex;
   final int? selectedNodeIndex;
+  final int? hoveredNodeIndex;
   final double azimuth;
   final double elevation;
   final double distance;
@@ -1082,6 +1088,7 @@ class _WireframeScenePainter extends CustomPainter {
         oldDelegate.detection != detection ||
         oldDelegate.bodyNodeIndex != bodyNodeIndex ||
         oldDelegate.selectedNodeIndex != selectedNodeIndex ||
+        oldDelegate.hoveredNodeIndex != hoveredNodeIndex ||
         oldDelegate.azimuth != azimuth ||
         oldDelegate.elevation != elevation ||
         oldDelegate.distance != distance ||
@@ -2107,9 +2114,9 @@ class _WireframeScenePainter extends CustomPainter {
       Color edgeColor;
       double strokeWidth = 1.0;
 
-      if (inst.nodeIndex == selectedNodeIndex) {
+      if (inst.nodeIndex == selectedNodeIndex || inst.nodeIndex == hoveredNodeIndex) {
         edgeColor = const Color(0xFF00E5FF);
-        strokeWidth = 1.8;
+        strokeWidth = 2.0;
       } else if (wheelNodeSet.contains(inst.nodeIndex)) {
         edgeColor = wheelColor;
         strokeWidth = 1.3;

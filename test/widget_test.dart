@@ -406,7 +406,7 @@ void main() {
       expect(find.text('BACK'), findsOneWidget);
     });
 
-    testWidgets('renders single-step Upload pipeline in workbench without extra steps or scan panel', (tester) async {
+    testWidgets('renders 5-step master-detail pipeline in workbench with dynamic detail inspector', (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -415,21 +415,164 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Sidebar has single Upload step
-      expect(find.text('Upload'), findsWidgets);
+      // Left sidebar renders exactly 5 pipeline step cards
+      expect(find.text('RIGGING PIPELINE'), findsOneWidget);
+      expect(find.text('Upload Vehicle'), findsWidgets);
+      expect(find.text('Auto Fix & Rig'), findsWidgets);
+      expect(find.text('Add Physics'), findsWidgets);
+      expect(find.text('Add Sound'), findsWidgets);
+      expect(find.text('Export Rig'), findsWidgets);
+
+      // Subtitles
       expect(find.text('Import 3D model (.glb, .gltf)'), findsWidgets);
+      expect(find.text('Loose parts, 4-wheel match & hubs'), findsWidgets);
+      expect(find.text('Mass, suspension & tire grip'), findsWidgets);
+      expect(find.text('Engine RPM, skid & siren audio'), findsWidgets);
+      expect(find.text('Package Godot 4 vehicle scene'), findsWidgets);
 
-      // Other pipeline steps and scan panel are removed
-      expect(find.text('Upload & Scan'), findsNothing);
-      expect(find.text('Review Detections'), findsNothing);
-      expect(find.text('Tune physics'), findsNothing);
-      expect(find.text('Export to Godot'), findsNothing);
-      expect(find.text('Scan Results'), findsNothing);
+      // Right inspector fixed header and Step 1 view
+      expect(find.text('✨ Auto Path'), findsOneWidget);
+      expect(find.text('🛠 Manual Fix'), findsOneWidget);
+      expect(find.text('PROGRESS & BOUNDS VERIFICATION'), findsOneWidget);
+      expect(find.text('Model Parsed'), findsOneWidget);
+      expect(find.text('Bounding Box'), findsOneWidget);
+      expect(find.text('Ground Plane Snap'), findsOneWidget);
+      expect(find.text('Forward Axis'), findsOneWidget);
 
-      // Content of right sidepanel removed as requested
-      expect(find.text('Upload 3D Model'), findsNothing);
-      expect(find.text('Geometry Preset'), findsNothing);
-      expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
+      // Tap Step 2: Auto Fix & Rig
+      await tester.tap(find.text('Auto Fix & Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+      expect(find.text('1. Separate Loose Parts'), findsOneWidget);
+      expect(find.text('2. Similarity Match (2s & 4s)'), findsOneWidget);
+      expect(find.text('3. Lower-Corner & Height Filter'), findsOneWidget);
+      expect(find.text('4. Hub Center & Radius Math'), findsOneWidget);
+      expect(find.text('Approve Auto Rig'), findsOneWidget);
+
+      // Switch to Manual Fix
+      await tester.tap(find.text('🛠 Manual Fix'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('A. DETECTED 2/4 GROUP CHECKLIST'), findsOneWidget);
+      expect(find.text('B. HEIGHT & CORNER FILTER OVERRIDE'), findsOneWidget);
+      expect(find.text('C. 4-CORNER MANUAL SLOT PICKER'), findsOneWidget);
+      expect(find.text('D. ONE-CLICK SYMMETRY & PIVOT REPAIR'), findsOneWidget);
+      expect(find.text('Mirror Left → Right Hubs'), findsOneWidget);
+
+      // Tap Step 3: Add Physics
+      await tester.tap(find.text('Add Physics').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Switch back to Auto Path
+      await tester.tap(find.text('✨ Auto Path'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('HANDLING PRESETS'), findsOneWidget);
+      expect(find.text('Sport / Interceptor'), findsOneWidget);
+      expect(find.text('Arcade Drift'), findsOneWidget);
+      expect(find.text('Off-Road SUV'), findsOneWidget);
+      expect(find.text('Heavy Utility'), findsOneWidget);
+      expect(find.text('CALCULATED SUMMARY'), findsOneWidget);
+
+      // Tap Step 4: Add Sound
+      await tester.tap(find.text('Add Sound').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('ACOUSTIC PROFILES'), findsOneWidget);
+      expect(find.text('V10 Supercar'), findsOneWidget);
+      expect(find.text('V8 Muscle'), findsOneWidget);
+      expect(find.text('ACCESSORY AUDIO LAYERS'), findsOneWidget);
+
+      // Tap Step 5: Export Rig
+      await tester.tap(find.text('Export Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
+      expect(find.text('Scale & Axis Valid'), findsOneWidget);
+      expect(find.text('GODOT 4 ARCHITECTURE'), findsOneWidget);
+      expect(find.text('Export Godot 4 Rig (.glb / .tscn)'), findsOneWidget);
+    });
+
+    testWidgets('interacts with all 5 inspector steps, toggles auto and manual modes, and verifies controls', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 1: Switch to Manual Fix
+      await tester.tap(find.text('🛠 Manual Fix'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('ORIENTATION QUICK-FIX'), findsOneWidget);
+      expect(find.text('Rotate +90° Yaw'), findsOneWidget);
+      expect(find.text('Flip Front/Back'), findsOneWidget);
+      expect(find.text('Snap to Ground (Y = 0.0m)'), findsOneWidget);
+      expect(find.text('Apply Scale'), findsOneWidget);
+      expect(find.text('Exclude roof/antenna parts from chassis bounds'), findsOneWidget);
+
+      // Tap orientation buttons
+      await tester.tap(find.text('Rotate +90° Yaw'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Flip Front/Back'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Snap to Ground (Y = 0.0m)'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Apply Scale'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Step 2: Auto Fix & Rig
+      await tester.tap(find.text('Auto Fix & Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // In Manual Fix view
+      expect(find.text('Mirror Left → Right Hubs'), findsOneWidget);
+      expect(find.text('Recenter Pivots to Cylinder'), findsOneWidget);
+      await tester.ensureVisible(find.text('Mirror Left → Right Hubs'));
+      await tester.tap(find.text('Mirror Left → Right Hubs'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.ensureVisible(find.text('Recenter Pivots to Cylinder'));
+      await tester.tap(find.text('Recenter Pivots to Cylinder'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Step 3: Add Physics
+      await tester.tap(find.text('Add Physics').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Manual view shows slider parameters
+      expect(find.text('MANUAL PHYSICS PARAMETERS'), findsOneWidget);
+      expect(find.text('Vehicle Mass (kg)'), findsOneWidget);
+      expect(find.text('Center of Mass Height Offset'), findsOneWidget);
+      expect(find.text('Spring Stiffness'), findsOneWidget);
+
+      // Step 4: Add Sound
+      await tester.tap(find.text('Add Sound').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('AUDIO SLOT CONFIGURATION'), findsOneWidget);
+      expect(find.text('Idle Loop'), findsOneWidget);
+      expect(find.text('High RPM Loop'), findsOneWidget);
+      expect(find.text('Tire Skid'), findsOneWidget);
+      expect(find.text('Siren/Extra'), findsOneWidget);
+
+      // Step 5: Export Rig
+      await tester.tap(find.text('Export Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Toggle Godot architecture
+      await tester.ensureVisible(find.text('Custom Raycast Vehicle Setup'));
+      await tester.tap(find.text('Custom Raycast Vehicle Setup'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Scripted multi-ray suspension solver for custom drift & arcade handling.'), findsOneWidget);
+
+      // Launch Test Drive button works
+      await tester.ensureVisible(find.text('Launch Test Drive'));
+      await tester.tap(find.text('Launch Test Drive'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('WORKBENCH'), findsOneWidget);
     });
 
     testWidgets('collapses and expands left sidepanel with toggle button', (tester) async {

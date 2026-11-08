@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,7 +9,9 @@ import 'download_config.dart';
 import 'file_picker.dart';
 import 'glb_parser.dart';
 import 'home_screen.dart';
+import 'inspector_panel.dart';
 import 'model_data.dart';
+import 'pipeline_models.dart';
 import 'pre_rigged_cars.dart';
 import 'test_drive_viewport.dart';
 import 'wireframe_viewer.dart';
@@ -22,13 +25,13 @@ class RigCarApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const ink = Color(0xFFE9EEF2);
+    const ink = Color(0xFFF3F4F6);
     return MaterialApp(
       title: 'RIG-CAR Fleet & Auto-Rigger',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF090D0B),
+        scaffoldBackgroundColor: const Color(0xFF0A110E),
         colorScheme:
             ColorScheme.fromSeed(
               seedColor: const Color(0xFF10B981),
@@ -36,7 +39,7 @@ class RigCarApp extends StatelessWidget {
             ).copyWith(
               primary: const Color(0xFF10B981),
               onPrimary: Colors.white,
-              surface: const Color(0xFF111714),
+              surface: const Color(0xFF111C18),
               onSurface: ink,
             ),
         fontFamily: 'Arial',
@@ -101,11 +104,13 @@ class RigWorkbenchPage extends StatefulWidget {
 
 class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
+  String _inspectMode = 'auto'; // 'auto' | 'manual'
+  int? _hoveredNodeIndex;
   bool _isTestDriveMode = false;
   bool _isDriveFullscreen = false;
   bool _showLeftPanel = true;
   bool _showRightPanel = true;
-  RigPreset _preset = presets.first;
+  final RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
   Uint8List? _modelBytes;
@@ -125,6 +130,21 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   bool _frontTraction = true;
   bool _rearTraction = true;
 
+  // Handling presets & physics overrides
+  String _selectedHandlingPreset = 'sport';
+  double _springRestLength = 0.18;
+  double _springStiffness = 42.0;
+  double _dampingCompression = 2.4;
+  double _steerAngle = 36.0;
+
+  // Acoustics & Godot architecture
+  String _selectedAcousticProfile = 'v10';
+  bool _sirenAudioEnabled = false;
+  bool _tireSkidAudioEnabled = true;
+  String _godotArchitecture = 'standard';
+  late List<DetectedMeshGroup> _detectedGroups;
+  late List<AudioSlotConfig> _audioSlots;
+
   // Manual wheel assignments [FL, FR, RL, RR]
   final Map<String, DetectedWheel?> _assignedWheels = {
     'FL': null,
@@ -136,6 +156,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   @override
   void initState() {
     super.initState();
+    _detectedGroups = _initDetectedGroups();
+    _audioSlots = _initAudioSlots();
     _isTestDriveMode = widget.startInTestDrive;
     if (_isTestDriveMode) _activeStep = 5;
     final car = widget.initialCar;
@@ -437,11 +459,307 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   void _selectStep(int step) {
     setState(() {
       _activeStep = step;
-      if (step == 5) {
-        _isTestDriveMode = true;
+      _showRightPanel = true;
+      _isTestDriveMode = false;
+      _isDriveFullscreen = false;
+    });
+  }
+
+  List<DetectedMeshGroup> _initDetectedGroups() {
+    return [
+      DetectedMeshGroup(
+        id: 1,
+        name: 'Group 1 — 4x Cylindrical (Wheels)',
+        count: 4,
+        shapeType: 'Cylindrical',
+        role: 'Spin (Wheel)',
+        isEnabled: true,
+      ),
+      DetectedMeshGroup(
+        id: 2,
+        name: 'Group 2 — 2x Front Caliper Pair',
+        count: 2,
+        shapeType: 'Box',
+        role: 'Steer Only (Caliper)',
+        isEnabled: true,
+      ),
+      DetectedMeshGroup(
+        id: 3,
+        name: 'Group 3 — 2x Rear Caliper / Exhaust',
+        count: 2,
+        shapeType: 'Cylindrical',
+        role: 'Static (Chassis/Exhaust)',
+        isEnabled: true,
+      ),
+      DetectedMeshGroup(
+        id: 4,
+        name: 'Group 4 — 4x Rim Caps & Hub Rings',
+        count: 4,
+        shapeType: 'Cylindrical',
+        role: 'Spin (Wheel)',
+        isEnabled: true,
+      ),
+    ];
+  }
+
+  List<AudioSlotConfig> _initAudioSlots() {
+    return [
+      AudioSlotConfig(
+        id: 'idle',
+        title: 'Idle Loop',
+        subtitle: 'Low RPM engine idle sound bed',
+        fileName: 'engine_idle_loop.wav',
+      ),
+      AudioSlotConfig(
+        id: 'high_rpm',
+        title: 'High RPM Loop',
+        subtitle: 'Full-throttle high rev acoustic track',
+        fileName: 'engine_high_rpm.wav',
+      ),
+      AudioSlotConfig(
+        id: 'skid',
+        title: 'Tire Skid',
+        subtitle: 'Lateral scrub & drift screech',
+        fileName: 'tire_skid_asphalt.wav',
+      ),
+      AudioSlotConfig(
+        id: 'siren',
+        title: 'Siren/Extra',
+        subtitle: 'Accessory horn or emergency siren',
+        fileName: 'police_siren_wail.wav',
+      ),
+    ];
+  }
+
+  StepStatus _getStepStatus(int step) {
+    switch (step) {
+      case 1:
+        return _parsedModel != null ? StepStatus.done : StepStatus.pending;
+      case 2:
+        if (_inspectMode == 'manual') return StepStatus.manual;
+        final wheelCount =
+            _assignedWheels.values.whereType<DetectedWheel>().length;
+        if (wheelCount >= 4 && (_detection?.warnings.isEmpty ?? false)) {
+          return StepStatus.done;
+        } else if (_detection != null && _detection!.warnings.isNotEmpty) {
+          return StepStatus.warning;
+        } else if (_parsedModel != null) {
+          return StepStatus.pending;
+        }
+        return StepStatus.pending;
+      case 3:
+        return _parsedModel != null ? StepStatus.done : StepStatus.pending;
+      case 4:
+        return _parsedModel != null ? StepStatus.done : StepStatus.pending;
+      case 5:
+        if (_exportBlockReason == null) return StepStatus.done;
+        return _parsedModel != null ? StepStatus.warning : StepStatus.pending;
+      default:
+        return StepStatus.pending;
+    }
+  }
+
+  void _onRotateYaw(double angle) {
+    if (_parsedModel != null) {
+      setState(() {
+        _parsedModel!.rotateYaw(angle);
+      });
+      _showMessage('Rotated vehicle model by ${(angle * 180 / pi).round()}°');
+    } else {
+      _showMessage('Import a 3D model first to apply rotation.');
+    }
+  }
+
+  void _onFlipFrontBack() {
+    if (_parsedModel != null) {
+      setState(() {
+        _parsedModel!.flipFrontBack();
+      });
+      _showMessage('Flipped vehicle front to back (180° yaw)');
+    } else {
+      _showMessage('Import a 3D model first to apply flip.');
+    }
+  }
+
+  void _onSnapToGround() {
+    if (_parsedModel != null) {
+      setState(() {
+        _parsedModel!.snapToGround();
+      });
+      _showMessage('Snapped lowest vertices to ground plane (Y = 0.0m)');
+    } else {
+      _showMessage('Import a 3D model first to snap to ground.');
+    }
+  }
+
+  void _onApplyScale(double targetLength) {
+    if (_parsedModel != null) {
+      setState(() {
+        _parsedModel!.normalizeForRiggingInPlace(targetFootprint: targetLength);
+      });
+      _showMessage('Normalized vehicle footprint to ${targetLength.toStringAsFixed(1)}m');
+    } else {
+      _showMessage('Import a 3D model first to apply scale.');
+    }
+  }
+
+  void _onApproveAutoRig() {
+    setState(() {
+      _activeStep = 3;
+    });
+    _showMessage('Auto-rig approved. Moving to Add Physics.');
+  }
+
+  void _onGroupRoleChange(int groupId, String role) {
+    setState(() {
+      final grp = _detectedGroups.firstWhere(
+        (g) => g.id == groupId,
+        orElse: () => _detectedGroups.first,
+      );
+      grp.role = role;
+    });
+    _showMessage('Group $groupId assigned role: $role');
+  }
+
+  void _onPickWheelInViewport(String corner) {
+    if (_selectedNodeIndex != null) {
+      _reassignWheel(corner, _selectedNodeIndex);
+      _showMessage('Assigned selected part to Wheel $corner');
+    } else {
+      _showMessage('Select a node in the 3D viewport, then click Pick to assign Wheel $corner');
+    }
+  }
+
+  void _onRecalculateHeightFilter(double threshold) {
+    if (_parsedModel != null) {
+      _autoRigModel();
+      _showMessage('Re-calculated wheel detection with ${threshold.round()}% height cutoff');
+    } else {
+      _showMessage('Import a model first to run wheel detection');
+    }
+  }
+
+  void _onMirrorLeftToRight() {
+    setState(() {
+      final fl = _assignedWheels['FL'];
+      final rl = _assignedWheels['RL'];
+      if (fl != null) {
+        _assignedWheels['FR'] = DetectedWheel(
+          nodeIndex: fl.nodeIndex,
+          nodeName: 'Wheel_FR_Mirrored',
+          worldPosition: Vec3(-fl.worldPosition.x, fl.worldPosition.y, fl.worldPosition.z),
+          confidence: 1.0,
+          axle: 'front',
+          side: 'right',
+        );
+      }
+      if (rl != null) {
+        _assignedWheels['RR'] = DetectedWheel(
+          nodeIndex: rl.nodeIndex,
+          nodeName: 'Wheel_RR_Mirrored',
+          worldPosition: Vec3(-rl.worldPosition.x, rl.worldPosition.y, rl.worldPosition.z),
+          confidence: 1.0,
+          axle: 'rear',
+          side: 'right',
+        );
+      }
+    });
+    _showMessage('Mirrored Left wheels (FL, RL) to Right side (FR, RR)');
+  }
+
+  void _onRecenterPivots() {
+    setState(() {
+      for (final key in ['FL', 'FR', 'RL', 'RR']) {
+        final w = _assignedWheels[key];
+        if (w != null && _parsedModel != null && w.nodeIndex < _parsedModel!.nodes.length) {
+          final node = _parsedModel!.nodes[w.nodeIndex];
+          _assignedWheels[key] = DetectedWheel(
+            nodeIndex: w.nodeIndex,
+            nodeName: w.nodeName,
+            worldPosition: AutoDetector.worldCenterForNode(_parsedModel!, node),
+            confidence: w.confidence,
+            meshIndex: w.meshIndex,
+            axle: w.axle,
+            side: w.side,
+          );
+        }
+      }
+    });
+    _showMessage('Wheel spin pivots recentered to cylinder fit');
+  }
+
+  void _onHandlingPresetSelected(HandlingPreset preset) {
+    setState(() {
+      _selectedHandlingPreset = preset.id;
+      _mass = preset.mass;
+      _grip = preset.grip;
+      _suspension = preset.suspension;
+      _engineForce = preset.engineForce;
+      _centerOfMass = preset.centerOfMassY;
+      _springRestLength = preset.springRestLength;
+      _springStiffness = preset.springStiffness;
+      _dampingCompression = preset.dampingCompression;
+      _steerAngle = preset.steerAngle;
+    });
+    _showMessage('Applied handling preset: ${preset.title}');
+  }
+
+  void _onResetPhysicsProperty(String prop) {
+    final preset = kHandlingPresets.firstWhere(
+      (p) => p.id == _selectedHandlingPreset,
+      orElse: () => kHandlingPresets.first,
+    );
+    setState(() {
+      switch (prop) {
+        case 'mass':
+          _mass = preset.mass;
+          break;
+        case 'centerOfMassY':
+          _centerOfMass = preset.centerOfMassY;
+          break;
+        case 'suspension':
+          _suspension = preset.suspension;
+          break;
+        case 'springStiffness':
+          _springStiffness = preset.springStiffness;
+          break;
+        case 'dampingCompression':
+          _dampingCompression = preset.dampingCompression;
+          break;
+        case 'grip':
+          _grip = preset.grip;
+          break;
+        case 'steerAngle':
+          _steerAngle = preset.steerAngle;
+          break;
+      }
+    });
+    _showMessage('Reset $prop to preset default');
+  }
+
+  void _onHoverPart(String? partId) {
+    setState(() {
+      if (partId == null) {
+        _hoveredNodeIndex = null;
+      } else if (partId.startsWith('wheel_')) {
+        final slot = partId.substring('wheel_'.length).toUpperCase();
+        _hoveredNodeIndex = _assignedWheels[slot]?.nodeIndex;
+      } else if (partId.startsWith('group_')) {
+        final id = int.tryParse(partId.substring('group_'.length));
+        final grp = _detectedGroups.firstWhere(
+          (g) => g.id == id,
+          orElse: () => _detectedGroups.first,
+        );
+        _hoveredNodeIndex = grp.nodeIndices.isNotEmpty
+            ? grp.nodeIndices.first
+            : null;
+      } else if (partId == 'model_root' ||
+          partId == 'bbox' ||
+          partId == 'ground_plane' ||
+          partId == 'forward_axis') {
+        _hoveredNodeIndex = _selectedBodyNodeIndex;
       } else {
-        _isTestDriveMode = false;
-        _isDriveFullscreen = false;
+        _hoveredNodeIndex = null;
       }
     });
   }
@@ -543,23 +861,24 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeInOut,
-                        width: _showLeftPanel ? 232 : 0,
+                        width: _showLeftPanel ? 250 : 0,
                         clipBehavior: Clip.antiAlias,
                         decoration: const BoxDecoration(
                           color: Color(0xFF111714),
                           border: Border(
-                            right: BorderSide(color: Color(0xFF223127)),
+                            right: BorderSide(color: Color(0xFF1E352C)),
                           ),
                         ),
                         child: OverflowBox(
-                          minWidth: 232,
-                          maxWidth: 232,
+                          minWidth: 250,
+                          maxWidth: 250,
                           alignment: Alignment.topLeft,
                           child: _DesktopSidebar(
                             activeStep: _activeStep,
                             onStepSelected: _selectStep,
                             hasModel: _parsedModel != null,
                             isTestDrive: _isTestDriveMode,
+                            getStepStatus: _getStepStatus,
                             onToggleCollapse: () {
                               setState(() => _showLeftPanel = !_showLeftPanel);
                             },
@@ -574,6 +893,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
                               onAutoRig: _autoRigModel,
+                              inspectMode: _inspectMode,
                               wheelsCount: _detection?.wheels.length ?? 0,
                               isTestDrive: _isTestDriveMode,
                               onToggleTestDrive: () {
@@ -630,11 +950,15 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                       _selectedBodyNodeIndex,
                                                   selectedNodeIndex:
                                                       _selectedNodeIndex,
+                                                  hoveredNodeIndex:
+                                                      _hoveredNodeIndex,
                                                   onNodeSelected: (idx) {
-                                                    setState(
-                                                      () => _selectedNodeIndex =
-                                                          idx,
-                                                    );
+                                                    setState(() {
+                                                      _selectedNodeIndex = idx;
+                                                      if (_selectedBodyNodeIndex == null && _parsedModel != null) {
+                                                        _selectBody(idx);
+                                                      }
+                                                    });
                                                   },
                                                   accentColor: _preset.accent,
                                                   bodyColor: widget.initialCar?.accentColor ??
@@ -645,17 +969,18 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                               ),
                                               if (_showRightPanel) ...[
                                                 const SizedBox(width: 18),
-                                                // Right sidepanel (content removed as requested)
+                                                // Right sidepanel detail inspector
                                                 SizedBox(
-                                                  width: 340,
+                                                  width: 360,
                                                   child: Container(
                                                     decoration: BoxDecoration(
-                                                      color: const Color(0xC00D1511),
+                                                      color: const Color(0xFF111C18),
                                                       borderRadius: BorderRadius.circular(12),
                                                       border: Border.all(
-                                                        color: const Color(0xFF1E2B22),
+                                                        color: const Color(0xFF1E352C),
                                                       ),
                                                     ),
+                                                    clipBehavior: Clip.antiAlias,
                                                     child: _buildInspector(),
                                                   ),
                                                 ),
@@ -678,11 +1003,15 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                 _selectedBodyNodeIndex,
                                             selectedNodeIndex:
                                                 _selectedNodeIndex,
+                                            hoveredNodeIndex:
+                                                _hoveredNodeIndex,
                                             onNodeSelected: (idx) {
-                                              setState(
-                                                () => _selectedNodeIndex =
-                                                    idx,
-                                              );
+                                              setState(() {
+                                                _selectedNodeIndex = idx;
+                                                if (_selectedBodyNodeIndex == null && _parsedModel != null) {
+                                                  _selectBody(idx);
+                                                }
+                                              });
                                             },
                                             accentColor: _preset.accent,
                                             bodyColor: widget.initialCar?.accentColor ??
@@ -706,66 +1035,70 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 
   Widget _buildInspector() {
-    return _InspectorPanel(
+    return InspectorPanel(
       activeStep: _activeStep,
-      preset: _preset,
-      modelName: _modelName,
+      inspectMode: _inspectMode,
+      onInspectModeChanged: (mode) {
+        setState(() => _inspectMode = mode);
+      },
       parsedModel: _parsedModel,
       detection: _detection,
-      selectedBodyNodeIndex: _selectedBodyNodeIndex,
       assignedWheels: _assignedWheels,
-      drive: _drive,
+      detectedGroups: _detectedGroups,
+      selectedHandlingPreset: _selectedHandlingPreset,
       mass: _mass,
-      engineForce: _engineForce,
       grip: _grip,
       suspension: _suspension,
-      centerOfMass: _centerOfMass,
-      frontSteering: _frontSteering,
-      rearSteering: _rearSteering,
-      frontTraction: _frontTraction,
-      rearTraction: _rearTraction,
-      onPickModel: _pickModel,
-      onAutoRig: _autoRigModel,
-      onReassignWheel: _reassignWheel,
-      onSelectBody: _selectBody,
-      onPresetChanged: (value) {
-        setState(() => _preset = value);
-      },
-      onDriveChanged: (value) {
-        setState(() => _drive = value);
-      },
-      onMassChanged: (value) {
-        setState(() => _mass = value);
-      },
-      onEngineForceChanged: (value) {
-        setState(() => _engineForce = value);
-      },
-      onGripChanged: (value) {
-        setState(() => _grip = value);
-      },
-      onSuspensionChanged: (value) {
-        setState(() => _suspension = value);
-      },
-      onCenterOfMassChanged: (value) {
-        setState(() => _centerOfMass = value);
-      },
-      onFrontSteeringChanged: (value) {
-        setState(() => _frontSteering = value);
-      },
-      onRearSteeringChanged: (value) {
-        setState(() => _rearSteering = value);
-      },
-      onFrontTractionChanged: (value) {
-        setState(() => _frontTraction = value);
-      },
-      onRearTractionChanged: (value) {
-        setState(() => _rearTraction = value);
-      },
-      onExport: _exportGodotFiles,
+      engineForce: _engineForce,
+      centerOfMassY: _centerOfMass,
+      springRestLength: _springRestLength,
+      springStiffness: _springStiffness,
+      dampingCompression: _dampingCompression,
+      steerAngle: _steerAngle,
+      selectedAcousticProfile: _selectedAcousticProfile,
+      sirenAudioEnabled: _sirenAudioEnabled,
+      tireSkidAudioEnabled: _tireSkidAudioEnabled,
+      audioSlots: _audioSlots,
+      godotArchitecture: _godotArchitecture,
       canExport: _exportBlockReason == null,
       exportBlockReason: _exportBlockReason,
-      onStepSelected: _selectStep,
+      onStepSelect: _selectStep,
+      onPickModel: _pickModel,
+      onRotateYaw: _onRotateYaw,
+      onFlipFrontBack: _onFlipFrontBack,
+      onSnapToGround: _onSnapToGround,
+      onApplyScale: _onApplyScale,
+      onApproveAutoRig: _onApproveAutoRig,
+      onGroupRoleChange: _onGroupRoleChange,
+      onPickWheelInViewport: _onPickWheelInViewport,
+      onRecalculateHeightFilter: _onRecalculateHeightFilter,
+      onMirrorLeftToRight: _onMirrorLeftToRight,
+      onRecenterPivots: _onRecenterPivots,
+      onHandlingPresetSelected: _onHandlingPresetSelected,
+      onMassChanged: (val) => setState(() => _mass = val),
+      onCenterOfMassChanged: (val) => setState(() => _centerOfMass = val),
+      onSuspensionChanged: (val) => setState(() => _suspension = val),
+      onSpringStiffnessChanged: (val) => setState(() => _springStiffness = val),
+      onDampingCompressionChanged: (val) => setState(() => _dampingCompression = val),
+      onGripChanged: (val) => setState(() => _grip = val),
+      onSteerAngleChanged: (val) => setState(() => _steerAngle = val),
+      onResetPhysicsProperty: _onResetPhysicsProperty,
+      onAcousticProfileSelected: (profile) => setState(() => _selectedAcousticProfile = profile.id),
+      onToggleSirenAudio: (enabled) => setState(() => _sirenAudioEnabled = enabled),
+      onToggleTireSkidAudio: (enabled) => setState(() => _tireSkidAudioEnabled = enabled),
+      onAudioSlotPitchChanged: (slotId, pitch) {
+        setState(() {
+          final slot = _audioSlots.firstWhere((s) => s.id == slotId);
+          slot.pitchMultiplier = pitch;
+        });
+      },
+      onPreviewAudioSlot: (slotId) {
+        _showMessage('Playing acoustic preview for $slotId');
+      },
+      onGodotArchitectureChanged: (arch) => setState(() => _godotArchitecture = arch),
+      onExport: _exportGodotFiles,
       onTestDrive: _enterTestDrive,
+      onHoverPart: _onHoverPart,
     );
   }
 }
@@ -778,6 +1111,7 @@ class _DesktopSidebar extends StatelessWidget {
     required this.onStepSelected,
     required this.hasModel,
     required this.isTestDrive,
+    required this.getStepStatus,
     required this.onToggleCollapse,
   });
 
@@ -785,16 +1119,17 @@ class _DesktopSidebar extends StatelessWidget {
   final ValueChanged<int> onStepSelected;
   final bool hasModel;
   final bool isTestDrive;
+  final StepStatus Function(int step) getStepStatus;
   final VoidCallback onToggleCollapse;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 232,
-      padding: const EdgeInsets.fromLTRB(18, 22, 16, 18),
+      width: 250,
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 16),
       decoration: const BoxDecoration(
-        color: Color(0xFF111714),
-        border: Border(right: BorderSide(color: Color(0xFF223127))),
+        color: Color(0xFF111C18),
+        border: Border(right: BorderSide(color: Color(0xFF1E352C))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -817,32 +1152,41 @@ class _DesktopSidebar extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           const _SmallLabel('RIGGING PIPELINE'),
           const SizedBox(height: 10),
-          _SidebarStep(
-            number: 1,
-            title: 'Upload',
-            subtitle: 'Import 3D model (.glb, .gltf)',
-            active: true,
-            complete: hasModel,
-            onTap: () => onStepSelected(1),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                for (final step in kPipelineSteps) ...[
+                  _SidebarStepCard(
+                    number: step.number,
+                    title: step.title,
+                    subtitle: step.subtitle,
+                    status: getStepStatus(step.number),
+                    isActive: activeStep == step.number,
+                    onTap: () => onStepSelected(step.number),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+              ],
+            ),
           ),
-          const Spacer(),
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF161F1A),
+              color: const Color(0xFF13261F),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF223127)),
+              border: Border.all(color: const Color(0xFF1E352C)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
                   Icons.info_outline_rounded,
-                  color: Color(0xFF86978C),
-                  size: 16,
+                  color: Color(0xFF10B981),
+                  size: 15,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -851,26 +1195,187 @@ class _DesktopSidebar extends StatelessWidget {
                         ? 'Model parsed. Review hub alignment in 3D viewport.'
                         : 'Import a vehicle model to inspect wheels and body.',
                     style: const TextStyle(
-                      color: Color(0xFF86978C),
-                      fontSize: 11,
-                      height: 1.35,
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 10.5,
+                      height: 1.3,
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           const Text(
             'GODOT 4 VEHICLE PIPELINE',
             style: TextStyle(
               color: Color(0xFF6E7681),
-              fontSize: 10,
+              fontSize: 9.5,
               fontWeight: FontWeight.w600,
               letterSpacing: .8,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SidebarStepCard extends StatelessWidget {
+  const _SidebarStepCard({
+    required this.number,
+    required this.title,
+    required this.subtitle,
+    required this.status,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final int number;
+  final String title;
+  final String subtitle;
+  final StepStatus status;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  Widget _buildBadge() {
+    switch (status) {
+      case StepStatus.done:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: const BoxDecoration(
+            color: Color(0xFF10B981),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.check_rounded,
+            color: Color(0xFF041D14),
+            size: 15,
+          ),
+        );
+      case StepStatus.warning:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: const BoxDecoration(
+            color: Color(0xFFF59E0B),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.priority_high_rounded,
+            color: Color(0xFF1A1208),
+            size: 15,
+          ),
+        );
+      case StepStatus.manual:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C243B),
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFF1E3A5F)),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.circle,
+            color: Color(0xFF38BDF8),
+            size: 8,
+          ),
+        );
+      case StepStatus.running:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: const BoxDecoration(
+            color: Color(0xFF13261F),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: const SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Color(0xFF10B981),
+            ),
+          ),
+        );
+      case StepStatus.pending:
+        return Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: const Color(0xFF17201C),
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFF223127)),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '$number',
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFF13261F) : const Color(0xFF111C18),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isActive ? const Color(0xFF10B981) : const Color(0xFF1E352C),
+          ),
+        ),
+        child: Row(
+          children: [
+            _buildBadge(),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: isActive ? const Color(0xFFF3F4F6) : const Color(0xFFD1D5DB),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isActive)
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF10B981),
+                size: 18,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -883,6 +1388,7 @@ class _DesktopTopbar extends StatelessWidget {
     required this.modelName,
     required this.onExport,
     required this.onAutoRig,
+    required this.inspectMode,
     required this.wheelsCount,
     required this.isTestDrive,
     required this.onToggleTestDrive,
@@ -895,6 +1401,7 @@ class _DesktopTopbar extends StatelessWidget {
   final String modelName;
   final VoidCallback onExport;
   final VoidCallback onAutoRig;
+  final String inspectMode;
   final int wheelsCount;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
@@ -905,6 +1412,7 @@ class _DesktopTopbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isManual = inspectMode == 'manual' || wheelsCount < 4;
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -959,9 +1467,11 @@ class _DesktopTopbar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A231E),
+              color: isManual ? const Color(0xFF281B0E) : const Color(0xFF13261F),
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(color: const Color(0xFF223127)),
+              border: Border.all(
+                color: isManual ? const Color(0xFF4D3810) : const Color(0xFF1E352C),
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -969,17 +1479,17 @@ class _DesktopTopbar extends StatelessWidget {
                 Icon(
                   Icons.circle,
                   size: 6,
-                  color: wheelsCount >= 4
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFFD29922),
+                  color: isManual
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFF10B981),
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  wheelsCount >= 4 ? 'AUTO-RIGGED' : 'MANUAL ASSIST',
+                  isManual ? 'MANUAL ASSIST' : 'AUTO-RIGGED',
                   style: TextStyle(
-                    color: wheelsCount >= 4
-                        ? const Color(0xFF10B981)
-                        : const Color(0xFFD29922),
+                    color: isManual
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF10B981),
                     fontSize: 9,
                     fontWeight: FontWeight.w700,
                     letterSpacing: .6,
@@ -1150,25 +1660,24 @@ class _StepStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (workflowSteps.length <= 1) return const SizedBox.shrink();
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Row(
         children: [
-          for (final step in workflowSteps) ...[
+          for (final step in kPipelineSteps) ...[
             ChoiceChip(
               label: Text('${step.number}  ${step.title}'),
               selected: activeStep == step.number,
               onSelected: (_) => onStepSelected(step.number),
               showCheckmark: false,
-              backgroundColor: const Color(0xFF111714),
+              backgroundColor: const Color(0xFF111C18),
               selectedColor: const Color(0xFF10B981),
-              side: const BorderSide(color: Color(0xFF223127)),
+              side: const BorderSide(color: Color(0xFF1E352C)),
               labelStyle: TextStyle(
                 color: activeStep == step.number
                     ? const Color(0xFF062319)
-                    : const Color(0xFF9AA7AF),
+                    : const Color(0xFF9CA3AF),
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
@@ -1176,193 +1685,6 @@ class _StepStrip extends StatelessWidget {
             const SizedBox(width: 8),
           ],
         ],
-      ),
-    );
-  }
-}
-
-// ── Inspector Panel Dispatcher ──────────────────────────────────────────────
-
-class _InspectorPanel extends StatelessWidget {
-  const _InspectorPanel({
-    required this.activeStep,
-    required this.preset,
-    required this.modelName,
-    required this.parsedModel,
-    required this.detection,
-    required this.selectedBodyNodeIndex,
-    required this.assignedWheels,
-    required this.drive,
-    required this.mass,
-    required this.engineForce,
-    required this.grip,
-    required this.suspension,
-    required this.centerOfMass,
-    required this.frontSteering,
-    required this.rearSteering,
-    required this.frontTraction,
-    required this.rearTraction,
-    required this.onPickModel,
-    required this.onAutoRig,
-    required this.onReassignWheel,
-    required this.onSelectBody,
-    required this.onPresetChanged,
-    required this.onDriveChanged,
-    required this.onMassChanged,
-    required this.onEngineForceChanged,
-    required this.onGripChanged,
-    required this.onSuspensionChanged,
-    required this.onCenterOfMassChanged,
-    required this.onFrontSteeringChanged,
-    required this.onRearSteeringChanged,
-    required this.onFrontTractionChanged,
-    required this.onRearTractionChanged,
-    required this.onExport,
-    required this.canExport,
-    required this.exportBlockReason,
-    required this.onStepSelected,
-    required this.onTestDrive,
-  });
-
-  final int activeStep;
-  final RigPreset preset;
-  final String modelName;
-  final ParsedModel? parsedModel;
-  final DetectionResult? detection;
-  final int? selectedBodyNodeIndex;
-  final Map<String, DetectedWheel?> assignedWheels;
-  final String drive;
-  final double mass;
-  final double engineForce;
-  final double grip;
-  final double suspension;
-  final double centerOfMass;
-  final bool frontSteering;
-  final bool rearSteering;
-  final bool frontTraction;
-  final bool rearTraction;
-  final VoidCallback onPickModel;
-  final VoidCallback onAutoRig;
-  final void Function(String slot, int? nodeIndex) onReassignWheel;
-  final ValueChanged<int?> onSelectBody;
-  final ValueChanged<RigPreset> onPresetChanged;
-  final ValueChanged<String> onDriveChanged;
-  final ValueChanged<double> onMassChanged;
-  final ValueChanged<double> onEngineForceChanged;
-  final ValueChanged<double> onGripChanged;
-  final ValueChanged<double> onSuspensionChanged;
-  final ValueChanged<double> onCenterOfMassChanged;
-  final ValueChanged<bool> onFrontSteeringChanged;
-  final ValueChanged<bool> onRearSteeringChanged;
-  final ValueChanged<bool> onFrontTractionChanged;
-  final ValueChanged<bool> onRearTractionChanged;
-  final VoidCallback onExport;
-  final bool canExport;
-  final String? exportBlockReason;
-  final ValueChanged<int> onStepSelected;
-  final VoidCallback onTestDrive;
-
-  @override
-  Widget build(BuildContext context) {
-    // Content of right sidepanel removed as requested
-    return const SizedBox.shrink();
-  }
-}
-
-class _SidebarStep extends StatelessWidget {
-  const _SidebarStep({
-    required this.number,
-    required this.title,
-    required this.subtitle,
-    required this.active,
-    required this.complete,
-    required this.onTap,
-  });
-  final int number;
-  final String title;
-  final String subtitle;
-  final bool active;
-  final bool complete;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: active ? const Color(0xFF15261C) : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: active ? const Color(0xFF10B981) : Colors.transparent,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: active
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFF1C2720),
-                  shape: BoxShape.circle,
-                ),
-                child: complete
-                    ? const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
-                        size: 15,
-                      )
-                    : Text(
-                        '$number',
-                        style: TextStyle(
-                          color: active
-                              ? const Color(0xFF041D14)
-                              : const Color(0xFF97A5AD),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: active ? Colors.white : const Color(0xFFC4CED3),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Color(0xFF71818B),
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (active)
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: Color(0xFF34D399),
-                  size: 17,
-                ),
-            ],
-          ),
-        ),
       ),
     );
   }
