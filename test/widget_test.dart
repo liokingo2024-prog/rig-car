@@ -464,7 +464,7 @@ void main() {
       expect(find.text('2. Similarity Match (2s & 4s)'), findsOneWidget);
       expect(find.text('3. Lower-Corner & Height Filter'), findsOneWidget);
       expect(find.text('4. Hub Center & Radius Math'), findsOneWidget);
-      expect(find.text('Approve Auto Rig'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
 
       // Switch to Custom
       await tester.tap(find.text('🛠 Custom'));
@@ -1378,8 +1378,18 @@ endsolid sports_car''';
       // Step 2: Scan & Organize
       expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
       expect(find.text('Next: Add Physics'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
 
-      // Advance to Step 3
+      // Next is disabled before scan: tapping it will not advance
+      await tester.tap(find.text('Next: Add Physics'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+
+      // Start the scan and wait for wheel filtering to complete
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Now Next: Add Physics is enabled, advance to Step 3
       await tester.tap(find.text('Next: Add Physics'));
       await tester.pump(const Duration(milliseconds: 100));
 

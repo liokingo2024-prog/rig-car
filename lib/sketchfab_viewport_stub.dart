@@ -37,3 +37,5 @@ void rotateSketchfabModel(double yawAngle) {}
 void flipSketchfabModel() {}
 void snapSketchfabModelToGround() {}
 void scaleSketchfabModel(double targetLength) {}
+void updateSketchfabWheelMarkers(List<dynamic> wheels) {}
+void highlightSketchfabWheels(List<String> wheelNodeNames) {}

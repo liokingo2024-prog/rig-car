@@ -202,3 +202,29 @@ void scaleSketchfabModel(double targetLength) {
     debugPrint('scaleSketchfabModel error: $e');
   }
 }
+
+void updateSketchfabWheelMarkers(List<dynamic> wheels) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      final jsList = wheels.map((w) {
+        if (w is Map) return w;
+        return {'x': (w as dynamic).x, 'y': (w as dynamic).y, 'z': (w as dynamic).z};
+      }).toList();
+      viewer.callMethod('setWheelMarkers', [js.JsObject.jsify(jsList)]);
+    }
+  } catch (e) {
+    debugPrint('updateSketchfabWheelMarkers error: $e');
+  }
+}
+
+void highlightSketchfabWheels(List<String> wheelNodeNames) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('highlightWheelMeshes', [js.JsObject.jsify(wheelNodeNames)]);
+    }
+  } catch (e) {
+    debugPrint('highlightSketchfabWheels error: $e');
+  }
+}

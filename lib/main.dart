@@ -147,6 +147,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   String _godotArchitecture = 'standard';
   late List<DetectedMeshGroup> _detectedGroups;
   late List<AudioSlotConfig> _audioSlots;
+  bool _isScanningWheels = false;
+  bool _scanCompleted = false;
+  bool _highlightFoundWheels = false;
 
   // Manual wheel assignments [FL, FR, RL, RR]
   final Map<String, DetectedWheel?> _assignedWheels = {
@@ -561,10 +564,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       case 1:
         return _parsedModel != null ? StepStatus.done : StepStatus.pending;
       case 2:
+        if (_isScanningWheels) return StepStatus.running;
         if (_inspectMode == 'manual') return StepStatus.manual;
         final wheelCount =
             _assignedWheels.values.whereType<DetectedWheel>().length;
-        if (wheelCount >= 4 && (_detection?.warnings.isEmpty ?? false)) {
+        if (_scanCompleted && wheelCount >= 4 && (_detection?.warnings.isEmpty ?? false)) {
           return StepStatus.done;
         } else if (_detection != null && _detection!.warnings.isNotEmpty) {
           return StepStatus.warning;
@@ -634,11 +638,40 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     _showMessage('Normalized vehicle footprint to ${targetLength.toStringAsFixed(1)}m');
   }
 
-  void _onApproveAutoRig() {
+  Future<void> _onStartWheelScan() async {
+    if (_isScanningWheels) return;
+    _ensureModel();
+    if (_parsedModel == null) return;
+
     setState(() {
-      _activeStep = 3;
+      _isScanningWheels = true;
+      _highlightFoundWheels = false;
     });
-    _showMessage('Auto-rig approved. Moving to Add Physics.');
+    _showMessage('Scanning geometry and filtering wheels...');
+
+    await Future.delayed(const Duration(milliseconds: 150));
+    if (!mounted) return;
+
+    final detection = AutoDetector.detect(_parsedModel!);
+    _mapDetectedWheels(detection.wheels);
+
+    setState(() {
+      _detection = detection;
+      _selectedBodyNodeIndex = detection.body?.nodeIndex;
+      _drive = detection.suggestedDrive;
+      _isScanningWheels = false;
+      _scanCompleted = true;
+      _highlightFoundWheels = true;
+      _viewportUpdateEpoch++;
+    });
+
+    final effectiveWheels = _getEffectiveWheelPositions();
+    updateSketchfabWheelMarkers(effectiveWheels);
+
+    final wheelNames = detection.wheels.map((w) => w.nodeName).toList();
+    highlightSketchfabWheels(wheelNames);
+
+    _showMessage('Wheel filtering complete: ${detection.wheels.length}/4 wheels detected & highlighted in viewport!');
   }
 
   void _onGroupRoleChange(int groupId, String role) {
@@ -996,6 +1029,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                       const Color(0xFFD6DBDF),
                                                   centerOfMassY: _centerOfMass,
                                                   updateEpoch: _viewportUpdateEpoch,
+                                                  highlightWheels: _highlightFoundWheels,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
                                               ),
@@ -1050,6 +1084,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                 const Color(0xFFD6DBDF),
                                             centerOfMassY: _centerOfMass,
                                             updateEpoch: _viewportUpdateEpoch,
+                                            highlightWheels: _highlightFoundWheels,
                                             onTestDrive: _enterTestDrive,
                                           ),
                                         )),
@@ -1101,7 +1136,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       onFlipFrontBack: _onFlipFrontBack,
       onSnapToGround: _onSnapToGround,
       onApplyScale: _onApplyScale,
-      onApproveAutoRig: _onApproveAutoRig,
+      onStartScan: _onStartWheelScan,
+      isScanning: _isScanningWheels,
+      isScanDone: _scanCompleted,
+      onApproveAutoRig: _onStartWheelScan,
       onGroupRoleChange: _onGroupRoleChange,
       onPickWheelInViewport: _onPickWheelInViewport,
       onRecalculateHeightFilter: _onRecalculateHeightFilter,

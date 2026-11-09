@@ -56,7 +56,10 @@ class InspectorPanel extends StatefulWidget {
     required this.onFlipFrontBack,
     required this.onSnapToGround,
     required this.onApplyScale,
-    required this.onApproveAutoRig,
+    this.onApproveAutoRig,
+    required this.onStartScan,
+    this.isScanning = false,
+    this.isScanDone = false,
     required this.onGroupRoleChange,
     required this.onPickWheelInViewport,
     required this.onRecalculateHeightFilter,
@@ -114,7 +117,10 @@ class InspectorPanel extends StatefulWidget {
   final VoidCallback onFlipFrontBack;
   final VoidCallback onSnapToGround;
   final ValueChanged<double> onApplyScale;
-  final VoidCallback onApproveAutoRig;
+  final VoidCallback? onApproveAutoRig;
+  final VoidCallback onStartScan;
+  final bool isScanning;
+  final bool isScanDone;
   final void Function(int groupId, String role) onGroupRoleChange;
   final ValueChanged<String> onPickWheelInViewport;
   final ValueChanged<double> onRecalculateHeightFilter;
@@ -240,7 +246,13 @@ class _InspectorPanelState extends State<InspectorPanel> {
       case 2:
         final wheels = widget.assignedWheels.values.whereType<DetectedWheel>().length;
         final warnings = widget.detection?.warnings ?? const [];
-        if (wheels < 4 || warnings.isNotEmpty) {
+        if (widget.isScanning) {
+          isWarning = false;
+          badgeText = 'Filtering Wheels...';
+        } else if (!widget.isScanDone) {
+          isWarning = false;
+          badgeText = 'Ready to Scan';
+        } else if (wheels < 4 || warnings.isNotEmpty) {
           isWarning = true;
           badgeText = 'Math Review Needed';
         } else {
@@ -774,6 +786,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
     final fr = widget.assignedWheels['FR'];
     final rl = widget.assignedWheels['RL'];
     final rr = widget.assignedWheels['RR'];
+    final wheelCount = widget.assignedWheels.values.whereType<DetectedWheel>().length;
+    final isDone = widget.isScanDone && wheelCount >= 4;
+    final isScanning = widget.isScanning;
 
     final hasWarnings = widget.detection?.warnings.isNotEmpty ?? false;
 
@@ -783,39 +798,57 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const _SectionHeader('4-STAGE AUTO-RIG PIPELINE'),
         const SizedBox(height: 8),
         _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
+          icon: isDone
+              ? Icons.check_circle_rounded
+              : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
+          iconColor: isDone ? _Palette.accentEmerald : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '1. Separate Loose Parts',
-          metric: '$loosePartsCount loose parts separated',
+          metric: isDone || isScanning
+              ? '$loosePartsCount loose parts separated'
+              : '$loosePartsCount candidate parts indexed',
           description: 'Splits merged mesh into isolated vertex islands.',
           onHover: (hover) => widget.onHoverPart(hover ? 'loose_parts' : null),
         ),
         const SizedBox(height: 8),
         _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
+          icon: isDone
+              ? Icons.check_circle_rounded
+              : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
+          iconColor: isDone ? _Palette.accentEmerald : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '2. Similarity Match (2s & 4s)',
-          metric: '4-wheel cluster matched (4x identical geometry)',
+          metric: isDone
+              ? '4-wheel cluster matched (4x identical geometry)'
+              : (isScanning ? 'Matching geometry clusters...' : 'Pending cluster similarity match'),
           description: 'Matched geometry groups by vertex count & bounding volume.',
           onHover: (hover) => widget.onHoverPart(hover ? 'groups_match' : null),
         ),
         const SizedBox(height: 8),
         _InspectCheckCard(
-          icon: hasWarnings ? Icons.warning_amber_rounded : Icons.check_circle_rounded,
-          iconColor: hasWarnings ? _Palette.accentAmber : _Palette.accentEmerald,
+          icon: isDone
+              ? (hasWarnings ? Icons.warning_amber_rounded : Icons.check_circle_rounded)
+              : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
+          iconColor: isDone
+              ? (hasWarnings ? _Palette.accentAmber : _Palette.accentEmerald)
+              : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '3. Lower-Corner & Height Filter',
-          metric: hasWarnings
-              ? 'Warning: Some clusters outside Y < 35% zone'
-              : 'Y < 35% car height verified (4/4 corners)',
+          metric: isDone
+              ? (hasWarnings
+                  ? 'Warning: Some clusters outside Y < 35% zone'
+                  : 'Y < 35% car height verified (4/4 corners)')
+              : (isScanning ? 'Filtering 4 symmetric outer corners...' : 'Pending height cutoff check'),
           description: 'Checks candidate groups in 4 symmetric outer-track corners.',
           onHover: (hover) => widget.onHoverPart(hover ? 'height_filter' : null),
         ),
         const SizedBox(height: 8),
         _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
+          icon: isDone
+              ? Icons.check_circle_rounded
+              : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
+          iconColor: isDone ? _Palette.accentEmerald : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '4. Hub Center & Radius Math',
-          metric: 'FL: R=${_formatWheelR(fl)} · FR: R=${_formatWheelR(fr)}\nRL: R=${_formatWheelR(rl)} · RR: R=${_formatWheelR(rr)}',
+          metric: isDone
+              ? 'FL: R=${_formatWheelR(fl)} · FR: R=${_formatWheelR(fr)}\nRL: R=${_formatWheelR(rl)} · RR: R=${_formatWheelR(rr)}'
+              : (isScanning ? 'Computing spin axes & cylinder fit...' : 'Pending hub & pivot calculation'),
           description: 'Calculated spin pivots & cylinder radius for all wheels.',
           onHover: (hover) => widget.onHoverPart(hover ? 'wheel_hubs' : null),
         ),
@@ -824,12 +857,26 @@ class _InspectorPanelState extends State<InspectorPanel> {
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: widget.onApproveAutoRig,
-                icon: const Icon(Icons.verified_rounded, size: 15),
-                label: const Text('Approve Auto Rig'),
+                onPressed: isScanning ? null : widget.onStartScan,
+                icon: isScanning
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF041D14),
+                        ),
+                      )
+                    : const Icon(Icons.play_arrow_rounded, size: 16),
+                label: Text(
+                  isScanning ? 'Scanning...' : 'Start',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
                 style: FilledButton.styleFrom(
                   backgroundColor: _Palette.accentEmerald,
+                  disabledBackgroundColor: const Color(0xFF16251E),
                   foregroundColor: const Color(0xFF041D14),
+                  disabledForegroundColor: const Color(0xFF6B7280),
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
@@ -851,7 +898,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const SizedBox(height: 12),
         _NextStepButton(
           label: 'Next: Add Physics',
-          onPressed: () => widget.onStepSelect(3),
+          onPressed: isDone ? () => widget.onStepSelect(3) : null,
         ),
       ],
     );
@@ -1015,7 +1062,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const SizedBox(height: 18),
         _NextStepButton(
           label: 'Next: Add Physics',
-          onPressed: () => widget.onStepSelect(3),
+          onPressed: (widget.isScanDone || widget.assignedWheels.values.whereType<DetectedWheel>().length >= 4)
+              ? () => widget.onStepSelect(3)
+              : null,
         ),
       ],
     );
@@ -2200,15 +2249,18 @@ class _NextStepButton extends StatelessWidget {
   });
 
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final isEnabled = onPressed != null;
     return FilledButton(
       onPressed: onPressed,
       style: FilledButton.styleFrom(
         backgroundColor: _Palette.accentEmerald,
         foregroundColor: const Color(0xFF041D14),
+        disabledBackgroundColor: const Color(0xFF16251E),
+        disabledForegroundColor: const Color(0xFF6B7280),
         padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 14),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         elevation: 0,
@@ -2218,14 +2270,19 @@ class _NextStepButton extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.3,
+              color: isEnabled ? const Color(0xFF041D14) : const Color(0xFF6B7280),
             ),
           ),
           const SizedBox(width: 6),
-          const Icon(Icons.arrow_forward_rounded, size: 15),
+          Icon(
+            Icons.arrow_forward_rounded,
+            size: 15,
+            color: isEnabled ? const Color(0xFF041D14) : const Color(0xFF6B7280),
+          ),
         ],
       ),
     );

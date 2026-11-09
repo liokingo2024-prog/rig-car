@@ -1162,11 +1162,52 @@
 
     wheels.forEach(w => {
       if (!w || typeof w.x !== 'number') return;
-      const markerGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.22, 16);
-      const markerMat = new THREE.MeshBasicMaterial({ color: 0x34d399 });
+      // Glowing emerald cylindrical hub marker
+      const markerGeo = new THREE.CylinderGeometry(0.10, 0.10, 0.24, 20);
+      markerGeo.rotateZ(Math.PI / 2);
+      const markerMat = new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        emissive: 0x059669,
+        emissiveIntensity: 0.7,
+        roughness: 0.2,
+        metalness: 0.8
+      });
       const marker = new THREE.Mesh(markerGeo, markerMat);
       marker.position.set(w.x, w.y, w.z);
       markersGroup.add(marker);
+
+      // Outer glowing ring
+      const ringGeo = new THREE.TorusGeometry(0.22, 0.02, 16, 32);
+      ringGeo.rotateY(Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x34d399 });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.set(w.x, w.y, w.z);
+      markersGroup.add(ring);
+    });
+  }
+
+  function highlightWheelMeshes(wheelNodeNames) {
+    if (!currentModel) return;
+    const names = Array.isArray(wheelNodeNames) && wheelNodeNames.length > 0
+      ? wheelNodeNames.map(n => (n || '').toLowerCase())
+      : ['wheel', 'tire', 'tyre', 'rim'];
+    currentModel.traverse(function(child) {
+      if (child.isMesh) {
+        const cName = (child.name || '').toLowerCase();
+        const isWheel = names.some(n => cName.includes(n));
+        if (isWheel) {
+          if (!child.userData.origMaterial) {
+            child.userData.origMaterial = child.material;
+          }
+          child.material = new THREE.MeshStandardMaterial({
+            color: 0x10b981,
+            emissive: 0x059669,
+            emissiveIntensity: 0.5,
+            roughness: 0.2,
+            metalness: 0.8
+          });
+        }
+      }
     });
   }
 
@@ -1198,6 +1239,7 @@
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
     setWheelMarkers: setWheelMarkers,
+    highlightWheelMeshes: highlightWheelMeshes,
     rotateModel: rotateModel,
     flipModel: flipModel,
     snapToGround: snapToGround,

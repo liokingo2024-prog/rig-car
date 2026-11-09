@@ -86,6 +86,7 @@ class WireframeViewer extends StatefulWidget {
     this.wireColor = const Color(0xFF455A64),
     this.centerOfMassY = -0.18,
     this.updateEpoch = 0,
+    this.highlightWheels = false,
     this.onTestDrive,
   });
 
@@ -102,6 +103,7 @@ class WireframeViewer extends StatefulWidget {
   final Color wireColor;
   final double centerOfMassY;
   final int updateEpoch;
+  final bool highlightWheels;
   final VoidCallback? onTestDrive;
 
   @override
@@ -138,6 +140,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   @override
   void initState() {
     super.initState();
+    _showMarkers = widget.highlightWheels || (widget.detection?.wheels.isNotEmpty ?? false);
     _resetCameraToModel();
     _animController =
         AnimationController(
@@ -162,6 +165,9 @@ class _WireframeViewerState extends State<WireframeViewer>
     }
     if (widget.model != oldWidget.model && widget.model != null) {
       _resetCameraToModel();
+    }
+    if (widget.highlightWheels != oldWidget.highlightWheels && widget.highlightWheels) {
+      _showMarkers = true;
     }
   }
 
@@ -275,6 +281,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                           wireColor: widget.wireColor,
                           centerOfMassY: widget.centerOfMassY,
                           updateEpoch: widget.updateEpoch,
+                          highlightWheels: widget.highlightWheels,
                           pulseProgress: _animController.value,
                           isInteracting: _isInteracting || _autoTurntable,
                         ),
@@ -347,6 +354,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                                 wireColor: widget.wireColor,
                                 centerOfMassY: widget.centerOfMassY,
                                 updateEpoch: widget.updateEpoch,
+                                highlightWheels: widget.highlightWheels,
                                 pulseProgress: _animController.value,
                                 isInteracting: _isInteracting || _autoTurntable,
                               ),
@@ -1061,6 +1069,7 @@ class _WireframeScenePainter extends CustomPainter {
     required this.wireColor,
     required this.centerOfMassY,
     this.updateEpoch = 0,
+    this.highlightWheels = false,
     this.pulseProgress = 0.0,
     this.isInteracting = false,
   });
@@ -1088,6 +1097,7 @@ class _WireframeScenePainter extends CustomPainter {
   final Color wireColor;
   final double centerOfMassY;
   final int updateEpoch;
+  final bool highlightWheels;
   final double pulseProgress;
   final bool isInteracting;
 
@@ -1096,6 +1106,7 @@ class _WireframeScenePainter extends CustomPainter {
     return oldDelegate.model != model ||
         oldDelegate.updateEpoch != updateEpoch ||
         oldDelegate.detection != detection ||
+        oldDelegate.highlightWheels != highlightWheels ||
         oldDelegate.bodyNodeIndex != bodyNodeIndex ||
         oldDelegate.selectedNodeIndex != selectedNodeIndex ||
         oldDelegate.hoveredNodeIndex != hoveredNodeIndex ||
@@ -1185,7 +1196,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
 
     // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
-    if (showMarkers && (detection?.wheels.isNotEmpty ?? false)) {
+    if ((showMarkers || highlightWheels) && (detection?.wheels.isNotEmpty ?? false)) {
       _drawMarkers(canvas, size, projectPoint);
     }
   }
@@ -1795,6 +1806,15 @@ class _WireframeScenePainter extends CustomPainter {
       0xFF181A1C,           // 8: solidKindChassis (dark mechanical underbody)
     ];
     final selected = selectedNodeIndex ?? -1;
+    final wheelNodeSet =
+        detection?.wheels
+            .expand(
+              (w) => w.partNodeIndices.isEmpty
+                  ? <int>[w.nodeIndex]
+                  : w.partNodeIndices,
+            )
+            .toSet() ??
+        const <int>{};
 
     var visCount = 0;
     var minDepth = double.infinity;
@@ -1852,6 +1872,8 @@ class _WireframeScenePainter extends CustomPainter {
       final int base;
       if (triNode[t] == selected) {
         base = selectedArgb;
+      } else if (highlightWheels && (wheelNodeSet.contains(triNode[t]) || triKind[t] == 2)) {
+        base = 0xFF10B981;
       } else {
         final materialColor = triColor[t];
         if (materialColor != 0) {
@@ -2128,8 +2150,8 @@ class _WireframeScenePainter extends CustomPainter {
         edgeColor = const Color(0xFF00E5FF);
         strokeWidth = 2.0;
       } else if (wheelNodeSet.contains(inst.nodeIndex)) {
-        edgeColor = wheelColor;
-        strokeWidth = 1.3;
+        edgeColor = highlightWheels ? const Color(0xFF10B981) : wheelColor;
+        strokeWidth = highlightWheels ? 2.2 : 1.3;
       } else if (inst.nodeIndex == selectedBodyNodeIndex) {
         edgeColor = bodyColor;
         strokeWidth = 1.1;
@@ -2602,7 +2624,7 @@ class _WireframeScenePainter extends CustomPainter {
 
       // Marker circle
       final markerPaint = Paint()
-        ..color = wheelColor
+        ..color = highlightWheels ? const Color(0xFF10B981) : wheelColor
         ..style = PaintingStyle.fill;
       canvas.drawCircle(pos, 5, markerPaint);
 
@@ -2616,9 +2638,9 @@ class _WireframeScenePainter extends CustomPainter {
       final pulseRadius = 7.0 + pulseProgress * 13.0;
       final pulseAlpha = (1.0 - pulseProgress).clamp(0.0, 1.0);
       final pulsePaint = Paint()
-        ..color = wheelColor.withValues(alpha: pulseAlpha * 0.75)
+        ..color = (highlightWheels ? const Color(0xFF10B981) : wheelColor).withValues(alpha: pulseAlpha * 0.85)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6;
+        ..strokeWidth = 2.0;
       canvas.drawCircle(pos, pulseRadius, pulsePaint);
 
       // Label
