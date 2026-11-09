@@ -677,8 +677,8 @@ class _WireframeViewerState extends State<WireframeViewer>
 
           // ── Blender 3D Orientation Navigation Gizmo ───────────────────────
           Positioned(
-            top: 50,
-            right: 12,
+            top: 12,
+            left: 12,
             child: _BlenderAxisGizmo(
               azimuth: _azimuth,
               elevation: _elevation,
