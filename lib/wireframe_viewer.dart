@@ -132,6 +132,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   ViewerLighting _lighting = ViewerLighting.studio;
   ViewerRenderMode _renderMode = ViewerRenderMode.solid;
   bool get _showGrid => _gridStyle != GroundGridStyle.off;
+  bool _showForwardArrow = true;
   bool _invertDrag = false;
   // Performance-first default. The full parsed model remains available for
   // detection; only the preview is intentionally decimated.
@@ -252,6 +253,7 @@ class _WireframeViewerState extends State<WireframeViewer>
               renderMode: _renderMode.name,
               lighting: _lighting.name,
               gridStyle: _gridStyle.name,
+              showForwardArrow: _showForwardArrow,
               autoTurntable: _autoTurntable,
               cameraPreset: _preset.name,
               resetEpoch: _cameraResetEpoch,
@@ -320,6 +322,7 @@ class _WireframeViewerState extends State<WireframeViewer>
                             lighting: _lighting,
                             renderMode: _renderMode,
                             showGrid: _showGrid,
+                            showForwardArrow: _showForwardArrow,
                             showMarkers: _showMarkers,
                             denseWireframe: _denseWireframe,
                             accentColor: widget.accentColor,
@@ -715,6 +718,56 @@ class _WireframeViewerState extends State<WireframeViewer>
                   _LegendItem(color: widget.bodyColor, label: 'Body'),
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: _showForwardArrow
+                        ? 'Forward Heading Arrow: Visible (Click to hide)'
+                        : 'Forward Heading Arrow: Hidden (Click to show)',
+                    child: InkWell(
+                      onTap: () {
+                        setState(() => _showForwardArrow = !_showForwardArrow);
+                        setSketchfabForwardArrowVisible(_showForwardArrow);
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _showForwardArrow
+                              ? const Color(0x3310B981)
+                              : const Color(0x1A8BA2B0),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: _showForwardArrow
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFF2E3E34),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.navigation_rounded,
+                              size: 11,
+                              color: _showForwardArrow
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFF71818B),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '▲ Forward (-Z)',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: _showForwardArrow
+                                    ? const Color(0xFFE2E8F0)
+                                    : const Color(0xFF71818B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 16),
                 // Land Grid Style Selector (CAD, Radial Podium, Cyber Hex, Skidpad, Off)
                 PopupMenuButton<GroundGridStyle>(
@@ -990,6 +1043,18 @@ class _TelemetryOverlay extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(width: 8),
+          Container(width: 1, height: 10, color: const Color(0xFF223127)),
+          const SizedBox(width: 8),
+          const Text(
+            '▲ FWD: -Z',
+            style: TextStyle(
+              color: Color(0xFF6EE7B7),
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
       ),
     );
@@ -1032,6 +1097,7 @@ class _WireframeScenePainter extends CustomPainter {
     this.lighting = ViewerLighting.studio,
     this.renderMode = ViewerRenderMode.solid,
     required this.showGrid,
+    this.showForwardArrow = true,
     required this.showMarkers,
     required this.denseWireframe,
     required this.accentColor,
@@ -1060,6 +1126,7 @@ class _WireframeScenePainter extends CustomPainter {
   final ViewerLighting lighting;
   final ViewerRenderMode renderMode;
   final bool showGrid;
+  final bool showForwardArrow;
   final bool showMarkers;
   final bool denseWireframe;
   final Color accentColor;
@@ -1091,6 +1158,7 @@ class _WireframeScenePainter extends CustomPainter {
         oldDelegate.lighting != lighting ||
         oldDelegate.renderMode != renderMode ||
         oldDelegate.showGrid != showGrid ||
+        oldDelegate.showForwardArrow != showForwardArrow ||
         oldDelegate.showMarkers != showMarkers ||
         oldDelegate.denseWireframe != denseWireframe ||
         oldDelegate.accentColor != accentColor ||
@@ -1298,6 +1366,144 @@ class _WireframeScenePainter extends CustomPainter {
     // Contact shadow beneath car chassis is rendered on top of ground grid
     // lines to naturally darken the floor directly beneath the vehicle.
     _drawContactShadow(canvas, viewProj, size, groundY);
+
+    // 3D Forward Heading Direction Arrow (Points towards -Z, Godot 4 Vehicle Forward)
+    if (showForwardArrow) {
+      _drawForwardDirectionArrow(canvas, viewProj, size, groundY, project);
+    }
+  }
+
+  void _drawForwardDirectionArrow(
+    Canvas canvas,
+    Mat4 viewProj,
+    Size size,
+    double groundY,
+    Offset? Function(Vec3) project,
+  ) {
+    // 1. Center dashed guide track along Z (from 0 to -2.10)
+    final trackPaint = Paint()
+      ..color = const Color(0x6034D399)
+      ..strokeWidth = 1.6;
+    for (var z = -0.4; z >= -2.0; z -= 0.4) {
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(0, groundY, z),
+        Vec3(0, groundY, z - 0.25),
+        trackPaint,
+      );
+    }
+
+    // 2. Main Arrowhead & Shaft Filled Polygon (Pointing towards -Z)
+    final arrowPoly = [
+      Vec3(0, groundY, -4.40),      // Tip pointing along -Z (Godot 4 Vehicle Forward)
+      Vec3(-0.60, groundY, -3.65),  // Left barb
+      Vec3(-0.22, groundY, -3.82),  // Left notch
+      Vec3(-0.22, groundY, -2.10),  // Shaft bottom-left
+      Vec3(0.22, groundY, -2.10),   // Shaft bottom-right
+      Vec3(0.22, groundY, -3.82),   // Right notch
+      Vec3(0.60, groundY, -3.65),   // Right barb
+    ];
+
+    final arrowFillPaint = Paint()
+      ..color = const Color(0x6010B981)
+      ..style = PaintingStyle.fill;
+    _drawClippedPolygon(canvas, viewProj, size, arrowPoly, arrowFillPaint);
+
+    final arrowBorderPaint = Paint()
+      ..color = const Color(0xF06EE7B7)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    _drawClippedPolygon(canvas, viewProj, size, arrowPoly, arrowBorderPaint);
+
+    // 3. Inner Forward Chevrons (>>>)
+    final chevronPaint = Paint()
+      ..color = const Color(0xF0A7F3D0)
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+
+    // Chevron 1
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-0.32, groundY, -2.85),
+      Vec3(0, groundY, -3.20),
+      chevronPaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(0, groundY, -3.20),
+      Vec3(0.32, groundY, -2.85),
+      chevronPaint,
+    );
+
+    // Chevron 2
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-0.32, groundY, -2.35),
+      Vec3(0, groundY, -2.70),
+      chevronPaint,
+    );
+    _drawClippedLine(
+      canvas,
+      viewProj,
+      size,
+      Vec3(0, groundY, -2.70),
+      Vec3(0.32, groundY, -2.35),
+      chevronPaint,
+    );
+
+    // 4. Stylized 3D-Projected Floor Badge: "▲ FORWARD (-Z)"
+    final labelPos = project(Vec3(0, groundY, -4.75));
+    if (labelPos != null) {
+      final tp = TextPainter(
+        text: const TextSpan(
+          text: '▲ FORWARD (-Z)',
+          style: TextStyle(
+            color: Color(0xFF6EE7B7),
+            fontSize: 10.0,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      const padH = 6.0;
+      const padV = 3.0;
+      final badgeRect = RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: labelPos,
+          width: tp.width + padH * 2,
+          height: tp.height + padV * 2,
+        ),
+        const Radius.circular(4),
+      );
+
+      final bgPaint = Paint()
+        ..color = const Color(0xE60D1511)
+        ..style = PaintingStyle.fill;
+      final borderPaint = Paint()
+        ..color = const Color(0xFF10B981)
+        ..strokeWidth = 1.2
+        ..style = PaintingStyle.stroke;
+
+      canvas.drawRRect(badgeRect, bgPaint);
+      canvas.drawRRect(badgeRect, borderPaint);
+      tp.paint(
+        canvas,
+        Offset(
+          labelPos.dx - tp.width / 2,
+          labelPos.dy - tp.height / 2,
+        ),
+      );
+    }
   }
 
   void _drawContactShadow(
@@ -2774,7 +2980,7 @@ class _BlenderAxisGizmo extends StatelessWidget {
               const SizedBox(width: 2),
               _AxisChip(
                 label: '-Z',
-                tooltip: 'Front View (-Z)',
+                tooltip: 'Front View (-Z Forward)',
                 color: const Color(0xFF2563EB),
                 isActive: activePreset == CameraPreset.front,
                 onTap: () => onSelectPreset(CameraPreset.front),

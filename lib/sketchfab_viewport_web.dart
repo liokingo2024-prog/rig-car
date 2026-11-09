@@ -15,6 +15,7 @@ class SketchfabViewport extends StatefulWidget {
     required this.renderMode,
     required this.lighting,
     required this.gridStyle,
+    this.showForwardArrow = true,
     required this.autoTurntable,
     required this.cameraPreset,
     this.resetEpoch = 0,
@@ -28,6 +29,7 @@ class SketchfabViewport extends StatefulWidget {
   final String renderMode;
   final String lighting;
   final String gridStyle;
+  final bool showForwardArrow;
   final bool autoTurntable;
   final String cameraPreset;
   final int resetEpoch;
@@ -146,6 +148,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
       viewer.callMethod('setRenderMode', [widget.renderMode]);
       viewer.callMethod('setLighting', [widget.lighting]);
       viewer.callMethod('setGridStyle', [widget.gridStyle]);
+      viewer.callMethod('setForwardArrowVisible', [widget.showForwardArrow]);
       viewer.callMethod('setTurntable', [widget.autoTurntable]);
     } catch (_) {}
   }
@@ -175,6 +178,9 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
         }
         if (widget.gridStyle != oldWidget.gridStyle) {
           viewer.callMethod('setGridStyle', [widget.gridStyle]);
+        }
+        if (widget.showForwardArrow != oldWidget.showForwardArrow) {
+          viewer.callMethod('setForwardArrowVisible', [widget.showForwardArrow]);
         }
         if (widget.autoTurntable != oldWidget.autoTurntable) {
           viewer.callMethod('setTurntable', [widget.autoTurntable]);
@@ -287,6 +293,17 @@ void setSketchfabCameraPreset(String preset) {
     }
   } catch (e) {
     debugPrint('setSketchfabCameraPreset error: $e');
+  }
+}
+
+void setSketchfabForwardArrowVisible(bool visible) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('setForwardArrowVisible', [visible]);
+    }
+  } catch (e) {
+    debugPrint('setSketchfabForwardArrowVisible error: $e');
   }
 }
 

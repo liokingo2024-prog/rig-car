@@ -11,6 +11,8 @@
   let currentModel = null;
   let modelPivotGroup = null;
   let gridGroup = null;
+  let forwardArrowGroup = null;
+  let showForwardArrow = true;
   let currentGridStyle = 'cad';
   const gridStyleMap = {};
   let groundShadow = null;
@@ -194,6 +196,15 @@
     }
     gridGroup = new THREE.Group();
     sc.add(gridGroup);
+
+    if (forwardArrowGroup) {
+      sc.remove(forwardArrowGroup);
+      disposeObject(forwardArrowGroup);
+      forwardArrowGroup = null;
+    }
+    forwardArrowGroup = buildForwardArrowHelper();
+    forwardArrowGroup.visible = showForwardArrow;
+    sc.add(forwardArrowGroup);
 
     if (groundShadow) sc.remove(groundShadow);
 
@@ -1012,6 +1023,137 @@
     if (!controls) return;
     controls.autoRotate = !!enabled;
     controls.autoRotateSpeed = 2.0;
+  }
+
+  function buildForwardArrowHelper() {
+    const grp = new THREE.Group();
+    grp.name = 'forward_direction_arrow';
+
+    // 1. Center dashed track from 0 to -2.1
+    const trackPoints = [];
+    for (let z = -0.4; z >= -2.0; z -= 0.4) {
+      trackPoints.push(new THREE.Vector3(0, 0.0008, z));
+      trackPoints.push(new THREE.Vector3(0, 0.0008, z - 0.25));
+    }
+    const trackGeo = new THREE.BufferGeometry().setFromPoints(trackPoints);
+    const trackMat = new THREE.LineBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false
+    });
+    grp.add(new THREE.LineSegments(trackGeo, trackMat));
+
+    // 2. Main Arrowhead & Shaft Geometry (Pointing towards -Z)
+    const pos = [
+      // Triangle 1: Tip, Left Barb, Left Notch
+      0, 0.0012, -4.40,   -0.60, 0.0012, -3.65,   -0.22, 0.0012, -3.82,
+      // Triangle 2: Tip, Right Notch, Right Barb
+      0, 0.0012, -4.40,    0.22, 0.0012, -3.82,    0.60, 0.0012, -3.65,
+      // Triangle 3: Tip, Left Notch, Right Notch
+      0, 0.0012, -4.40,   -0.22, 0.0012, -3.82,    0.22, 0.0012, -3.82,
+      // Triangle 4: Left Notch, Shaft Bottom-Left, Shaft Bottom-Right
+      -0.22, 0.0012, -3.82,  -0.22, 0.0012, -2.10,   0.22, 0.0012, -2.10,
+      // Triangle 5: Left Notch, Shaft Bottom-Right, Right Notch
+      -0.22, 0.0012, -3.82,   0.22, 0.0012, -2.10,   0.22, 0.0012, -3.82
+    ];
+    const arrowGeo = new THREE.BufferGeometry();
+    arrowGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    arrowGeo.computeVertexNormals();
+
+    const arrowMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    grp.add(new THREE.Mesh(arrowGeo, arrowMat));
+
+    // 3. Arrow Perimeter Glowing Border
+    const borderPoints = [
+      new THREE.Vector3(0, 0.0016, -4.40),
+      new THREE.Vector3(-0.60, 0.0016, -3.65),
+      new THREE.Vector3(-0.22, 0.0016, -3.82),
+      new THREE.Vector3(-0.22, 0.0016, -2.10),
+      new THREE.Vector3(0.22, 0.0016, -2.10),
+      new THREE.Vector3(0.22, 0.0016, -3.82),
+      new THREE.Vector3(0.60, 0.0016, -3.65),
+      new THREE.Vector3(0, 0.0016, -4.40)
+    ];
+    const borderGeo = new THREE.BufferGeometry().setFromPoints(borderPoints);
+    const borderMat = new THREE.LineBasicMaterial({
+      color: 0x6ee7b7,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+    grp.add(new THREE.Line(borderGeo, borderMat));
+
+    // 4. Inner Glowing Chevrons (>>>)
+    const chPoints = [
+      new THREE.Vector3(-0.32, 0.0018, -2.85),
+      new THREE.Vector3(0, 0.0018, -3.20),
+      new THREE.Vector3(0, 0.0018, -3.20),
+      new THREE.Vector3(0.32, 0.0018, -2.85),
+      new THREE.Vector3(-0.32, 0.0018, -2.35),
+      new THREE.Vector3(0, 0.0018, -2.70),
+      new THREE.Vector3(0, 0.0018, -2.70),
+      new THREE.Vector3(0.32, 0.0018, -2.35)
+    ];
+    const chGeo = new THREE.BufferGeometry().setFromPoints(chPoints);
+    const chMat = new THREE.LineBasicMaterial({
+      color: 0xa7f3d0,
+      transparent: true,
+      opacity: 0.90,
+      depthWrite: false
+    });
+    grp.add(new THREE.LineSegments(chGeo, chMat));
+
+    // 5. Stylized Ground Badge Pill: "▲ FORWARD (-Z)"
+    const badgeCanvas = document.createElement('canvas');
+    badgeCanvas.width = 512;
+    badgeCanvas.height = 128;
+    const ctx = badgeCanvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = 'rgba(10, 17, 14, 0.92)';
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(16, 16, 480, 96, 48);
+      } else {
+        ctx.rect(16, 16, 480, 96);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#6ee7b7';
+      ctx.font = 'bold 44px monospace, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('▲ FORWARD (-Z)', 256, 64);
+    }
+    const badgeTex = new THREE.CanvasTexture(badgeCanvas);
+    const badgeGeo = new THREE.PlaneGeometry(1.5, 0.38);
+    const badgeMat = new THREE.MeshBasicMaterial({
+      map: badgeTex,
+      transparent: true,
+      depthWrite: false
+    });
+    const badgeMesh = new THREE.Mesh(badgeGeo, badgeMat);
+    badgeMesh.rotation.x = -Math.PI / 2;
+    badgeMesh.position.set(0, 0.002, -4.75);
+    grp.add(badgeMesh);
+
+    return grp;
+  }
+
+  function setForwardArrowVisible(visible) {
+    showForwardArrow = !!visible;
+    if (forwardArrowGroup) {
+      forwardArrowGroup.visible = showForwardArrow;
+    }
   }
 
   function buildCadGrid() {
@@ -1898,6 +2040,7 @@
     setTurntable: setTurntable,
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
+    setForwardArrowVisible: setForwardArrowVisible,
     setWheelMarkers: setWheelMarkers,
     clearWheelDataAndMarkers: clearWheelDataAndMarkers,
     detectWheels: detectWheels,

@@ -614,7 +614,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
             icon: Icons.check_circle_rounded,
             iconColor: _Palette.accentEmerald,
             title: 'Forward Axis',
-            metric: 'Detected Front: +Z',
+            metric: 'Standard Front: -Z',
             description: 'Heading aligns with standard Godot 4 VehicleBody3D forward.',
             onHover: (hover) => widget.onHoverPart(hover ? 'forward_axis' : null),
           ),
@@ -1284,7 +1284,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const SizedBox(height: 8),
         _ReadinessCheckRow(
           title: 'Scale & Axis Valid',
-          subtitle: 'Normalized vehicle bounds and standard +Z forward heading',
+          subtitle: 'Normalized vehicle bounds and standard -Z forward heading',
           isReady: widget.parsedModel != null,
         ),
         const SizedBox(height: 6),

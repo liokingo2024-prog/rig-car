@@ -2297,5 +2297,31 @@ endsolid sports_car''';
       // Gizmo is rendered and receives updated camera angles
       expect(find.byTooltip('Blender View Gizmo (Click an axis pin or center ISO to snap)'), findsOneWidget);
     });
+
+    testWidgets('renders forward direction indicator and toggles forward arrow visibility', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Telemetry HUD displays Godot 4 standard forward heading (-Z)
+      expect(find.text('▲ FWD: -Z'), findsOneWidget);
+
+      // Bottom toolbar contains the interactive Forward (-Z) toggle
+      final forwardFinder = find.text('▲ Forward (-Z)');
+      expect(forwardFinder, findsOneWidget);
+
+      // Tap to toggle forward arrow off and on
+      await tester.tap(forwardFinder);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Tap again to restore visible forward arrow
+      await tester.tap(forwardFinder);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('▲ Forward (-Z)'), findsOneWidget);
+    });
   });
 }
