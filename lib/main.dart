@@ -1036,6 +1036,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       isFullscreen: isFullscreen,
       onToggleFullscreen: (full) => setState(() => _isDriveFullscreen = full),
       onExit: _exitTestDrive,
+      steerAngle: _steerAngle,
+      springRestLength: _springRestLength,
+      springStiffness: _springStiffness,
+      dampingCompression: _dampingCompression,
+      assignedWheels: _assignedWheels,
+      soundProfile: _selectedAcousticProfile,
+      sirenEnabled: _sirenAudioEnabled,
+      tireSkidAudioEnabled: _tireSkidAudioEnabled,
     );
 
     if (isFullscreen) {

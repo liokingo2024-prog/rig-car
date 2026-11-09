@@ -33,6 +33,10 @@ class VehiclePhysicsSimulation {
     required this.frontTraction,
     required this.rearTraction,
     required this.wheelPositions,
+    this.maxSteerAngleDegrees = 36.0,
+    this.springRestLength = 0.18,
+    this.springStiffness = 42.0,
+    this.dampingCompression = 2.4,
   }) {
     reset();
     _initTrackCones();
@@ -50,6 +54,10 @@ class VehiclePhysicsSimulation {
   bool frontTraction;
   bool rearTraction;
   List<Vec3> wheelPositions;
+  double maxSteerAngleDegrees;
+  double springRestLength;
+  double springStiffness;
+  double dampingCompression;
 
   // Vehicle State
   Vec3 position = Vec3.zero;
@@ -125,8 +133,8 @@ class VehiclePhysicsSimulation {
     required double steerInput, // -1.0 (left) to +1.0 (right)
     required bool handbrake,
   }) {
-    // 1. Steering smoothing
-    const maxSteer = 0.52; // ~30 degrees
+    // 1. Steering smoothing with configured maximum steering angle
+    final maxSteer = (maxSteerAngleDegrees * pi / 180.0).clamp(0.20, 0.95);
     targetSteerAngle = -steerInput * maxSteer;
     steerAngle += (targetSteerAngle - steerAngle) * (dt * 12.0).clamp(0.0, 1.0);
 
@@ -265,14 +273,15 @@ class VehiclePhysicsSimulation {
 
     // 9. Suspension Dynamics (Pitch under accel/brake, Roll during cornering)
     // Spring stiffness factor: higher stiffness = stiffer, less lean
-    final stiffness = suspension.clamp(1.5, 12.0);
-    final targetPitch = (-longitudinalG * (centerOfMass.abs() + 0.25) / stiffness)
+    final effectiveStiffness = ((springStiffness / 10.0) * (suspension / 5.0)).clamp(1.5, 25.0);
+    final targetPitch = (-longitudinalG * (centerOfMass.abs() + 0.25) / effectiveStiffness)
         .clamp(-0.25, 0.25);
-    final targetRoll = (lateralG * (centerOfMass.abs() + 0.25) / stiffness)
+    final targetRoll = (lateralG * (centerOfMass.abs() + 0.25) / effectiveStiffness)
         .clamp(-0.35, 0.35);
 
-    pitch += (targetPitch - pitch) * (dt * 8.0);
-    roll += (targetRoll - roll) * (dt * 8.0);
+    final dampingRate = (dampingCompression * 3.5).clamp(4.0, 18.0);
+    pitch += (targetPitch - pitch) * (dt * dampingRate);
+    roll += (targetRoll - roll) * (dt * dampingRate);
 
     // Suspension compression per wheel
     wheelSuspensionCompressions[0] = (pitch - roll).clamp(-0.15, 0.15); // FL
@@ -287,8 +296,15 @@ class VehiclePhysicsSimulation {
       final slipAlpha = (lateralSlipMagnitude * 0.7 +
               (isHandbrakeActive ? 0.35 : 0.0))
           .clamp(0.25, 0.85);
-      final rearL = position + (fwd * -1.35) + (right * -0.85);
-      final rearR = position + (fwd * -1.35) + (right * 0.85);
+
+      // Use actual rear wheel positions if available
+      final rearLeftZ = wheelPositions.length >= 4 ? wheelPositions[2].z : -1.35;
+      final rearRightZ = wheelPositions.length >= 4 ? wheelPositions[3].z : -1.35;
+      final rearLeftX = wheelPositions.length >= 4 ? wheelPositions[2].x : -0.85;
+      final rearRightX = wheelPositions.length >= 4 ? wheelPositions[3].x : 0.85;
+
+      final rearL = position + (fwd * rearLeftZ) + (right * rearLeftX);
+      final rearR = position + (fwd * rearRightZ) + (right * rearRightX);
 
       leftSkidMarks.add(SkidPoint(rearL, slipAlpha));
       rightSkidMarks.add(SkidPoint(rearR, slipAlpha));

@@ -1,4 +1,6 @@
 import 'dart:math';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'fullscreen.dart';
 import 'model_data.dart';
 import 'physics_sim.dart';
+import 'solid_mesh_lod.dart';
 
 // ── Godot 4 Interactive Test Drive Viewport ─────────────────────────────────
 //
@@ -14,6 +17,21 @@ import 'physics_sim.dart';
 // drift mechanics, and a glassmorphic cyber racing HUD.
 
 enum CameraMode { chase, orbit, hood }
+
+enum TestDriveRenderMode {
+  solid('Solid', Icons.view_in_ar_rounded),
+  wireframe('Wireframe', Icons.grid_4x4_rounded),
+  hybrid('Hybrid', Icons.layers_rounded);
+
+  const TestDriveRenderMode(this.label, this.icon);
+  final String label;
+  final IconData icon;
+
+  TestDriveRenderMode get next {
+    final idx = (index + 1) % TestDriveRenderMode.values.length;
+    return TestDriveRenderMode.values[idx];
+  }
+}
 
 enum TestDriveLighting {
   day('Day Bright', 'Day', Icons.wb_sunny_rounded),
@@ -68,6 +86,14 @@ class TestDriveViewport extends StatefulWidget {
     this.isFullscreen,
     this.onToggleFullscreen,
     this.onExit,
+    this.steerAngle = 36.0,
+    this.springRestLength = 0.18,
+    this.springStiffness = 42.0,
+    this.dampingCompression = 2.4,
+    this.assignedWheels = const {},
+    this.soundProfile = 'v10',
+    this.sirenEnabled = false,
+    this.tireSkidAudioEnabled = true,
   });
 
   final double mass;
@@ -87,6 +113,14 @@ class TestDriveViewport extends StatefulWidget {
   final bool? isFullscreen;
   final ValueChanged<bool>? onToggleFullscreen;
   final VoidCallback? onExit;
+  final double steerAngle;
+  final double springRestLength;
+  final double springStiffness;
+  final double dampingCompression;
+  final Map<String, DetectedWheel?> assignedWheels;
+  final String soundProfile;
+  final bool sirenEnabled;
+  final bool tireSkidAudioEnabled;
 
   @override
   State<TestDriveViewport> createState() => _TestDriveViewportState();
@@ -111,6 +145,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   CameraMode _cameraMode = CameraMode.chase;
   TestDriveLighting _lighting = TestDriveLighting.day;
   TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
+  TestDriveRenderMode _renderMode = TestDriveRenderMode.solid;
   double _orbitAzimuth = 0.785;
   double _orbitElevation = 0.35;
   final double _orbitDistance = 7.5;
@@ -150,6 +185,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       frontTraction: widget.frontTraction,
       rearTraction: widget.rearTraction,
       wheelPositions: widget.wheelPositions,
+      maxSteerAngleDegrees: widget.steerAngle,
+      springRestLength: widget.springRestLength,
+      springStiffness: widget.springStiffness,
+      dampingCompression: widget.dampingCompression,
     );
 
     // Initial camera position behind car
@@ -313,6 +352,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                   cameraMode: _cameraMode,
                   lighting: _lighting,
                   trackStyle: _trackStyle,
+                  renderMode: _renderMode,
                   chaseCamPos: _chaseCamPos,
                   chaseCamTarget: _chaseCamTarget,
                   orbitAzimuth: _orbitAzimuth,
@@ -321,6 +361,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                   model: widget.model,
                   accentColor: widget.accentColor,
                   uiPulse: _uiPulse,
+                  assignedWheels: widget.assignedWheels,
+                  soundProfile: widget.soundProfile,
+                  sirenEnabled: widget.sirenEnabled,
                 ),
               ),
             ),
@@ -438,7 +481,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                             border: Border.all(color: const Color(0xFF223127)),
                           ),
                           child: Text(
-                            '${_sim.drive} • ${_sim.mass.toInt()}KG • ${_sim.engineForce.toInt()}HP',
+                            '${_sim.drive} • ${_sim.mass.toInt()}KG • ${_sim.engineForce.toInt()}HP • ${widget.soundProfile.toUpperCase()}${widget.sirenEnabled ? ' • SIREN' : ''}',
                             style: const TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
@@ -453,10 +496,65 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
                   const SizedBox(width: 12),
 
-                  // Right Cluster: Camera, Surface, Lighting, Fullscreen, Reset
+                  // Right Cluster: Render Mode, Camera, Surface, Lighting, Fullscreen, Reset
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Render Mode selector (Solid / Wireframe / Hybrid)
+                      PopupMenuButton<TestDriveRenderMode>(
+                        tooltip: 'Render View: ${_renderMode.label}',
+                        initialValue: _renderMode,
+                        onSelected: (mode) => setState(() => _renderMode = mode),
+                        color: const Color(0xFF111714),
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 8,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: const BorderSide(color: Color(0xFF223127)),
+                        ),
+                        itemBuilder: (context) => TestDriveRenderMode.values.map((mode) {
+                          final isSel = mode == _renderMode;
+                          return PopupMenuItem<TestDriveRenderMode>(
+                            value: mode,
+                            height: 38,
+                            child: Row(
+                              children: [
+                                Icon(mode.icon, size: 16, color: isSel ? const Color(0xFF10B981) : const Color(0xFF86978C)),
+                                const SizedBox(width: 8),
+                                Text(mode.label, style: TextStyle(fontSize: 12, fontWeight: isSel ? FontWeight.w700 : FontWeight.w500, color: isSel ? const Color(0xFFF0FDF4) : const Color(0xFFC9D1D9))),
+                                if (isSel) ...[
+                                  const Spacer(),
+                                  const Icon(Icons.check, size: 14, color: Color(0xFF10B981)),
+                                ],
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: const Color(0xFF223127)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(_renderMode.icon, size: 13, color: const Color(0xFF10B981)),
+                              const SizedBox(width: 4),
+                              Text(
+                                _renderMode.label.toUpperCase(),
+                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF34D399), letterSpacing: 0.4),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF34D399)),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 6),
+
                       // Camera selector
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1305,6 +1403,7 @@ class _TestDriveScenePainter extends CustomPainter {
     required this.cameraMode,
     this.lighting = TestDriveLighting.day,
     this.trackStyle = TrackSurfaceStyle.circuit,
+    this.renderMode = TestDriveRenderMode.solid,
     required this.chaseCamPos,
     required this.chaseCamTarget,
     required this.orbitAzimuth,
@@ -1313,12 +1412,16 @@ class _TestDriveScenePainter extends CustomPainter {
     required this.model,
     required this.accentColor,
     required this.uiPulse,
+    this.assignedWheels = const {},
+    this.soundProfile = 'v10',
+    this.sirenEnabled = false,
   });
 
   final VehiclePhysicsSimulation sim;
   final CameraMode cameraMode;
   final TestDriveLighting lighting;
   final TrackSurfaceStyle trackStyle;
+  final TestDriveRenderMode renderMode;
   final Vec3 chaseCamPos;
   final Vec3 chaseCamTarget;
   final double orbitAzimuth;
@@ -1327,6 +1430,9 @@ class _TestDriveScenePainter extends CustomPainter {
   final ParsedModel? model;
   final Color accentColor;
   final double uiPulse;
+  final Map<String, DetectedWheel?> assignedWheels;
+  final String soundProfile;
+  final bool sirenEnabled;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1388,7 +1494,7 @@ class _TestDriveScenePainter extends CustomPainter {
     _drawCones(canvas, projectPoint);
 
     // 7. Draw Vehicle
-    _drawVehicle(canvas, size, projectPoint);
+    _drawVehicle(canvas, size, viewProj, eye, projectPoint);
   }
 
   void _drawAtmosphere(
@@ -1560,7 +1666,7 @@ class _TestDriveScenePainter extends CustomPainter {
     required double phaseOffset,
   }) {
     const fovSpan = 2.4; // approx 137° visible horizontal field of view with safety margins
-    const sampleCount = 36;
+    const sampleCount = 16;
 
     final ridgePoints = <Offset>[];
 
@@ -2018,14 +2124,14 @@ class _TestDriveScenePainter extends CustomPainter {
 
     // Center dynamically around car so track is infinite in both directions
     final carZ = sim.position.z;
-    const sliceLen = 8.0;
+    const sliceLen = 16.0;
     final centerZ = (carZ / sliceLen).round() * sliceLen;
-    final zStart = centerZ - 200.0;
-    final zEnd = centerZ + 80.0;
+    final zStart = centerZ - 180.0;
+    final zEnd = centerZ + 70.0;
 
-    // Solid Terrain Base underneath everything (Natural Green Turf / Prairie)
+    // 1. Solid Terrain Base underneath everything (Natural Green Turf / Prairie)
     final terrainColor = isDay
-        ? const Color(0xFF1E3A2B) // Rich natural green-slate turf
+        ? const Color(0xFF1E3A2B)
         : (isSunset ? const Color(0xFF281C16) : const Color(0xFF070B09));
     final terrainPaint = Paint()
       ..color = terrainColor
@@ -2035,10 +2141,10 @@ class _TestDriveScenePainter extends CustomPainter {
       canvas,
       viewProj,
       size,
-      Vec3(-600, groundY - 0.05, zStart - 100),
-      Vec3(600, groundY - 0.05, zStart - 100),
-      Vec3(600, groundY - 0.05, zEnd + 100),
-      Vec3(-600, groundY - 0.05, zEnd + 100),
+      Vec3(-500, groundY - 0.05, zStart - 80),
+      Vec3(500, groundY - 0.05, zStart - 80),
+      Vec3(500, groundY - 0.05, zEnd + 80),
+      Vec3(-500, groundY - 0.05, zEnd + 80),
       terrainPaint,
     );
 
@@ -2068,95 +2174,102 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0xFFF8FAFC)
       ..style = PaintingStyle.fill;
 
-    for (var z = zStart; z < zEnd; z += sliceLen) {
-      final z0 = z;
-      final z1 = z + sliceLen;
+    // 2. Continuous Runoff Shoulders (Left & Right)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, zStart),
+      Vec3(-trackWidth - curbWidth, groundY, zStart),
+      Vec3(-trackWidth - curbWidth, groundY, zEnd),
+      Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, zEnd),
+      shoulderPaint,
+    );
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(trackWidth + curbWidth, groundY, zStart),
+      Vec3(trackWidth + curbWidth + shoulderWidth, groundY, zStart),
+      Vec3(trackWidth + curbWidth + shoulderWidth, groundY, zEnd),
+      Vec3(trackWidth + curbWidth, groundY, zEnd),
+      shoulderPaint,
+    );
 
-      // 1. Asphalt Shoulder Runoff (Left & Right)
+    // 3. Continuous Main Asphalt Roadbed
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-trackWidth, groundY, zStart),
+      Vec3(trackWidth, groundY, zStart),
+      Vec3(trackWidth, groundY, zEnd),
+      Vec3(-trackWidth, groundY, zEnd),
+      asphaltPaint,
+    );
+
+    // 4. White boundary lines (continuous)
+    _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, zStart),
+        Vec3(-trackWidth, groundY, zEnd), edgeLinePaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, zStart),
+        Vec3(trackWidth, groundY, zEnd), edgeLinePaint);
+
+    // 5. FIA Curbs: only drawn in visible range near the vehicle (saving 80+ draw calls)
+    final curbZStart = (centerZ - 42.0).clamp(zStart, zEnd);
+    final curbZEnd = (centerZ + 28.0).clamp(zStart, zEnd);
+    const curbStep = 2.8;
+    for (var cz = curbZStart; cz < curbZEnd; cz += curbStep) {
+      final cz1 = cz + curbStep;
+      final isRed = ((cz / curbStep).round() % 2 == 0);
+      final curbColor = isRed ? redCurbPaint : whiteCurbPaint;
+
       _drawQuad(
         canvas,
         viewProj,
         size,
-        Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, z0),
-        Vec3(-trackWidth - curbWidth, groundY, z0),
-        Vec3(-trackWidth - curbWidth, groundY, z1),
-        Vec3(-trackWidth - curbWidth - shoulderWidth, groundY, z1),
-        shoulderPaint,
+        Vec3(-trackWidth - curbWidth, groundY, cz),
+        Vec3(-trackWidth, groundY, cz),
+        Vec3(-trackWidth, groundY, cz1),
+        Vec3(-trackWidth - curbWidth, groundY, cz1),
+        curbColor,
       );
       _drawQuad(
         canvas,
         viewProj,
         size,
-        Vec3(trackWidth + curbWidth, groundY, z0),
-        Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z0),
-        Vec3(trackWidth + curbWidth + shoulderWidth, groundY, z1),
-        Vec3(trackWidth + curbWidth, groundY, z1),
-        shoulderPaint,
+        Vec3(trackWidth, groundY, cz),
+        Vec3(trackWidth + curbWidth, groundY, cz),
+        Vec3(trackWidth + curbWidth, groundY, cz1),
+        Vec3(trackWidth, groundY, cz1),
+        curbColor,
       );
-
-      // 2. Main Asphalt Roadbed
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z1),
-        Vec3(-trackWidth, groundY, z1),
-        asphaltPaint,
-      );
-
-      // 3. FIA Curbs (Alternating Red & White every 2m)
-      const curbStep = 2.0;
-      for (var cz = z0; cz < z1; cz += curbStep) {
-        final cz1 = cz + curbStep;
-        final isRed = ((cz / curbStep).round() % 2 == 0);
-        final curbColor = isRed ? redCurbPaint : whiteCurbPaint;
-
-        _drawQuad(
-          canvas,
-          viewProj,
-          size,
-          Vec3(-trackWidth - curbWidth, groundY, cz),
-          Vec3(-trackWidth, groundY, cz),
-          Vec3(-trackWidth, groundY, cz1),
-          Vec3(-trackWidth - curbWidth, groundY, cz1),
-          curbColor,
-        );
-        _drawQuad(
-          canvas,
-          viewProj,
-          size,
-          Vec3(trackWidth, groundY, cz),
-          Vec3(trackWidth + curbWidth, groundY, cz),
-          Vec3(trackWidth + curbWidth, groundY, cz1),
-          Vec3(trackWidth, groundY, cz1),
-          curbColor,
-        );
-      }
-
-      // 4. White boundary lines
-      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
-          Vec3(-trackWidth, groundY, z1), edgeLinePaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
-          Vec3(trackWidth, groundY, z1), edgeLinePaint);
-
-      // 5. Center dashed line
-      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
-          Vec3(0, groundY, z0 + sliceLen * 0.55), centerDashPaint);
     }
 
-    // 6. Checkered Start Line (if within range of start grid at Z = 24)
-    if ((centerZ - 24.0).abs() < 140.0) {
+    // 6. Center dashed line: within visible range
+    final dashZStart = (centerZ - 54.0).clamp(zStart, zEnd);
+    final dashZEnd = (centerZ + 36.0).clamp(zStart, zEnd);
+    const dashLen = 4.5;
+    const dashGap = 4.5;
+    const dashCycle = dashLen + dashGap;
+    final firstDash = (dashZStart / dashCycle).floor() * dashCycle;
+    for (var dz = firstDash; dz < dashZEnd; dz += dashCycle) {
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, dz),
+          Vec3(0, groundY, dz + dashLen), centerDashPaint);
+    }
+
+    // 7. Checkered Start Line (if within range of start grid at Z = 24)
+    if ((centerZ - 24.0).abs() < 100.0) {
       _drawCheckeredLine(canvas, viewProj, size, groundY, 24.0, trackWidth);
     }
 
-    // 7. Distance marker boards every 50m
+    // 8. Distance marker boards (in view range)
     final minBoardZ = ((zStart / 50).floor() * 50).toDouble();
     final maxBoardZ = ((zEnd / 50).ceil() * 50).toDouble();
     for (var bz = minBoardZ; bz <= maxBoardZ; bz += 50.0) {
-      _drawDistanceBoard(
-          canvas, viewProj, size, groundY, bz, trackWidth + curbWidth + 2.5);
+      if ((bz - centerZ).abs() < 90.0) {
+        _drawDistanceBoard(
+            canvas, viewProj, size, groundY, bz, trackWidth + curbWidth + 2.5);
+      }
     }
   }
 
@@ -2218,55 +2331,58 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0x4094A3B8)
       ..strokeWidth = 1.4;
 
-    for (var z = zStart; z < zEnd; z += sliceLen) {
-      final z0 = z;
-      final z1 = z + sliceLen;
+    // Gravel Safety Runoff Shoulders (Continuous Quads)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-padWidth - runoffWidth, groundY, zStart),
+      Vec3(-padWidth, groundY, zStart),
+      Vec3(-padWidth, groundY, zEnd),
+      Vec3(-padWidth - runoffWidth, groundY, zEnd),
+      gravelPaint,
+    );
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(padWidth, groundY, zStart),
+      Vec3(padWidth + runoffWidth, groundY, zStart),
+      Vec3(padWidth + runoffWidth, groundY, zEnd),
+      Vec3(padWidth, groundY, zEnd),
+      gravelPaint,
+    );
 
-      // Gravel Safety Runoff Shoulders
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-padWidth - runoffWidth, groundY, z0),
-        Vec3(-padWidth, groundY, z0),
-        Vec3(-padWidth, groundY, z1),
-        Vec3(-padWidth - runoffWidth, groundY, z1),
-        gravelPaint,
-      );
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(padWidth, groundY, z0),
-        Vec3(padWidth + runoffWidth, groundY, z0),
-        Vec3(padWidth + runoffWidth, groundY, z1),
-        Vec3(padWidth, groundY, z1),
-        gravelPaint,
-      );
+    // Main Proving Tarmac Pad (Continuous Quad)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-padWidth, groundY, zStart),
+      Vec3(padWidth, groundY, zStart),
+      Vec3(padWidth, groundY, zEnd),
+      Vec3(-padWidth, groundY, zEnd),
+      asphaltPaint,
+    );
 
-      // Main Proving Tarmac Pad
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-padWidth, groundY, z0),
-        Vec3(padWidth, groundY, z0),
-        Vec3(padWidth, groundY, z1),
-        Vec3(-padWidth, groundY, z1),
-        asphaltPaint,
-      );
+    // Perimeter boundary lines (Continuous Lines)
+    _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, zStart),
+        Vec3(-padWidth, groundY, zEnd), borderPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(padWidth, groundY, zStart),
+        Vec3(padWidth, groundY, zEnd), borderPaint);
 
-      // Perimeter boundary lines
-      _drawClippedLine(canvas, viewProj, size, Vec3(-padWidth, groundY, z0),
-          Vec3(-padWidth, groundY, z1), borderPaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(padWidth, groundY, z0),
-          Vec3(padWidth, groundY, z1), borderPaint);
-
-      // Slalom & Sprint lane dashed dividers
-      _drawClippedLine(canvas, viewProj, size, Vec3(-35.0, groundY, z0),
-          Vec3(-35.0, groundY, z0 + sliceLen * 0.5), guidePaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(35.0, groundY, z0),
-          Vec3(35.0, groundY, z0 + sliceLen * 0.5), guidePaint);
+    // Slalom & Sprint lane dashed dividers (Rendered only within visible proximity)
+    final dashZStart = (centerZ - 60.0).clamp(zStart, zEnd);
+    final dashZEnd = (centerZ + 40.0).clamp(zStart, zEnd);
+    const dashLen = 5.0;
+    const dashGap = 5.0;
+    const dashCycle = dashLen + dashGap;
+    final firstDash = (dashZStart / dashCycle).floor() * dashCycle;
+    for (var dz = firstDash; dz < dashZEnd; dz += dashCycle) {
+      _drawClippedLine(canvas, viewProj, size, Vec3(-35.0, groundY, dz),
+          Vec3(-35.0, groundY, dz + dashLen), guidePaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(35.0, groundY, dz),
+          Vec3(35.0, groundY, dz + dashLen), guidePaint);
     }
 
     // Transverse Distance Marks every 40m across the pad
@@ -2475,76 +2591,71 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0xFFF8FAFC)
       ..strokeWidth = 2.0;
 
-    for (var z = zStart; z < zEnd; z += sliceLen) {
-      final z0 = z;
-      final z1 = z + sliceLen;
+    // Outer Gravel Trap (Continuous Quads)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, zStart),
+      Vec3(-stripWidth - shoulderWidth, groundY, zStart),
+      Vec3(-stripWidth - shoulderWidth, groundY, zEnd),
+      Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, zEnd),
+      gravelPaint,
+    );
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(stripWidth + shoulderWidth, groundY, zStart),
+      Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, zStart),
+      Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, zEnd),
+      Vec3(stripWidth + shoulderWidth, groundY, zEnd),
+      gravelPaint,
+    );
 
-      // Outer Gravel Trap
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, z0),
-        Vec3(-stripWidth - shoulderWidth, groundY, z0),
-        Vec3(-stripWidth - shoulderWidth, groundY, z1),
-        Vec3(-stripWidth - shoulderWidth - gravelWidth, groundY, z1),
-        gravelPaint,
-      );
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(stripWidth + shoulderWidth, groundY, z0),
-        Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, z0),
-        Vec3(stripWidth + shoulderWidth + gravelWidth, groundY, z1),
-        Vec3(stripWidth + shoulderWidth, groundY, z1),
-        gravelPaint,
-      );
+    // Runway Shoulder (Continuous Quads)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-stripWidth - shoulderWidth, groundY, zStart),
+      Vec3(-stripWidth, groundY, zStart),
+      Vec3(-stripWidth, groundY, zEnd),
+      Vec3(-stripWidth - shoulderWidth, groundY, zEnd),
+      shoulderPaint,
+    );
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(stripWidth, groundY, zStart),
+      Vec3(stripWidth + shoulderWidth, groundY, zStart),
+      Vec3(stripWidth + shoulderWidth, groundY, zEnd),
+      Vec3(stripWidth, groundY, zEnd),
+      shoulderPaint,
+    );
 
-      // Runway Shoulder
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-stripWidth - shoulderWidth, groundY, z0),
-        Vec3(-stripWidth, groundY, z0),
-        Vec3(-stripWidth, groundY, z1),
-        Vec3(-stripWidth - shoulderWidth, groundY, z1),
-        shoulderPaint,
-      );
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(stripWidth, groundY, z0),
-        Vec3(stripWidth + shoulderWidth, groundY, z0),
-        Vec3(stripWidth + shoulderWidth, groundY, z1),
-        Vec3(stripWidth, groundY, z1),
-        shoulderPaint,
-      );
+    // Main strip (Continuous Quad)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-stripWidth, groundY, zStart),
+      Vec3(stripWidth, groundY, zStart),
+      Vec3(stripWidth, groundY, zEnd),
+      Vec3(-stripWidth, groundY, zEnd),
+      asphaltPaint,
+    );
 
-      // Main strip
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-stripWidth, groundY, z0),
-        Vec3(stripWidth, groundY, z0),
-        Vec3(stripWidth, groundY, z1),
-        Vec3(-stripWidth, groundY, z1),
-        asphaltPaint,
-      );
+    // Center divider solid line
+    _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, zStart),
+        Vec3(0, groundY, zEnd), yellowLinePaint);
 
-      // Center divider solid line
-      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
-          Vec3(0, groundY, z1), yellowLinePaint);
-
-      // Outer boundary white lines
-      _drawClippedLine(canvas, viewProj, size, Vec3(-stripWidth, groundY, z0),
-          Vec3(-stripWidth, groundY, z1), whiteLinePaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(stripWidth, groundY, z0),
-          Vec3(stripWidth, groundY, z1), whiteLinePaint);
-    }
+    // Outer boundary white lines
+    _drawClippedLine(canvas, viewProj, size, Vec3(-stripWidth, groundY, zStart),
+        Vec3(-stripWidth, groundY, zEnd), whiteLinePaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(stripWidth, groundY, zStart),
+        Vec3(stripWidth, groundY, zEnd), whiteLinePaint);
 
     // Staging launch box at Z = 24 if in range
     if ((centerZ - 24.0).abs() < 140.0) {
@@ -2609,12 +2720,6 @@ class _TestDriveScenePainter extends CustomPainter {
     final trackBasePaint = Paint()
       ..color = const Color(0xFF05120A)
       ..style = PaintingStyle.fill;
-    final tileA = Paint()
-      ..color = const Color(0x1810B981)
-      ..style = PaintingStyle.fill;
-    final tileB = Paint()
-      ..color = const Color(0x0610B981)
-      ..style = PaintingStyle.fill;
 
     final glowBorderPaint = Paint()
       ..color = const Color(0x5534D399)
@@ -2634,55 +2739,41 @@ class _TestDriveScenePainter extends CustomPainter {
       ..color = const Color(0x5006B6D4)
       ..strokeWidth = 1.2;
 
-    for (var z = zStart; z < zEnd; z += sliceLen) {
-      final z0 = z;
-      final z1 = z + sliceLen;
+    // Dark carbon road bed (Continuous Quad)
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      Vec3(-trackWidth, groundY, zStart),
+      Vec3(trackWidth, groundY, zStart),
+      Vec3(trackWidth, groundY, zEnd),
+      Vec3(-trackWidth, groundY, zEnd),
+      trackBasePaint,
+    );
 
-      // Dark carbon road bed
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z1),
-        Vec3(-trackWidth, groundY, z1),
-        trackBasePaint,
-      );
+    // Glowing Neon Boundary Laser Lines (Continuous Lines)
+    _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, zStart),
+        Vec3(-trackWidth, groundY, zEnd), glowBorderPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, zStart),
+        Vec3(-trackWidth, groundY, zEnd), laserBorderPaint);
 
-      // Alternating luminescent grid cell quads
-      final isEven = ((z / sliceLen).floor() % 2 == 0);
-      _drawQuad(
-        canvas,
-        viewProj,
-        size,
-        Vec3(-trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z0),
-        Vec3(trackWidth, groundY, z1),
-        Vec3(-trackWidth, groundY, z1),
-        isEven ? tileA : tileB,
-      );
+    _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, zStart),
+        Vec3(trackWidth, groundY, zEnd), glowBorderPaint);
+    _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, zStart),
+        Vec3(trackWidth, groundY, zEnd), laserBorderPaint);
 
-      // Glowing Neon Boundary Laser Lines
-      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
-          Vec3(-trackWidth, groundY, z1), glowBorderPaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, z0),
-          Vec3(-trackWidth, groundY, z1), laserBorderPaint);
+    // Center glowing pulse line & lane lines (Visible range only)
+    final cyberZStart = (centerZ - 50.0).clamp(zStart, zEnd);
+    final cyberZEnd = (centerZ + 35.0).clamp(zStart, zEnd);
+    final firstCyber = (cyberZStart / sliceLen).floor() * sliceLen;
+    for (var cz = firstCyber; cz < cyberZEnd; cz += sliceLen) {
+      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, cz),
+          Vec3(0, groundY, cz + sliceLen * 0.6), centerPulsePaint);
 
-      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
-          Vec3(trackWidth, groundY, z1), glowBorderPaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(trackWidth, groundY, z0),
-          Vec3(trackWidth, groundY, z1), laserBorderPaint);
-
-      // Center glowing pulse line
-      _drawClippedLine(canvas, viewProj, size, Vec3(0, groundY, z0),
-          Vec3(0, groundY, z0 + sliceLen * 0.6), centerPulsePaint);
-
-      // Secondary lane lines at X = -6 and X = +6
-      _drawClippedLine(canvas, viewProj, size, Vec3(-6.0, groundY, z0),
-          Vec3(-6.0, groundY, z0 + sliceLen * 0.45), laneDividerPaint);
-      _drawClippedLine(canvas, viewProj, size, Vec3(6.0, groundY, z0),
-          Vec3(6.0, groundY, z0 + sliceLen * 0.45), laneDividerPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(-6.0, groundY, cz),
+          Vec3(-6.0, groundY, cz + sliceLen * 0.45), laneDividerPaint);
+      _drawClippedLine(canvas, viewProj, size, Vec3(6.0, groundY, cz),
+          Vec3(6.0, groundY, cz + sliceLen * 0.45), laneDividerPaint);
     }
 
     // 4. Holographic Directional Chevrons every 32m
@@ -2817,6 +2908,8 @@ class _TestDriveScenePainter extends CustomPainter {
   void _drawVehicle(
     Canvas canvas,
     Size size,
+    Mat4 viewProj,
+    Vec3 eye,
     Offset? Function(Vec3) project,
   ) {
     // Construct vehicle world transformation matrix
@@ -2848,15 +2941,695 @@ class _TestDriveScenePainter extends CustomPainter {
     // Contact shadow under vehicle chassis onto asphalt
     _drawVehicleContactShadow(canvas, vehicleMatrix, project);
 
-    if (model != null && model!.instances.isNotEmpty) {
-      _drawModelGeometry(canvas, vehicleMatrix, project);
-    } else {
-      _drawProceduralSportsCar(canvas, vehicleMatrix, project);
+    final showSolid = renderMode == TestDriveRenderMode.solid ||
+        renderMode == TestDriveRenderMode.hybrid;
+    final showWire = renderMode == TestDriveRenderMode.wireframe ||
+        renderMode == TestDriveRenderMode.hybrid;
+
+    if (showSolid) {
+      if (model != null && model!.instances.isNotEmpty) {
+        _drawModelSolid(canvas, size, vehicleMatrix, rot, viewProj, eye);
+      } else {
+        _drawProceduralSolidCar(
+            canvas, size, vehicleMatrix, rot, viewProj, eye, project);
+      }
+    }
+
+    if (showWire) {
+      if (model != null && model!.instances.isNotEmpty) {
+        _drawModelGeometry(canvas, vehicleMatrix, project);
+      } else {
+        _drawProceduralSportsCar(canvas, vehicleMatrix, project);
+      }
+    }
+
+    // Emergency Siren Strobe (Police / Safety Car lights)
+    if (sirenEnabled) {
+      _drawEmergencySirenStrobe(canvas, vehicleMatrix, project);
     }
 
     // Draw headlight glow beams
     if (lighting != TestDriveLighting.day) {
       _drawHeadlightBeams(canvas, vehicleMatrix, project);
+    }
+  }
+
+  void _drawEmergencySirenStrobe(
+    Canvas canvas,
+    Mat4 vehicleMatrix,
+    Offset? Function(Vec3) project,
+  ) {
+    // Red on left (-0.28), Blue on right (+0.28)
+    final timeMs = DateTime.now().millisecondsSinceEpoch;
+    final flashCycle = (timeMs / 120).floor() % 4;
+    final redActive = flashCycle == 0 || flashCycle == 1;
+    final blueActive = flashCycle == 2 || flashCycle == 3;
+
+    final redPos = vehicleMatrix.transformPoint(const Vec3(-0.30, 1.35, 0.28));
+    final bluePos = vehicleMatrix.transformPoint(const Vec3(0.30, 1.35, 0.28));
+    final barMid = vehicleMatrix.transformPoint(const Vec3(0.0, 1.33, 0.28));
+
+    final pRed = project(redPos);
+    final pBlue = project(bluePos);
+    final pBar = project(barMid);
+
+    if (pBar != null) {
+      final barPaint = Paint()
+        ..color = const Color(0xFF1E293B)
+        ..strokeWidth = 3.5;
+      if (pRed != null && pBlue != null) {
+        canvas.drawLine(pRed, pBlue, barPaint);
+      }
+
+      if (pRed != null) {
+        final redColor = redActive ? const Color(0xFFFF1744) : const Color(0x60800010);
+        final redGlow = Paint()
+          ..color = redActive ? const Color(0x90FF1744) : const Color(0x00000000)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+        if (redActive) {
+          canvas.drawCircle(pRed, 12, redGlow);
+        }
+        canvas.drawCircle(pRed, 4.5, Paint()..color = redColor);
+      }
+
+      if (pBlue != null) {
+        final blueColor = blueActive ? const Color(0xFF00E5FF) : const Color(0x60002860);
+        final blueGlow = Paint()
+          ..color = blueActive ? const Color(0x9000E5FF) : const Color(0x00000000)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+        if (blueActive) {
+          canvas.drawCircle(pBlue, 12, blueGlow);
+        }
+        canvas.drawCircle(pBlue, 4.5, Paint()..color = blueColor);
+      }
+    }
+  }
+
+  void _drawModelSolid(
+    Canvas canvas,
+    Size size,
+    Mat4 vehicleMatrix,
+    Mat4 rot,
+    Mat4 viewProj,
+    Vec3 eye,
+  ) {
+    final scene = SolidScene.of(model!);
+    if (scene.isEmpty) {
+      _drawModelGeometry(canvas, vehicleMatrix, (p) {
+        final clip = viewProj.transformClip(p);
+        if (clip[3] <= 0.05) return null;
+        final sx = (clip[0] / clip[3] * 0.5 + 0.5) * size.width;
+        final sy = (1.0 - (clip[1] / clip[3] * 0.5 + 0.5)) * size.height;
+        return Offset(sx, sy);
+      });
+      return;
+    }
+
+    final mesh = scene.interactive;
+    final triCount = mesh.triangleCount;
+    if (triCount == 0) return;
+
+    final mbb = model!.worldBBox;
+    final alignOffset = Vec3(-mbb.center.x, -mbb.lo.y + 0.05, -mbb.center.z);
+    final alignMatrix = Mat4([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      alignOffset.x, alignOffset.y, alignOffset.z, 1,
+    ]);
+
+    final carModelMatrix = vehicleMatrix * alignMatrix;
+    final carViewProj = viewProj * carModelMatrix;
+
+    // Lighting setup according to TestDriveLighting
+    final (
+      worldKeyLight,
+      worldFillLight,
+      worldRimLight,
+      keyIntensity,
+      fillIntensity,
+      rimIntensity,
+      ambientBase,
+      ambientScale,
+    ) = switch (lighting) {
+      TestDriveLighting.day => (
+        const Vec3(-0.55, 0.90, 0.20).normalized,
+        const Vec3(0.50, 0.35, -0.40).normalized,
+        const Vec3(0.20, 0.45, -0.80).normalized,
+        0.82,
+        0.30,
+        0.22,
+        0.32,
+        0.16,
+      ),
+      TestDriveLighting.sunset => (
+        const Vec3(-0.70, 0.40, 0.50).normalized,
+        const Vec3(0.60, 0.30, -0.30).normalized,
+        const Vec3(0.10, 0.50, -0.70).normalized,
+        0.78,
+        0.25,
+        0.30,
+        0.26,
+        0.12,
+      ),
+      TestDriveLighting.night => (
+        const Vec3(0.35, 0.65, -0.65).normalized,
+        const Vec3(-0.45, 0.35, 0.40).normalized,
+        const Vec3(-0.20, 0.50, -0.80).normalized,
+        0.65,
+        0.15,
+        0.35,
+        0.15,
+        0.08,
+      ),
+    };
+
+    // Transform directional lights to model local space via rot.transpose
+    final rm = rot.m;
+    Vec3 rotTranspose(Vec3 v) => Vec3(
+      rm[0] * v.x + rm[1] * v.y + rm[2] * v.z,
+      rm[4] * v.x + rm[5] * v.y + rm[6] * v.z,
+      rm[8] * v.x + rm[9] * v.y + rm[10] * v.z,
+    );
+
+    final keyLight = rotTranspose(worldKeyLight);
+    final fillLight = rotTranspose(worldFillLight);
+    final rimLight = rotTranspose(worldRimLight);
+
+    // Transform camera eye to model local space
+    final dEye = eye - sim.position;
+    final localEyeUnshifted = rotTranspose(dEye);
+    final localEye = localEyeUnshifted - alignOffset;
+
+    // 1. Project all vertices with carViewProj
+    final m = carViewProj.m;
+    final m0 = m[0], m1 = m[1], m3 = m[3];
+    final m4 = m[4], m5 = m[5], m7 = m[7];
+    final m8 = m[8], m9 = m[9], m11 = m[11];
+    final m12 = m[12], m13 = m[13], m15 = m[15];
+    final width = size.width;
+    final height = size.height;
+    const near = 0.05;
+
+    final pos = mesh.positions;
+    final sx = mesh.screenX, sy = mesh.screenY, sw = mesh.screenW;
+    for (var v = 0, p = 0; v < mesh.vertexCount; v++, p += 3) {
+      final x = pos[p], y = pos[p + 1], z = pos[p + 2];
+      final w = m3 * x + m7 * y + m11 * z + m15;
+      sw[v] = w;
+      if (w > near) {
+        final invW = 1.0 / w;
+        final cx = m0 * x + m4 * y + m8 * z + m12;
+        final cy = m1 * x + m5 * y + m9 * z + m13;
+        sx[v] = (cx * invW * 0.5 + 0.5) * width;
+        sy[v] = (1.0 - (cy * invW * 0.5 + 0.5)) * height;
+      }
+    }
+
+    // 2. Cull, shade, and record visible triangles
+    final normals = mesh.normals;
+    final centroids = mesh.centroids;
+    final indices = mesh.indices;
+    final triKind = mesh.triKind;
+    final triColor = mesh.triColor;
+    final visTri = mesh.visTri;
+    final visColor = mesh.visColor;
+    final visDepth = mesh.visDepth;
+
+    final kindColors = <int>[
+      0xFFD6DBDF, // 0: solidKindBody
+      0xCC162832, // 1: solidKindGlass
+      0xFF191C1E, // 2: solidKindWheel
+      0xFFC8D1D7, // 3: solidKindRim
+      0xFF1F2327, // 4: solidKindInterior
+      0xFF202428, // 5: solidKindTrim
+      0xFFE8F4FC, // 6: solidKindHeadlight
+      0xFFDC2626, // 7: solidKindTaillight
+      0xFF181A1C, // 8: solidKindChassis
+    ];
+
+    var visCount = 0;
+    var minDepth = double.infinity;
+    var maxDepth = double.negativeInfinity;
+
+    for (var t = 0; t < triCount; t++) {
+      final t3 = t * 3;
+      final nx = normals[t3], ny = normals[t3 + 1], nz = normals[t3 + 2];
+      final cx = centroids[t3], cy = centroids[t3 + 1], cz = centroids[t3 + 2];
+
+      final toEyeX = localEye.x - cx;
+      final toEyeY = localEye.y - cy;
+      final toEyeZ = localEye.z - cz;
+
+      final dotEye = nx * toEyeX + ny * toEyeY + nz * toEyeZ;
+      final isDoubleSided = triKind[t] == 1 ||
+          triKind[t] == 4 ||
+          triKind[t] == 5 ||
+          triKind[t] == 6 ||
+          triKind[t] == 7 ||
+          triKind[t] == 8 ||
+          (triColor[t] != 0 && (triColor[t] & 0xFF000000) != 0xFF000000);
+      if (dotEye <= 0.0 && !isDoubleSided) continue;
+
+      final effNx = dotEye < 0.0 ? -nx : nx;
+      final effNy = dotEye < 0.0 ? -ny : ny;
+      final effNz = dotEye < 0.0 ? -nz : nz;
+
+      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
+      if (sw[ia] <= near || sw[ib] <= near || sw[ic] <= near) continue;
+
+      final x0 = sx[ia], y0 = sy[ia];
+      final x1 = sx[ib], y1 = sy[ib];
+      final x2 = sx[ic], y2 = sy[ic];
+
+      // Off-screen culling
+      if (max(x0, max(x1, x2)) < 0 || min(x0, min(x1, x2)) > width) continue;
+      if (max(y0, max(y1, y2)) < 0 || min(y0, min(y1, y2)) > height) continue;
+
+      final area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+      if (area.abs() < 1e-6) continue;
+
+      final eyeDistSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
+      if (eyeDistSq < 1e-12) continue;
+      final invEye = 1.0 / sqrt(eyeDistSq);
+      final ex = toEyeX * invEye;
+      final ey = toEyeY * invEye;
+      final ez = toEyeZ * invEye;
+
+      final materialColor = triColor[t];
+      final int base;
+      if (materialColor != 0) {
+        base = materialColor;
+      } else {
+        final k = triKind[t];
+        if (k < kindColors.length) {
+          base = kindColors[k];
+        } else {
+          base = 0xFFD6DBDF;
+        }
+      }
+
+      final dotKey = effNx * keyLight.x + effNy * keyLight.y + effNz * keyLight.z;
+      final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
+      final dotFill = effNx * fillLight.x + effNy * fillLight.y + effNz * fillLight.z;
+      final diffuseFill = dotFill > 0.0 ? dotFill : 0.0;
+      final dotRim = effNx * rimLight.x + effNy * rimLight.y + effNz * rimLight.z;
+      final diffuseRim = dotRim > 0.0 ? dotRim : 0.0;
+
+      var ambient = ambientBase + ambientScale * effNy;
+      if (ambient < 0.20) ambient = 0.20;
+      if (ambient > 0.45) ambient = 0.45;
+
+      var diffuse = ambient +
+          diffuseKey * keyIntensity +
+          diffuseFill * fillIntensity +
+          diffuseRim * rimIntensity;
+      if (diffuse < 0.25) diffuse = 0.25;
+      if (diffuse > 1.05) diffuse = 1.05;
+
+      // Specular highlight
+      final hx = keyLight.x + ex, hy = keyLight.y + ey, hz = keyLight.z + ez;
+      final hLenSq = hx * hx + hy * hy + hz * hz;
+      var specKey = 0.0;
+      if (hLenSq > 1e-6) {
+        final invH = 1.0 / sqrt(hLenSq);
+        final ndoth = effNx * hx * invH + effNy * hy * invH + effNz * hz * invH;
+        if (ndoth > 0.0) {
+          final s2 = ndoth * ndoth;
+          final s4 = s2 * s2;
+          final s8 = s4 * s4;
+          final s16 = s8 * s8;
+          final s32 = s16 * s16;
+          specKey = s32 * 0.35;
+        }
+      }
+
+      final whiteGloss = specKey * 255.0;
+      final baseR = (base >> 16) & 0xFF;
+      final baseG = (base >> 8) & 0xFF;
+      final baseB = base & 0xFF;
+
+      final r = (baseR * diffuse + whiteGloss).round().clamp(0, 255);
+      final g = (baseG * diffuse + whiteGloss).round().clamp(0, 255);
+      final b = (baseB * diffuse + whiteGloss).round().clamp(0, 255);
+      final argb = (base & 0xFF000000) | (r << 16) | (g << 8) | b;
+
+      final depth = m3 * cx + m7 * cy + m11 * cz + m15;
+      visTri[visCount] = t;
+      visColor[visCount] = argb;
+      visDepth[visCount] = depth;
+      if (depth < minDepth) minDepth = depth;
+      if (depth > maxDepth) maxDepth = depth;
+      visCount++;
+    }
+
+    if (visCount == 0) return;
+
+    // 3. Bucket sort on view depth (O(n))
+    const bucketCount = 16384;
+    final range = maxDepth - minDepth;
+    final scale = range > 1e-9 ? (bucketCount - 1) / range : 0.0;
+    final visBucket = mesh.visBucket;
+    final cursor = Int32List(bucketCount + 1);
+    for (var i = 0; i < visCount; i++) {
+      var bucket = ((maxDepth - visDepth[i]) * scale).toInt();
+      if (bucket < 0) bucket = 0;
+      if (bucket > bucketCount - 1) bucket = bucketCount - 1;
+      visBucket[i] = bucket;
+      cursor[bucket + 1]++;
+    }
+    for (var b = 0; b < bucketCount; b++) {
+      cursor[b + 1] += cursor[b];
+    }
+    final order = mesh.sortedOrder;
+    for (var i = 0; i < visCount; i++) {
+      order[cursor[visBucket[i]]++] = i;
+    }
+
+    // 4. Emit sorted triangles to hardware vertex buffer
+    final drawPos = mesh.drawPositions;
+    final drawCol = mesh.drawColors;
+    for (var k = 0; k < visCount; k++) {
+      final i = order[k];
+      final t3 = visTri[i] * 3;
+      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
+      final p = k * 6;
+      drawPos[p] = sx[ia];
+      drawPos[p + 1] = sy[ia];
+      drawPos[p + 2] = sx[ib];
+      drawPos[p + 3] = sy[ib];
+      drawPos[p + 4] = sx[ic];
+      drawPos[p + 5] = sy[ic];
+      final c = k * 3;
+      final argb = visColor[i];
+      drawCol[c] = argb;
+      drawCol[c + 1] = argb;
+      drawCol[c + 2] = argb;
+    }
+
+    final paint = Paint();
+    const chunk = 20000;
+    for (var start = 0; start < visCount; start += chunk) {
+      final count = min(chunk, visCount - start);
+      final vertices = ui.Vertices.raw(
+        ui.VertexMode.triangles,
+        Float32List.sublistView(drawPos, start * 6, (start + count) * 6),
+        colors: Int32List.sublistView(drawCol, start * 3, (start + count) * 3),
+      );
+      canvas.drawVertices(vertices, BlendMode.dst, paint);
+    }
+  }
+
+  void _drawProceduralSolidCar(
+    Canvas canvas,
+    Size size,
+    Mat4 vehicleMatrix,
+    Mat4 rot,
+    Mat4 viewProj,
+    Vec3 eye,
+    Offset? Function(Vec3) project,
+  ) {
+    final isDay = lighting == TestDriveLighting.day;
+    final isSunset = lighting == TestDriveLighting.sunset;
+
+    final rm = rot.m;
+    Vec3 rotTranspose(Vec3 v) => Vec3(
+      rm[0] * v.x + rm[1] * v.y + rm[2] * v.z,
+      rm[4] * v.x + rm[5] * v.y + rm[6] * v.z,
+      rm[8] * v.x + rm[9] * v.y + rm[10] * v.z,
+    );
+
+    final worldKey = switch (lighting) {
+      TestDriveLighting.day => const Vec3(-0.55, 0.90, 0.20).normalized,
+      TestDriveLighting.sunset => const Vec3(-0.70, 0.40, 0.50).normalized,
+      TestDriveLighting.night => const Vec3(0.35, 0.65, -0.65).normalized,
+    };
+    final localKey = rotTranspose(worldKey);
+
+    Paint makeShadedPaint(Color base, Vec3 normal, {double shininess = 0.25}) {
+      final dot = (normal.x * localKey.x + normal.y * localKey.y + normal.z * localKey.z).clamp(0.0, 1.0);
+      final ambient = isDay ? 0.35 : (isSunset ? 0.25 : 0.15);
+      final diffuse = ambient + dot * (isDay ? 0.65 : (isSunset ? 0.55 : 0.45));
+      final baseVal = base.toARGB32();
+      final baseA = (baseVal >> 24) & 0xFF;
+      final baseR = (baseVal >> 16) & 0xFF;
+      final baseG = (baseVal >> 8) & 0xFF;
+      final baseB = baseVal & 0xFF;
+      final r = ((baseR * diffuse) + (dot > 0.85 ? 40 * shininess : 0)).round().clamp(0, 255);
+      final g = ((baseG * diffuse) + (dot > 0.85 ? 40 * shininess : 0)).round().clamp(0, 255);
+      final b = ((baseB * diffuse) + (dot > 0.85 ? 40 * shininess : 0)).round().clamp(0, 255);
+      return Paint()
+        ..color = Color.fromARGB(baseA, r, g, b)
+        ..style = PaintingStyle.fill;
+    }
+
+    final bodyColor = accentColor;
+    final glassColor = const Color(0xDD162832);
+    final darkTrimColor = const Color(0xFF1E293B);
+
+    // 1. Hood / Front Nose
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.68, -1.7)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.68, -1.7)),
+      vehicleMatrix.transformPoint(const Vec3(0.85, 0.85, -0.6)),
+      vehicleMatrix.transformPoint(const Vec3(-0.85, 0.85, -0.6)),
+      makeShadedPaint(bodyColor, const Vec3(0, 0.95, -0.3)),
+    );
+
+    // Front Bumper / Splitter Face
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.95, 0.22, -1.9)),
+      vehicleMatrix.transformPoint(const Vec3(0.95, 0.22, -1.9)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.68, -1.7)),
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.68, -1.7)),
+      makeShadedPaint(darkTrimColor, const Vec3(0, 0.2, -0.98)),
+    );
+
+    // 2. Windshield
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.85, 0.85, -0.6)),
+      vehicleMatrix.transformPoint(const Vec3(0.85, 0.85, -0.6)),
+      vehicleMatrix.transformPoint(const Vec3(0.68, 1.32, -0.2)),
+      vehicleMatrix.transformPoint(const Vec3(-0.68, 1.32, -0.2)),
+      makeShadedPaint(glassColor, const Vec3(0, 0.7, -0.7)),
+    );
+
+    // 3. Roof
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.68, 1.32, -0.2)),
+      vehicleMatrix.transformPoint(const Vec3(0.68, 1.32, -0.2)),
+      vehicleMatrix.transformPoint(const Vec3(0.68, 1.32, 0.75)),
+      vehicleMatrix.transformPoint(const Vec3(-0.68, 1.32, 0.75)),
+      makeShadedPaint(bodyColor, const Vec3(0, 1.0, 0)),
+    );
+
+    // 4. Rear Window
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.68, 1.32, 0.75)),
+      vehicleMatrix.transformPoint(const Vec3(0.68, 1.32, 0.75)),
+      vehicleMatrix.transformPoint(const Vec3(0.85, 0.85, 1.3)),
+      vehicleMatrix.transformPoint(const Vec3(-0.85, 0.85, 1.3)),
+      makeShadedPaint(glassColor, const Vec3(0, 0.7, 0.7)),
+    );
+
+    // 5. Engine Deck & Spoiler
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.85, 0.85, 1.3)),
+      vehicleMatrix.transformPoint(const Vec3(0.85, 0.85, 1.3)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.88, 1.85)),
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.88, 1.85)),
+      makeShadedPaint(bodyColor, const Vec3(0, 0.95, 0.3)),
+    );
+
+    // 6. Rear Bumper & Diffuser
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.88, 1.85)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.88, 1.85)),
+      vehicleMatrix.transformPoint(const Vec3(0.95, 0.22, 1.9)),
+      vehicleMatrix.transformPoint(const Vec3(-0.95, 0.22, 1.9)),
+      makeShadedPaint(darkTrimColor, const Vec3(0, -0.1, 0.99)),
+    );
+
+    // 7. Left Side Flank
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(-0.95, 0.22, -1.9)),
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.68, -1.7)),
+      vehicleMatrix.transformPoint(const Vec3(-0.90, 0.88, 1.85)),
+      vehicleMatrix.transformPoint(const Vec3(-0.95, 0.22, 1.9)),
+      makeShadedPaint(bodyColor, const Vec3(-1.0, 0, 0)),
+    );
+
+    // 8. Right Side Flank
+    _drawQuad(
+      canvas,
+      viewProj,
+      size,
+      vehicleMatrix.transformPoint(const Vec3(0.95, 0.22, -1.9)),
+      vehicleMatrix.transformPoint(const Vec3(0.95, 0.22, 1.9)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.88, 1.85)),
+      vehicleMatrix.transformPoint(const Vec3(0.90, 0.68, -1.7)),
+      makeShadedPaint(bodyColor, const Vec3(1.0, 0, 0)),
+    );
+
+    // 9. 4 Solid 3D Wheels with Alloy Rims, Calipers, Steering and Roll
+    final wheelPositions = [
+      assignedWheels['FL']?.worldPosition ?? (sim.wheelPositions.isNotEmpty ? sim.wheelPositions[0] : const Vec3(-0.95, 0.36, -1.25)),
+      assignedWheels['FR']?.worldPosition ?? (sim.wheelPositions.length > 1 ? sim.wheelPositions[1] : const Vec3(0.95, 0.36, -1.25)),
+      assignedWheels['RL']?.worldPosition ?? (sim.wheelPositions.length > 2 ? sim.wheelPositions[2] : const Vec3(-0.95, 0.36, 1.25)),
+      assignedWheels['RR']?.worldPosition ?? (sim.wheelPositions.length > 3 ? sim.wheelPositions[3] : const Vec3(0.95, 0.36, 1.25)),
+    ];
+
+    final wheelRadii = [
+      assignedWheels['FL']?.radius ?? 0.36,
+      assignedWheels['FR']?.radius ?? 0.36,
+      assignedWheels['RL']?.radius ?? 0.36,
+      assignedWheels['RR']?.radius ?? 0.36,
+    ];
+
+    final wheelWidths = [
+      assignedWheels['FL']?.width ?? 0.26,
+      assignedWheels['FR']?.width ?? 0.26,
+      assignedWheels['RL']?.width ?? 0.26,
+      assignedWheels['RR']?.width ?? 0.26,
+    ];
+
+    for (var i = 0; i < 4; i++) {
+      final isFront = i < 2;
+      final isLeft = (i % 2 == 0);
+      final r = wheelRadii[i].clamp(0.20, 0.55);
+      final w = wheelWidths[i].clamp(0.12, 0.40);
+      final roll = sim.position.z / r;
+      final steer = isFront ? sim.steerAngle : 0.0;
+
+      _drawSolidProceduralWheel(
+        canvas: canvas,
+        viewProj: viewProj,
+        size: size,
+        vehicleMatrix: vehicleMatrix,
+        localCenter: wheelPositions[i],
+        radius: r,
+        width: w,
+        steerAngle: steer,
+        rollAngle: roll,
+        isLeft: isLeft,
+      );
+    }
+  }
+
+  void _drawSolidProceduralWheel({
+    required Canvas canvas,
+    required Mat4 viewProj,
+    required Size size,
+    required Mat4 vehicleMatrix,
+    required Vec3 localCenter,
+    required double radius,
+    required double width,
+    required double steerAngle,
+    required double rollAngle,
+    required bool isLeft,
+  }) {
+    final cs = cos(steerAngle);
+    final ss = sin(steerAngle);
+    final hw = width * 0.5;
+
+    Vec3 toVehicleSpace(double x, double y, double z) {
+      final rx = x * cs + z * ss;
+      final rz = -x * ss + z * cs;
+      return Vec3(localCenter.x + rx, localCenter.y + y, localCenter.z + rz);
+    }
+
+    final tirePaint = Paint()
+      ..color = const Color(0xFF1E2225)
+      ..style = PaintingStyle.fill;
+    final rimPaint = Paint()
+      ..color = const Color(0xFFCBD5E1)
+      ..style = PaintingStyle.fill;
+    final hubPaint = Paint()
+      ..color = const Color(0xFF475569)
+      ..style = PaintingStyle.fill;
+    final caliperPaint = Paint()
+      ..color = const Color(0xFFDC2626)
+      ..style = PaintingStyle.fill;
+
+    // 1. Red Brake Caliper
+    final outX = isLeft ? -hw - 0.02 : hw + 0.02;
+    final inX = isLeft ? -0.02 : 0.02;
+    final cal0 = vehicleMatrix.transformPoint(toVehicleSpace(inX, radius * 0.45, -radius * 0.45));
+    final cal1 = vehicleMatrix.transformPoint(toVehicleSpace(outX, radius * 0.45, -radius * 0.45));
+    final cal2 = vehicleMatrix.transformPoint(toVehicleSpace(outX, radius * 0.75, -radius * 0.15));
+    final cal3 = vehicleMatrix.transformPoint(toVehicleSpace(inX, radius * 0.75, -radius * 0.15));
+    _drawQuad(canvas, viewProj, size, cal0, cal1, cal2, cal3, caliperPaint);
+
+    // 2. Outer Tire Tread Cylinder (10 segments)
+    const segments = 10;
+    final rimRadius = radius * 0.68;
+    final outerX = isLeft ? -hw : hw;
+    final innerX = isLeft ? hw : -hw;
+
+    for (var i = 0; i < segments; i++) {
+      final a0 = rollAngle + (i * 2 * pi / segments);
+      final a1 = rollAngle + ((i + 1) * 2 * pi / segments);
+
+      final y0 = radius * sin(a0);
+      final z0 = radius * cos(a0);
+      final y1 = radius * sin(a1);
+      final z1 = radius * cos(a1);
+
+      // Tread quad
+      final p0 = vehicleMatrix.transformPoint(toVehicleSpace(innerX, y0, z0));
+      final p1 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, y0, z0));
+      final p2 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, y1, z1));
+      final p3 = vehicleMatrix.transformPoint(toVehicleSpace(innerX, y1, z1));
+      _drawQuad(canvas, viewProj, size, p0, p1, p2, p3, tirePaint);
+
+      // Sidewall rim quad
+      final ry0 = rimRadius * sin(a0);
+      final rz0 = rimRadius * cos(a0);
+      final ry1 = rimRadius * sin(a1);
+      final rz1 = rimRadius * cos(a1);
+
+      final s0 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, ry0, rz0));
+      final s1 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, y0, z0));
+      final s2 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, y1, z1));
+      final s3 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, ry1, rz1));
+      _drawQuad(canvas, viewProj, size, s0, s1, s2, s3, tirePaint);
+
+      // Rim Face sector
+      final hubY0 = radius * 0.18 * sin(a0);
+      final hubZ0 = radius * 0.18 * cos(a0);
+      final hubY1 = radius * 0.18 * sin(a1);
+      final hubZ1 = radius * 0.18 * cos(a1);
+
+      final isSpoke = (i % 2 == 0);
+      final r0 = vehicleMatrix.transformPoint(toVehicleSpace(outerX + (isLeft ? -0.01 : 0.01), hubY0, hubZ0));
+      final r1 = vehicleMatrix.transformPoint(toVehicleSpace(outerX + (isLeft ? -0.01 : 0.01), ry0, rz0));
+      final r2 = vehicleMatrix.transformPoint(toVehicleSpace(outerX + (isLeft ? -0.01 : 0.01), ry1, rz1));
+      final r3 = vehicleMatrix.transformPoint(toVehicleSpace(outerX + (isLeft ? -0.01 : 0.01), hubY1, hubZ1));
+      _drawQuad(canvas, viewProj, size, r0, r1, r2, r3, isSpoke ? rimPaint : hubPaint);
     }
   }
 

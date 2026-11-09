@@ -13,6 +13,7 @@ import 'package:rig_car/physics_sim.dart';
 import 'package:rig_car/pre_rigged_cars.dart';
 import 'package:rig_car/solid_mesh_lod.dart';
 import 'package:rig_car/sketchfab_viewport.dart';
+import 'package:rig_car/test_drive_viewport.dart';
 import 'package:rig_car/wireframe_viewer.dart';
 
 void main() {
@@ -2322,6 +2323,112 @@ endsolid sports_car''';
       await tester.tap(forwardFinder);
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('▲ Forward (-Z)'), findsOneWidget);
+    });
+
+    testWidgets('renders TestDriveViewport with Solid view mode by default and applies all settings', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final testWheels = <String, DetectedWheel?>{
+        'FL': DetectedWheel(
+          nodeName: 'Wheel_FL',
+          worldPosition: const Vec3(-0.95, 0.36, -1.25),
+          radius: 0.36,
+          width: 0.28,
+          nodeIndex: 1,
+          confidence: 0.98,
+        ),
+        'FR': DetectedWheel(
+          nodeName: 'Wheel_FR',
+          worldPosition: const Vec3(0.95, 0.36, -1.25),
+          radius: 0.36,
+          width: 0.28,
+          nodeIndex: 2,
+          confidence: 0.98,
+        ),
+        'RL': DetectedWheel(
+          nodeName: 'Wheel_RL',
+          worldPosition: const Vec3(-0.95, 0.36, 1.25),
+          radius: 0.36,
+          width: 0.28,
+          nodeIndex: 3,
+          confidence: 0.98,
+        ),
+        'RR': DetectedWheel(
+          nodeName: 'Wheel_RR',
+          worldPosition: const Vec3(0.95, 0.36, 1.25),
+          radius: 0.36,
+          width: 0.28,
+          nodeIndex: 4,
+          confidence: 0.98,
+        ),
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TestDriveViewport(
+              mass: 1450,
+              engineForce: 620,
+              grip: 1.35,
+              suspension: 1.15,
+              centerOfMass: 0.35,
+              drive: 'AWD',
+              frontSteering: true,
+              rearSteering: false,
+              frontTraction: true,
+              rearTraction: true,
+              wheelPositions: const [
+                Vec3(-0.95, 0.36, -1.25),
+                Vec3(0.95, 0.36, -1.25),
+                Vec3(-0.95, 0.36, 1.25),
+                Vec3(0.95, 0.36, 1.25),
+              ],
+              steerAngle: 38.0,
+              springRestLength: 0.18,
+              springStiffness: 44.0,
+              dampingCompression: 2.6,
+              soundProfile: 'v10',
+              sirenEnabled: true,
+              assignedWheels: testWheels,
+              onExit: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Verifies Solid view is active by default
+      expect(find.text('SOLID'), findsOneWidget);
+
+      // Verifies HUD telemetry displays all applied settings: Drive, Mass, HP, Sound Profile, and Siren
+      expect(find.textContaining('AWD • 1450KG • 620HP • V10 • SIREN'), findsOneWidget);
+
+      // Verifies TopBar render mode selector allows switching to Wireframe and Hybrid
+      final renderModeBtn = find.text('SOLID');
+      await tester.tap(renderModeBtn, warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Wireframe'), findsWidgets);
+      expect(find.text('Hybrid'), findsWidgets);
+
+      // Select Wireframe
+      await tester.tap(find.text('Wireframe').last, warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('WIREFRAME'), findsOneWidget);
+
+      // Select Hybrid
+      await tester.tap(find.text('WIREFRAME'), warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Hybrid').last, warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('HYBRID'), findsOneWidget);
     });
   });
 }
