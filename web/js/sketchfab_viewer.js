@@ -495,6 +495,8 @@
   function applyLoadedModel(model, callback) {
     if (!scene) return;
     clearWheelDataAndMarkers();
+    detectedWheelData = null;
+    highlightWheelMeshes(false);
     if (modelPivotGroup) {
       scene.remove(modelPivotGroup);
       disposeObject(modelPivotGroup);
@@ -682,26 +684,43 @@
     const dist = Math.max(modelRadius * 2.6, 2.5);
     const cy = modelCenter ? modelCenter.y : 0.7;
 
-    switch (preset.toLowerCase()) {
+    const p = (preset || '').toLowerCase().trim();
+    switch (p) {
       case 'iso':
         camera.position.set(dist * 0.85, dist * 0.45, dist * 0.85);
         break;
       case 'front':
+      case '-z':
+      case '-z_axis':
         camera.position.set(0, cy, -dist);
         break;
       case 'back':
+      case 'rear':
+      case 'z':
+      case '+z':
+      case '+z_axis':
         camera.position.set(0, cy, dist);
         break;
       case 'left':
+      case '-x':
+      case '-x_axis':
         camera.position.set(-dist, cy, 0);
         break;
       case 'right':
+      case 'x':
+      case '+x':
+      case '+x_axis':
         camera.position.set(dist, cy, 0);
         break;
       case 'top':
+      case 'y':
+      case '+y':
+      case '+y_axis':
         camera.position.set(0, dist * 1.5, 0.001);
         break;
       case 'bottom':
+      case '-y':
+      case '-y_axis':
         camera.position.set(0, -dist * 1.5, 0.001);
         break;
     }
@@ -1575,15 +1594,14 @@
       }
     });
 
-    if (wheelNodeNames === false) return;
+    // If wheelNodeNames is false, null, undefined, or an empty list, NEVER highlight any meshes!
+    if (!wheelNodeNames || wheelNodeNames === false || (Array.isArray(wheelNodeNames) && wheelNodeNames.length === 0)) {
+      return;
+    }
 
     let targets = null;
     if (detectedWheelData && detectedWheelData.allWheelMeshes && detectedWheelData.allWheelMeshes.length > 0) {
       targets = new Set(detectedWheelData.allWheelMeshes);
-    }
-
-    if (!targets && (!wheelNodeNames || (Array.isArray(wheelNodeNames) && wheelNodeNames.length === 0))) {
-      return;
     }
 
     currentModel.traverse(function(child) {

@@ -973,12 +973,12 @@ void main() {
       expect(find.text('Procedural 3D Rig'), findsNothing);
       expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
       expect(find.byTooltip('Auto-rig vehicle'), findsNothing);
-      expect(find.text('ISO'), findsOneWidget);
+      expect(find.text('ISO'), findsWidgets);
       expect(find.byTooltip('Viewport lighting: Studio'), findsOneWidget);
       expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
 
       // Open camera angle dropdown and switch to Rear view
-      await tester.tap(find.text('ISO'));
+      await tester.tap(find.text('ISO').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Rear View (+Z)').last);
       await tester.pumpAndSettle();
@@ -1634,7 +1634,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
 
         expect(find.text('SOLID'), findsOneWidget);
-        expect(find.text('ISO'), findsOneWidget);
+        expect(find.text('ISO'), findsWidgets);
         expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
@@ -2179,6 +2179,98 @@ endsolid sports_car''';
       expect(find.text('Wheel_FR'), findsNothing);
       expect(find.byTooltip('Hide Markers'), findsNothing);
       expect(find.byTooltip('Show Markers'), findsNothing);
+    });
+
+    testWidgets('renders Blender-like X, Y, -X, -Y, Z, -Z navigation gizmo and snaps camera orientation on tap', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Verify Blender navigation gizmo buttons exist in 3D viewport
+      expect(find.text('X'), findsWidgets);
+      expect(find.text('-X'), findsOneWidget);
+      expect(find.text('Y'), findsWidgets);
+      expect(find.text('-Y'), findsOneWidget);
+      expect(find.text('Z'), findsWidgets);
+      expect(find.text('-Z'), findsOneWidget);
+      expect(find.text('ISO'), findsWidgets);
+
+      // Tap +X to align camera to Right Side (+X)
+      await tester.tap(find.text('X').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('RIGHT'), findsOneWidget);
+
+      // Tap -X to align camera to Left Side (-X)
+      await tester.tap(find.text('-X'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('LEFT'), findsOneWidget);
+
+      // Tap Y to align camera to Top View (+Y)
+      await tester.tap(find.text('Y').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('TOP'), findsOneWidget);
+
+      // Tap -Y to align camera to Bottom View (-Y)
+      await tester.tap(find.text('-Y'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('BOTTOM'), findsOneWidget);
+
+      // Tap -Z to align camera to Front View (-Z)
+      await tester.tap(find.text('-Z'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('FRONT'), findsOneWidget);
+
+      // Tap Z to align camera to Rear View (+Z)
+      await tester.tap(find.text('Z').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('BACK'), findsOneWidget);
+
+      // Tap ISO to return to Isometric View
+      await tester.tap(find.text('ISO').last);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ISO'), findsWidgets);
+    });
+
+    testWidgets('ensures wheels remain strictly un-highlighted until Start button is clicked', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Viewport should not show "Wheels" legend item yet
+      expect(find.text('Wheels'), findsNothing);
+
+      // Switch to Step 2 (Scan & Organize)
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Before clicking Start, Next button is disabled
+      final nextBtn = tester.widget<FilledButton>(
+        find.ancestor(of: find.text('Next: Add Physics'), matching: find.byType(FilledButton)),
+      );
+      expect(nextBtn.onPressed, isNull);
+
+      // Legend item "Wheels" is still NOT visible before clicking Start
+      expect(find.text('Wheels'), findsNothing);
+
+      // Now click Start to scan and highlight wheels
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      // After clicking Start, wheels legend is visible and Next button is enabled
+      expect(find.text('Wheels'), findsOneWidget);
+      final enabledNextBtn = tester.widget<FilledButton>(
+        find.ancestor(of: find.text('Next: Add Physics'), matching: find.byType(FilledButton)),
+      );
+      expect(enabledNextBtn.onPressed, isNotNull);
     });
   });
 }

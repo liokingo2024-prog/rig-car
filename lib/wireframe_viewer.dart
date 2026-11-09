@@ -216,6 +216,7 @@ class _WireframeViewerState extends State<WireframeViewer>
           _elevation = -1.35;
       }
     });
+    setSketchfabCameraPreset(preset.name);
   }
 
   void _toggleFullscreen() {
@@ -697,6 +698,18 @@ class _WireframeViewerState extends State<WireframeViewer>
                   ),
                 );
               },
+            ),
+          ),
+
+          // ── Blender 3D Orientation Navigation Gizmo ───────────────────────
+          Positioned(
+            top: 50,
+            right: 12,
+            child: _BlenderAxisGizmo(
+              azimuth: _azimuth,
+              elevation: _elevation,
+              activePreset: _preset,
+              onSelectPreset: _setPreset,
             ),
           ),
 
@@ -2127,10 +2140,10 @@ class _WireframeScenePainter extends CustomPainter {
       if (inst.nodeIndex == selectedNodeIndex || inst.nodeIndex == hoveredNodeIndex) {
         edgeColor = const Color(0xFF00E5FF);
         strokeWidth = 2.0;
-      } else if (wheelNodeSet.contains(inst.nodeIndex)) {
-        edgeColor = highlightWheels ? const Color(0xFF10B981) : wheelColor;
-        strokeWidth = highlightWheels ? 2.2 : 1.3;
-      } else if (inst.nodeIndex == selectedBodyNodeIndex) {
+      } else if (highlightWheels && wheelNodeSet.contains(inst.nodeIndex)) {
+        edgeColor = const Color(0xFF10B981);
+        strokeWidth = 2.2;
+      } else if (highlightWheels && inst.nodeIndex == selectedBodyNodeIndex) {
         edgeColor = bodyColor;
         strokeWidth = 1.1;
       } else {
@@ -2591,5 +2604,373 @@ class _WireframeScenePainter extends CustomPainter {
         canvas.drawLine(hub, p0, paint);
       }
     }
+  }
+}
+
+// ── Blender-style 3D Axis Orientation Navigation Gizmo ───────────────────────
+
+class _GizmoAxisItem {
+  final Offset pos;
+  final double depth;
+  final String label;
+  final Color color;
+  final CameraPreset preset;
+  final bool isPositive;
+
+  const _GizmoAxisItem({
+    required this.pos,
+    required this.depth,
+    required this.label,
+    required this.color,
+    required this.preset,
+    required this.isPositive,
+  });
+}
+
+List<_GizmoAxisItem> _computeProjectedAxes(
+  double azimuth,
+  double elevation,
+  double radius,
+  Offset center,
+) {
+  final sinAz = sin(azimuth);
+  final cosAz = cos(azimuth);
+  final sinEl = sin(elevation);
+  final cosEl = cos(elevation);
+
+  // +X (Right):
+  final uX = -cosAz;
+  final vX = sinAz * sinEl;
+  final dX = sinAz * cosEl;
+
+  // +Y (Top):
+  final uY = 0.0;
+  final vY = -cosEl;
+  final dY = sinEl;
+
+  // +Z (Rear):
+  final uZ = sinAz;
+  final vZ = cosAz * sinEl;
+  final dZ = cosAz * cosEl;
+
+  return [
+    _GizmoAxisItem(
+      pos: center + Offset(uX * radius, vX * radius),
+      depth: dX,
+      label: 'X',
+      color: const Color(0xFFEF4444),
+      preset: CameraPreset.right,
+      isPositive: true,
+    ),
+    _GizmoAxisItem(
+      pos: center + Offset(-uX * radius, -vX * radius),
+      depth: -dX,
+      label: '-X',
+      color: const Color(0xFF991B1B),
+      preset: CameraPreset.left,
+      isPositive: false,
+    ),
+    _GizmoAxisItem(
+      pos: center + Offset(uY * radius, vY * radius),
+      depth: dY,
+      label: 'Y',
+      color: const Color(0xFF10B981),
+      preset: CameraPreset.top,
+      isPositive: true,
+    ),
+    _GizmoAxisItem(
+      pos: center + Offset(-uY * radius, -vY * radius),
+      depth: -dY,
+      label: '-Y',
+      color: const Color(0xFF065F46),
+      preset: CameraPreset.bottom,
+      isPositive: false,
+    ),
+    _GizmoAxisItem(
+      pos: center + Offset(uZ * radius, vZ * radius),
+      depth: dZ,
+      label: 'Z',
+      color: const Color(0xFF3B82F6),
+      preset: CameraPreset.back,
+      isPositive: true,
+    ),
+    _GizmoAxisItem(
+      pos: center + Offset(-uZ * radius, -vZ * radius),
+      depth: -dZ,
+      label: '-Z',
+      color: const Color(0xFF1E40AF),
+      preset: CameraPreset.front,
+      isPositive: false,
+    ),
+  ];
+}
+
+class _BlenderAxisGizmo extends StatelessWidget {
+  const _BlenderAxisGizmo({
+    required this.azimuth,
+    required this.elevation,
+    required this.activePreset,
+    required this.onSelectPreset,
+  });
+
+  final double azimuth;
+  final double elevation;
+  final CameraPreset activePreset;
+  final ValueChanged<CameraPreset> onSelectPreset;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xE60D1511),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF1E2E23)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x60000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 3D Rotating Orientation Sphere with clickable axis pins
+          GestureDetector(
+            onTapUp: (details) => _handleGizmoTap(details.localPosition),
+            child: Tooltip(
+              message: 'Blender View Gizmo (Click an axis pin or center ISO to snap)',
+              child: CustomPaint(
+                size: const Size(58, 58),
+                painter: _BlenderGizmoPainter(
+                  azimuth: azimuth,
+                  elevation: elevation,
+                  activePreset: activePreset,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 5),
+          // Direct-click axis chips row for quick snapping (+X, -X, +Y, -Y, +Z, -Z, ISO)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _AxisChip(
+                label: 'X',
+                tooltip: 'Right View (+X)',
+                color: const Color(0xFFEF4444),
+                isActive: activePreset == CameraPreset.right,
+                onTap: () => onSelectPreset(CameraPreset.right),
+              ),
+              const SizedBox(width: 2),
+              _AxisChip(
+                label: '-X',
+                tooltip: 'Left View (-X)',
+                color: const Color(0xFFDC2626),
+                isActive: activePreset == CameraPreset.left,
+                onTap: () => onSelectPreset(CameraPreset.left),
+              ),
+              const SizedBox(width: 3),
+              _AxisChip(
+                label: 'Y',
+                tooltip: 'Top View (+Y)',
+                color: const Color(0xFF10B981),
+                isActive: activePreset == CameraPreset.top,
+                onTap: () => onSelectPreset(CameraPreset.top),
+              ),
+              const SizedBox(width: 2),
+              _AxisChip(
+                label: '-Y',
+                tooltip: 'Bottom View (-Y)',
+                color: const Color(0xFF059669),
+                isActive: activePreset == CameraPreset.bottom,
+                onTap: () => onSelectPreset(CameraPreset.bottom),
+              ),
+              const SizedBox(width: 3),
+              _AxisChip(
+                label: 'Z',
+                tooltip: 'Rear View (+Z)',
+                color: const Color(0xFF3B82F6),
+                isActive: activePreset == CameraPreset.back,
+                onTap: () => onSelectPreset(CameraPreset.back),
+              ),
+              const SizedBox(width: 2),
+              _AxisChip(
+                label: '-Z',
+                tooltip: 'Front View (-Z)',
+                color: const Color(0xFF2563EB),
+                isActive: activePreset == CameraPreset.front,
+                onTap: () => onSelectPreset(CameraPreset.front),
+              ),
+              const SizedBox(width: 3),
+              _AxisChip(
+                label: 'ISO',
+                tooltip: 'Isometric View (ISO)',
+                color: const Color(0xFF94A3B8),
+                isActive: activePreset == CameraPreset.iso,
+                onTap: () => onSelectPreset(CameraPreset.iso),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleGizmoTap(Offset localPos) {
+    const c = Offset(29, 29);
+    if ((localPos - c).distance <= 7) {
+      onSelectPreset(CameraPreset.iso);
+      return;
+    }
+
+    final axes = _computeProjectedAxes(azimuth, elevation, 21.0, c);
+    double closestDist = 16.0;
+    CameraPreset? hitPreset;
+
+    for (final a in axes) {
+      final d = (localPos - a.pos).distance;
+      if (d < closestDist) {
+        closestDist = d;
+        hitPreset = a.preset;
+      }
+    }
+
+    if (hitPreset != null) {
+      onSelectPreset(hitPreset);
+    }
+  }
+}
+
+class _BlenderGizmoPainter extends CustomPainter {
+  const _BlenderGizmoPainter({
+    required this.azimuth,
+    required this.elevation,
+    required this.activePreset,
+  });
+
+  final double azimuth;
+  final double elevation;
+  final CameraPreset activePreset;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final bgPaint = Paint()
+      ..color = const Color(0x2810B981)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(c, 26, bgPaint);
+
+    final ringPaint = Paint()
+      ..color = const Color(0x33223127)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(c, 26, ringPaint);
+
+    final axes = _computeProjectedAxes(azimuth, elevation, 20.0, c);
+    // Depth sort: back to front
+    axes.sort((a, b) => a.depth.compareTo(b.depth));
+
+    final linePaint = Paint()..strokeWidth = 2.0;
+
+    for (final axis in axes) {
+      if (axis.isPositive) {
+        linePaint.color = axis.color.withValues(alpha: axis.depth < 0 ? 0.35 : 0.95);
+        canvas.drawLine(c, axis.pos, linePaint);
+      }
+    }
+
+    for (final axis in axes) {
+      final isFaint = axis.depth < -0.15;
+      final badgePaint = Paint()
+        ..color = isFaint
+            ? axis.color.withValues(alpha: 0.35)
+            : axis.color
+        ..style = PaintingStyle.fill;
+
+      final badgeRadius = axis.isPositive ? 7.0 : 5.0;
+      canvas.drawCircle(axis.pos, badgeRadius, badgePaint);
+
+      if (axis.isPositive) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: axis.label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 8.0,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+          canvas,
+          Offset(axis.pos.dx - tp.width / 2, axis.pos.dy - tp.height / 2),
+        );
+      }
+    }
+
+    // Center pivot dot for ISO
+    final centerPaint = Paint()
+      ..color = const Color(0xFFBAC7CE)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(c, 2.5, centerPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BlenderGizmoPainter oldDelegate) {
+    return oldDelegate.azimuth != azimuth ||
+        oldDelegate.elevation != elevation ||
+        oldDelegate.activePreset != activePreset;
+  }
+}
+
+class _AxisChip extends StatelessWidget {
+  const _AxisChip({
+    required this.label,
+    required this.tooltip,
+    required this.color,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final String label;
+  final String tooltip;
+  final Color color;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4.5, vertical: 2.5),
+          decoration: BoxDecoration(
+            color: isActive ? color : color.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: isActive ? Colors.white : color.withValues(alpha: 0.55),
+              width: 1.0,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 9.0,
+              fontWeight: FontWeight.w800,
+              color: isActive ? Colors.white : color,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

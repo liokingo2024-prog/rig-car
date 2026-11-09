@@ -937,10 +937,12 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
   void _onHoverPart(String? partId) {
     setState(() {
-      if (partId == null) {
+      if (partId == null || !_scanCompleted) {
         _hoveredNodeIndex = null;
         highlightSketchfabMeshesCyan(null);
-      } else if (partId.startsWith('wheel_')) {
+        return;
+      }
+      if (partId.startsWith('wheel_')) {
         final slot = partId.substring('wheel_'.length).toUpperCase();
         _hoveredNodeIndex = _assignedWheels[slot]?.nodeIndex;
         highlightSketchfabMeshesCyan([slot, 'wheel', 'tire']);

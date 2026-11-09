@@ -240,6 +240,17 @@ void clearSketchfabWheels() {
   }
 }
 
+void setSketchfabCameraPreset(String preset) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('setCameraPreset', [preset]);
+    }
+  } catch (e) {
+    debugPrint('setSketchfabCameraPreset error: $e');
+  }
+}
+
 void highlightSketchfabMeshesCyan(dynamic meshNamesOrList) {
   try {
     final viewer = js.context['SketchfabViewer'];
