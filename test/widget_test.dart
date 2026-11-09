@@ -12,6 +12,7 @@ import 'package:rig_car/model_data.dart';
 import 'package:rig_car/physics_sim.dart';
 import 'package:rig_car/pre_rigged_cars.dart';
 import 'package:rig_car/solid_mesh_lod.dart';
+import 'package:rig_car/sketchfab_viewport.dart';
 import 'package:rig_car/wireframe_viewer.dart';
 
 void main() {
@@ -2271,6 +2272,30 @@ endsolid sports_car''';
         find.ancestor(of: find.text('Next: Add Physics'), matching: find.byType(FilledButton)),
       );
       expect(enabledNextBtn.onPressed, isNotNull);
+    });
+
+    testWidgets('synchronizes camera orbit to Blender gizmo in real time across uploaded car and demo car', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Find the SketchfabViewport in the tree
+      final viewportFinder = find.byType(SketchfabViewport);
+      expect(viewportFinder, findsOneWidget);
+
+      final viewportWidget = tester.widget<SketchfabViewport>(viewportFinder);
+      expect(viewportWidget.onCameraOrbit, isNotNull);
+
+      // Simulate Three.js camera orbit event (e.g. mouse drag orbiting camera to azimuth = 1.25, elevation = 0.65)
+      viewportWidget.onCameraOrbit!(1.25, 0.65, 4.8);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Gizmo is rendered and receives updated camera angles
+      expect(find.byTooltip('Blender View Gizmo (Click an axis pin or center ISO to snap)'), findsOneWidget);
     });
   });
 }

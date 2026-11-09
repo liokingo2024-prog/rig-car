@@ -244,127 +244,101 @@ class _WireframeViewerState extends State<WireframeViewer>
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // ── Viewport Area (WebGL Three.js when bytes available, fallback CustomPainter) ──
+          // ── Viewport Area (Continuous Three.js WebGL with real-time orbit sync, fallback CustomPainter) ──
           Positioned.fill(
-            child: widget.modelBytes != null && widget.modelBytes!.isNotEmpty
-                ? SketchfabViewport(
-                    bytes: widget.modelBytes,
-                    fileName: widget.model?.fileName,
-                    renderMode: _renderMode.name,
-                    lighting: _lighting.name,
-                    gridStyle: _gridStyle.name,
-                    autoTurntable: _autoTurntable,
-                    cameraPreset: _preset.name,
-                    resetEpoch: _cameraResetEpoch,
-                    fallbackWidget: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _WireframeScenePainter(
-                          model: widget.model,
-                          detection: widget.detection,
-                          bodyNodeIndex: widget.bodyNodeIndex,
-                          selectedNodeIndex: widget.selectedNodeIndex,
-                          hoveredNodeIndex: widget.hoveredNodeIndex,
-                          azimuth: _azimuth,
-                          elevation: _elevation,
-                          distance: _distance,
-                          target: _target,
-                          panX: _panX,
-                          panY: _panY,
-                          gridStyle: _gridStyle,
-                          lighting: _lighting,
-                          renderMode: _renderMode,
-                          showGrid: _showGrid,
-                          showMarkers: _showMarkers,
-                          denseWireframe: _denseWireframe,
-                          accentColor: widget.accentColor,
-                          bodyColor: widget.bodyColor,
-                          wheelColor: widget.wheelColor,
-                          wireColor: widget.wireColor,
-                          centerOfMassY: widget.centerOfMassY,
-                          updateEpoch: widget.updateEpoch,
-                          highlightWheels: widget.highlightWheels,
-                          pulseProgress: _animController.value,
-                          isInteracting: _isInteracting || _autoTurntable,
+            child: SketchfabViewport(
+              bytes: widget.modelBytes,
+              fileName: widget.model?.fileName,
+              renderMode: _renderMode.name,
+              lighting: _lighting.name,
+              gridStyle: _gridStyle.name,
+              autoTurntable: _autoTurntable,
+              cameraPreset: _preset.name,
+              resetEpoch: _cameraResetEpoch,
+              onCameraOrbit: (azimuth, elevation, distance) {
+                setState(() {
+                  _azimuth = azimuth;
+                  _elevation = elevation;
+                  _distance = distance;
+                });
+              },
+              fallbackWidget: Listener(
+                onPointerSignal: (event) {
+                  if (event is PointerScrollEvent) {
+                    setState(() {
+                      _distance = (_distance * (1 + event.scrollDelta.dy * 0.001))
+                          .clamp(1.0, 50.0);
+                    });
+                  }
+                },
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => setState(_resetCameraToModel),
+                  onPanStart: (_) {
+                    if (!_isInteracting) {
+                      setState(() => _isInteracting = true);
+                    }
+                  },
+                  onPanUpdate: (details) {
+                    setState(() {
+                      // Natural orbit: dragging right rotates model right; dragging up tilts view up.
+                      // Both axes maintain unified polarity across natural and inverted modes.
+                      final factor = _invertDrag ? 1.0 : -1.0;
+                      _azimuth += factor * details.delta.dx * 0.01;
+                      _elevation = (_elevation - factor * details.delta.dy * 0.01)
+                          .clamp(-1.5, 1.5);
+                    });
+                  },
+                  onPanEnd: (_) {
+                    if (_isInteracting) {
+                      setState(() => _isInteracting = false);
+                    }
+                  },
+                  onPanCancel: () {
+                    if (_isInteracting) {
+                      setState(() => _isInteracting = false);
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: _animController,
+                    builder: (context, _) {
+                      return RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _WireframeScenePainter(
+                            model: widget.model,
+                            detection: widget.detection,
+                            bodyNodeIndex: widget.bodyNodeIndex,
+                            selectedNodeIndex: widget.selectedNodeIndex,
+                            hoveredNodeIndex: widget.hoveredNodeIndex,
+                            azimuth: _azimuth,
+                            elevation: _elevation,
+                            distance: _distance,
+                            target: _target,
+                            panX: _panX,
+                            panY: _panY,
+                            gridStyle: _gridStyle,
+                            lighting: _lighting,
+                            renderMode: _renderMode,
+                            showGrid: _showGrid,
+                            showMarkers: _showMarkers,
+                            denseWireframe: _denseWireframe,
+                            accentColor: widget.accentColor,
+                            bodyColor: widget.bodyColor,
+                            wheelColor: widget.wheelColor,
+                            wireColor: widget.wireColor,
+                            centerOfMassY: widget.centerOfMassY,
+                            updateEpoch: widget.updateEpoch,
+                            highlightWheels: widget.highlightWheels,
+                            pulseProgress: _animController.value,
+                            isInteracting: _isInteracting || _autoTurntable,
+                          ),
                         ),
-                      ),
-                    ),
-                  )
-                : Listener(
-                    onPointerSignal: (event) {
-                      if (event is PointerScrollEvent) {
-                        setState(() {
-                          _distance = (_distance * (1 + event.scrollDelta.dy * 0.001))
-                              .clamp(1.0, 50.0);
-                        });
-                      }
+                      );
                     },
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onDoubleTap: () => setState(_resetCameraToModel),
-                      onPanStart: (_) {
-                        if (!_isInteracting) {
-                          setState(() => _isInteracting = true);
-                        }
-                      },
-                      onPanUpdate: (details) {
-                        setState(() {
-                          // Natural orbit: dragging right rotates model right; dragging up tilts view up.
-                          // Both axes maintain unified polarity across natural and inverted modes.
-                          final factor = _invertDrag ? 1.0 : -1.0;
-                          _azimuth += factor * details.delta.dx * 0.01;
-                          _elevation = (_elevation - factor * details.delta.dy * 0.01)
-                              .clamp(-1.5, 1.5);
-                        });
-                      },
-                      onPanEnd: (_) {
-                        if (_isInteracting) {
-                          setState(() => _isInteracting = false);
-                        }
-                      },
-                      onPanCancel: () {
-                        if (_isInteracting) {
-                          setState(() => _isInteracting = false);
-                        }
-                      },
-                      child: AnimatedBuilder(
-                        animation: _animController,
-                        builder: (context, _) {
-                          return RepaintBoundary(
-                            child: CustomPaint(
-                              painter: _WireframeScenePainter(
-                                model: widget.model,
-                                detection: widget.detection,
-                                bodyNodeIndex: widget.bodyNodeIndex,
-                                selectedNodeIndex: widget.selectedNodeIndex,
-                                hoveredNodeIndex: widget.hoveredNodeIndex,
-                                azimuth: _azimuth,
-                                elevation: _elevation,
-                                distance: _distance,
-                                target: _target,
-                                panX: _panX,
-                                panY: _panY,
-                                gridStyle: _gridStyle,
-                                lighting: _lighting,
-                                renderMode: _renderMode,
-                                showGrid: _showGrid,
-                                showMarkers: _showMarkers,
-                                denseWireframe: _denseWireframe,
-                                accentColor: widget.accentColor,
-                                bodyColor: widget.bodyColor,
-                                wheelColor: widget.wheelColor,
-                                wireColor: widget.wireColor,
-                                centerOfMassY: widget.centerOfMassY,
-                                updateEpoch: widget.updateEpoch,
-                                highlightWheels: widget.highlightWheels,
-                                pulseProgress: _animController.value,
-                                isInteracting: _isInteracting || _autoTurntable,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
                   ),
+                ),
+              ),
+            ),
           ),
 
           // ── Top Bar Controls ──────────────────────────────────────────────

@@ -121,6 +121,10 @@
     controls.maxDistance = 500.0;
     controls.target.set(0, 0.6, 0);
 
+    controls.addEventListener('change', function() {
+      notifyCameraChange(false);
+    });
+
     controls.domElement.addEventListener('pointerdown', () => {
       renderer.domElement.style.cursor = 'grabbing';
     });
@@ -172,11 +176,13 @@
     isInitialized = true;
     animate();
 
-    // 10. Load any pending buffer
+    // 10. Load any pending buffer or fallback demo car
     if (pendingModelBuffer) {
       const p = pendingModelBuffer;
       pendingModelBuffer = null;
       loadModel(p.buffer, p.fileName, p.callback);
+    } else {
+      loadDemoCar();
     }
   }
 
@@ -197,19 +203,19 @@
     shadowCanvas.height = 256;
     const ctx = shadowCanvas.getContext('2d');
     const grad = ctx.createRadialGradient(128, 128, 20, 128, 128, 120);
-    grad.addColorStop(0, 'rgba(0, 0, 0, 0.75)');
-    grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.35)');
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.70)');
+    grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.25)');
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 256, 256);
 
     const shadowTex = new THREE.CanvasTexture(shadowCanvas);
-    const shadowGeo = new THREE.PlaneGeometry(8, 8);
+    const shadowGeo = new THREE.PlaneGeometry(4.0, 4.0);
     const shadowMat = new THREE.MeshBasicMaterial({
       map: shadowTex,
       transparent: true,
       depthWrite: false,
-      opacity: 0.85
+      opacity: 0.45
     });
     groundShadow = new THREE.Mesh(shadowGeo, shadowMat);
     groundShadow.rotation.x = -Math.PI / 2;
@@ -236,6 +242,29 @@
     if (renderer && scene && camera) {
       renderer.render(scene, camera);
     }
+  }
+
+  let lastCameraDispatchTime = 0;
+  function notifyCameraChange(force) {
+    if (!camera || !controls) return;
+    const now = performance.now();
+    if (!force && (now - lastCameraDispatchTime < 16)) return;
+    lastCameraDispatchTime = now;
+
+    const target = controls.target || new THREE.Vector3(0, 0.6, 0);
+    const offset = new THREE.Vector3().subVectors(camera.position, target);
+    const radius = Math.max(1e-4, offset.length());
+    const elevation = Math.asin(Math.max(-1, Math.min(1, offset.y / radius)));
+    const azimuth = Math.atan2(offset.x, offset.z);
+
+    const event = new CustomEvent('sketchfab-camera-orbit', {
+      detail: {
+        azimuth: azimuth,
+        elevation: elevation,
+        distance: radius
+      }
+    });
+    window.dispatchEvent(event);
   }
 
   /**
@@ -489,6 +518,154 @@
     });
   }
 
+  function createDemoCarGroup() {
+    const carGroup = new THREE.Group();
+    carGroup.name = 'Apex_GT_Coupe';
+
+    // 1. Chassis Body Geometry (Procedural Apex GT Coupe)
+    const bodyPoints = [
+      new THREE.Vector3(-0.90, 0.18, -1.85), // 0: FL bottom
+      new THREE.Vector3(0.90, 0.18, -1.85),  // 1: FR bottom
+      new THREE.Vector3(0.90, 0.18, 1.85),   // 2: RR bottom
+      new THREE.Vector3(-0.90, 0.18, 1.85),  // 3: RL bottom
+      new THREE.Vector3(-0.85, 0.65, -1.65), // 4: FL hood
+      new THREE.Vector3(0.85, 0.65, -1.65),  // 5: FR hood
+      new THREE.Vector3(-0.80, 0.82, -0.60), // 6: FL windshield
+      new THREE.Vector3(0.80, 0.82, -0.60),  // 7: FR windshield
+      new THREE.Vector3(-0.65, 1.28, -0.15), // 8: FL roof front
+      new THREE.Vector3(0.65, 1.28, -0.15),  // 9: FR roof front
+      new THREE.Vector3(-0.65, 1.28, 0.75),  // 10: RL roof rear
+      new THREE.Vector3(0.65, 1.28, 0.75),   // 11: RR roof rear
+      new THREE.Vector3(-0.80, 0.82, 1.25),  // 12: RL rear window
+      new THREE.Vector3(0.80, 0.82, 1.25),   // 13: RR rear window
+      new THREE.Vector3(-0.85, 0.72, 1.80),  // 14: RL trunk
+      new THREE.Vector3(0.85, 0.72, 1.80)    // 15: RR trunk
+    ];
+
+    const bodyIndices = [
+      4, 5, 1,   4, 1, 0,   4, 6, 7,   4, 7, 5,
+      6, 7, 9,   6, 9, 8,   8, 9, 11,  8, 11, 10,
+      10, 11, 13, 10, 13, 12, 12, 13, 15, 12, 15, 14,
+      14, 15, 2,  14, 2, 3,  0, 4, 6,   0, 6, 3,
+      6, 8, 10,  6, 10, 12, 3, 12, 14, 1, 7, 5,
+      1, 2, 7,   7, 11, 9,  7, 13, 11, 2, 15, 13,
+      0, 1, 2,   0, 2, 3
+    ];
+
+    const positions = [];
+    bodyIndices.forEach(idx => {
+      const p = bodyPoints[idx];
+      positions.push(p.x, p.y, p.z);
+    });
+
+    const bodyGeo = new THREE.BufferGeometry();
+    bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    bodyGeo.computeVertexNormals();
+
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x142820,
+      metalness: 0.75,
+      roughness: 0.28,
+      side: THREE.DoubleSide
+    });
+    const chassisMesh = new THREE.Mesh(bodyGeo, bodyMat);
+    chassisMesh.name = 'Chassis';
+    chassisMesh.castShadow = true;
+    chassisMesh.receiveShadow = true;
+    carGroup.add(chassisMesh);
+
+    // Windshield & Canopy Glass Mesh
+    const glassIndices = [
+      6, 7, 9,   6, 9, 8,
+      8, 9, 11,  8, 11, 10,
+      10, 11, 13, 10, 13, 12
+    ];
+    const glassPos = [];
+    glassIndices.forEach(idx => {
+      const p = bodyPoints[idx];
+      glassPos.push(p.x, p.y + 0.002, p.z);
+    });
+    const glassGeo = new THREE.BufferGeometry();
+    glassGeo.setAttribute('position', new THREE.Float32BufferAttribute(glassPos, 3));
+    glassGeo.computeVertexNormals();
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x34d399,
+      metalness: 0.9,
+      roughness: 0.1,
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide
+    });
+    const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+    glassMesh.name = 'Windshield';
+    carGroup.add(glassMesh);
+
+    // 4 Wheels
+    const wheelConfigs = [
+      { name: 'Wheel_FL', x: -0.85, y: 0.34, z: -1.35 },
+      { name: 'Wheel_FR', x: 0.85, y: 0.34, z: -1.35 },
+      { name: 'Wheel_RL', x: -0.85, y: 0.34, z: 1.35 },
+      { name: 'Wheel_RR', x: 0.85, y: 0.34, z: 1.35 }
+    ];
+
+    const tireMat = new THREE.MeshStandardMaterial({
+      color: 0x181e1b,
+      metalness: 0.15,
+      roughness: 0.85
+    });
+
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x10b981,
+      metalness: 0.85,
+      roughness: 0.2
+    });
+
+    const discMat = new THREE.MeshStandardMaterial({
+      color: 0x6ee7b7,
+      metalness: 0.9,
+      roughness: 0.15
+    });
+
+    wheelConfigs.forEach(cfg => {
+      const wGroup = new THREE.Group();
+      wGroup.name = cfg.name;
+      wGroup.position.set(cfg.x, cfg.y, cfg.z);
+
+      // Tire cylinder (Radius 0.34m, width 0.26m)
+      const tireGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 24);
+      tireGeo.rotateZ(Math.PI / 2);
+      const tireMesh = new THREE.Mesh(tireGeo, tireMat.clone());
+      tireMesh.name = cfg.name + '_Tire';
+      tireMesh.castShadow = true;
+      tireMesh.receiveShadow = true;
+      wGroup.add(tireMesh);
+
+      // Rim barrel (Radius 0.22m, width 0.262m)
+      const rimGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.262, 24);
+      rimGeo.rotateZ(Math.PI / 2);
+      const rimMesh = new THREE.Mesh(rimGeo, rimMat.clone());
+      rimMesh.name = cfg.name + '_Rim';
+      wGroup.add(rimMesh);
+
+      // Center brake rotor / cap (Radius 0.14m, width 0.264m)
+      const discGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.264, 16);
+      discGeo.rotateZ(Math.PI / 2);
+      const discMesh = new THREE.Mesh(discGeo, discMat.clone());
+      discMesh.name = cfg.name + '_Disc';
+      wGroup.add(discMesh);
+
+      carGroup.add(wGroup);
+    });
+
+    return carGroup;
+  }
+
+  function loadDemoCar(callback) {
+    if (!scene) return;
+    const carGroup = createDemoCarGroup();
+    applyLoadedModel(carGroup, callback);
+  }
+
   /**
    * Unified Post-Processing Pipeline for all loaded models.
    */
@@ -600,7 +777,7 @@
 
     // Adjust shadow plane to vehicle size
     if (groundShadow) {
-      groundShadow.scale.set(Math.max(size.x * 0.7, 4), Math.max(size.z * 0.7, 4), 1);
+      groundShadow.scale.set(Math.max(size.x * 0.45, 1.8), Math.max(size.z * 0.45, 3.6), 1);
       groundShadow.position.set(0, 0.0005, 0);
     }
 
@@ -677,6 +854,7 @@
     camera.far = Math.max(500, dist * 50);
     camera.updateProjectionMatrix();
     controls.update();
+    notifyCameraChange(true);
   }
 
   function setCameraPreset(preset) {
@@ -727,6 +905,7 @@
     controls.target.set(0, cy, 0);
     camera.updateProjectionMatrix();
     controls.update();
+    notifyCameraChange(true);
   }
 
   function applyRenderMode(mode) {
@@ -837,8 +1016,8 @@
 
   function buildCadGrid() {
     const grp = new THREE.Group();
-    // 30m x 30m CAD grid with 60 subdivisions (0.5m spacing)
-    const grid = new THREE.GridHelper(30, 60, 0x10b981, 0x182c22);
+    // 10m x 10m CAD grid with 20 subdivisions (0.5m spacing), matching Flutter CAD grid
+    const grid = new THREE.GridHelper(10, 20, 0x10b981, 0x182c22);
     grid.position.y = 0.0004;
     if (grid.material) {
       grid.material.transparent = true;
@@ -847,8 +1026,33 @@
     }
     grp.add(grid);
 
-    // Outer boundary frame
-    const hw = 15;
+    // Major axis lines (X axis in emerald & Z axis in vibrant emerald)
+    const axisMatX = new THREE.LineBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    });
+    const axisGeoX = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-5, 0.0005, 0),
+      new THREE.Vector3(5, 0.0005, 0)
+    ]);
+    grp.add(new THREE.Line(axisGeoX, axisMatX));
+
+    const axisMatZ = new THREE.LineBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+    const axisGeoZ = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.0005, -5),
+      new THREE.Vector3(0, 0.0005, 5)
+    ]);
+    grp.add(new THREE.Line(axisGeoZ, axisMatZ));
+
+    // Outer boundary frame (10m x 10m: hw = 5)
+    const hw = 5.0;
     const framePoints = [
       new THREE.Vector3(-hw, 0.0004, -hw),
       new THREE.Vector3(hw, 0.0004, -hw),
@@ -1703,6 +1907,7 @@
     flipModel: flipModel,
     snapToGround: snapToGround,
     applyScale: applyScale,
+    loadDemoCar: loadDemoCar,
     isInitialized: function() { return isInitialized; }
   };
 })();

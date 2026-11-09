@@ -19,6 +19,7 @@ class SketchfabViewport extends StatefulWidget {
     required this.cameraPreset,
     this.resetEpoch = 0,
     this.detectedWheels = const [],
+    this.onCameraOrbit,
     this.fallbackWidget,
   });
 
@@ -31,6 +32,7 @@ class SketchfabViewport extends StatefulWidget {
   final String cameraPreset;
   final int resetEpoch;
   final List<dynamic> detectedWheels;
+  final void Function(double azimuth, double elevation, double distance)? onCameraOrbit;
   final Widget? fallbackWidget;
 
   @override
@@ -42,6 +44,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   late final String _viewType;
   html.DivElement? _container;
   Uint8List? _loadedBytes;
+  html.EventListener? _cameraOrbitListener;
 
   @override
   void initState() {
@@ -61,9 +64,36 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
       (int viewId) => _container!,
     );
 
+    _cameraOrbitListener = (html.Event event) {
+      if (event is html.CustomEvent) {
+        try {
+          final jsEvent = js.JsObject.fromBrowserObject(event);
+          final detail = jsEvent['detail'];
+          if (detail != null) {
+            final az = (detail['azimuth'] as num?)?.toDouble();
+            final el = (detail['elevation'] as num?)?.toDouble();
+            final dist = (detail['distance'] as num?)?.toDouble();
+            if (az != null && el != null && dist != null) {
+              widget.onCameraOrbit?.call(az, el, dist);
+            }
+          }
+        } catch (_) {}
+      }
+    };
+    html.window.addEventListener('sketchfab-camera-orbit', _cameraOrbitListener);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initViewer();
     });
+  }
+
+  @override
+  void dispose() {
+    if (_cameraOrbitListener != null) {
+      html.window.removeEventListener('sketchfab-camera-orbit', _cameraOrbitListener);
+      _cameraOrbitListener = null;
+    }
+    super.dispose();
   }
 
   void _initViewer() {
@@ -74,6 +104,8 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
         viewer.callMethod('init', [_container]);
         if (widget.bytes != null && widget.bytes!.isNotEmpty) {
           _loadModel(widget.bytes!);
+        } else {
+          viewer.callMethod('loadDemoCar');
         }
         _syncControls();
       } else {
@@ -121,8 +153,16 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   @override
   void didUpdateWidget(covariant SketchfabViewport oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.bytes != oldWidget.bytes && widget.bytes != null) {
-      _loadModel(widget.bytes!);
+    if (widget.bytes != oldWidget.bytes) {
+      if (widget.bytes != null && widget.bytes!.isNotEmpty) {
+        _loadModel(widget.bytes!);
+      } else {
+        _loadedBytes = null;
+        try {
+          final viewer = js.context['SketchfabViewer'];
+          viewer?.callMethod('loadDemoCar');
+        } catch (_) {}
+      }
     }
     try {
       final viewer = js.context['SketchfabViewer'];
@@ -151,10 +191,6 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
 
   @override
   Widget build(BuildContext context) {
-    // If bytes are not loaded or WebGL is not available, render fallback canvas
-    if (widget.bytes == null || widget.bytes!.isEmpty) {
-      return widget.fallbackWidget ?? const SizedBox.shrink();
-    }
     return HtmlElementView(viewType: _viewType);
   }
 }
