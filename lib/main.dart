@@ -85,7 +85,24 @@ class RigCarApp extends StatelessWidget {
           labelSmall: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
         ),
       ),
-      home: const RigHomeScreen(),
+      home: Builder(
+        builder: (context) {
+          final uri = Uri.base;
+          final openWorkbench = uri.queryParameters['page'] == 'workbench' ||
+              uri.queryParameters['workbench'] == 'true';
+          if (openWorkbench) {
+            final carId = uri.queryParameters['car'];
+            PreRiggedCar? car;
+            if (carId != null) {
+              try {
+                car = preRiggedCars.firstWhere((c) => c.id == carId);
+              } catch (_) {}
+            }
+            return RigWorkbenchPage(initialCar: car);
+          }
+          return const RigHomeScreen();
+        },
+      ),
     );
   }
 }
