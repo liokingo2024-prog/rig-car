@@ -1013,6 +1013,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               onExport: _exportGodotFiles,
                               inspectMode: _inspectMode,
                               wheelsCount: _detection?.wheels.length ?? 0,
+                              isScanDone: _scanCompleted,
                               isTestDrive: _isTestDriveMode,
                               onToggleTestDrive: () {
                                 if (_isTestDriveMode) {
@@ -1555,6 +1556,7 @@ class _DesktopTopbar extends StatelessWidget {
     required this.onExport,
     required this.inspectMode,
     required this.wheelsCount,
+    required this.isScanDone,
     required this.isTestDrive,
     required this.onToggleTestDrive,
     required this.isLeftPanelOpen,
@@ -1567,6 +1569,7 @@ class _DesktopTopbar extends StatelessWidget {
   final VoidCallback onExport;
   final String inspectMode;
   final int wheelsCount;
+  final bool isScanDone;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
   final bool isLeftPanelOpen;
@@ -1576,7 +1579,28 @@ class _DesktopTopbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isManual = inspectMode == 'manual' || wheelsCount < 4;
+    final String statusText;
+    final Color statusColor;
+    final Color statusBg;
+    final Color statusBorder;
+
+    if (!isScanDone) {
+      statusText = inspectMode == 'manual' ? 'CUSTOM MODE' : 'READY TO RIG';
+      statusColor = const Color(0xFF9CA3AF);
+      statusBg = const Color(0xFF131A16);
+      statusBorder = const Color(0xFF1E352C);
+    } else if (inspectMode == 'manual' || wheelsCount < 4) {
+      statusText = 'MANUAL ASSIST';
+      statusColor = const Color(0xFFF59E0B);
+      statusBg = const Color(0xFF281B0E);
+      statusBorder = const Color(0xFF4D3810);
+    } else {
+      statusText = 'AUTO-RIGGED';
+      statusColor = const Color(0xFF10B981);
+      statusBg = const Color(0xFF13261F);
+      statusBorder = const Color(0xFF1E352C);
+    }
+
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1631,11 +1655,9 @@ class _DesktopTopbar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
-              color: isManual ? const Color(0xFF281B0E) : const Color(0xFF13261F),
+              color: statusBg,
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                color: isManual ? const Color(0xFF4D3810) : const Color(0xFF1E352C),
-              ),
+              border: Border.all(color: statusBorder),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1643,17 +1665,13 @@ class _DesktopTopbar extends StatelessWidget {
                 Icon(
                   Icons.circle,
                   size: 6,
-                  color: isManual
-                      ? const Color(0xFFF59E0B)
-                      : const Color(0xFF10B981),
+                  color: statusColor,
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  isManual ? 'MANUAL ASSIST' : 'AUTO-RIGGED',
+                  statusText,
                   style: TextStyle(
-                    color: isManual
-                        ? const Color(0xFFF59E0B)
-                        : const Color(0xFF10B981),
+                    color: statusColor,
                     fontSize: 9,
                     fontWeight: FontWeight.w700,
                     letterSpacing: .6,

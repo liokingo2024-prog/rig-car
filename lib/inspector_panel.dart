@@ -240,7 +240,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
         if (widget.parsedModel == null) {
           badgeText = 'Pending Import';
         } else {
-          badgeText = 'Auto Verified';
+          badgeText = 'Model Loaded';
         }
         break;
       case 2:

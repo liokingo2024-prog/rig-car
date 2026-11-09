@@ -1860,10 +1860,9 @@ class _WireframeScenePainter extends CustomPainter {
         } else {
           final k = triKind[t];
           if (k == 2 /* solidKindWheel */) {
-            // Intelligent Rim vs Tire separation:
-            // Lateral outer normal (|nx| > 0.45) is the alloy wheel rim/spoke face!
-            // Radial tread or inner cylinder (|nx| <= 0.45) is dark tire rubber!
-            base = effNx.abs() > 0.45 ? 0xFFC8D1D7 : 0xFF191C1E;
+            // Un-highlighted wheel geometry renders as uniform dark tire/chassis material.
+            // Wheel highlighting only activates in emerald green when highlightWheels is true.
+            base = 0xFF1E2225;
           } else if (k < kindColors.length) {
             base = kindColors[k];
           } else {
