@@ -1,3 +1,5 @@
 import 'model_data.dart';
 
-Future<PickedFile?> pickModelFile() async => null;
+PickedFile? mockPickedFileForTest;
+
+Future<PickedFile?> pickModelFile() async => mockPickedFileForTest;

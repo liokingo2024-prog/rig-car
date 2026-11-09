@@ -6,7 +6,12 @@ import 'dart:typed_data';
 
 import 'model_data.dart';
 
+PickedFile? mockPickedFileForTest;
+
 Future<PickedFile?> pickModelFile() async {
+  if (mockPickedFileForTest != null) {
+    return mockPickedFileForTest;
+  }
   final input = html.FileUploadInputElement()
     ..accept = '.glb,.gltf,.obj,.fbx,.stl,.zip,.dae';
   input.click();

@@ -494,6 +494,7 @@
    */
   function applyLoadedModel(model, callback) {
     if (!scene) return;
+    clearWheelDataAndMarkers();
     if (modelPivotGroup) {
       scene.remove(modelPivotGroup);
       disposeObject(modelPivotGroup);
@@ -1188,6 +1189,27 @@
 
   let detectedWheelData = null;
 
+  function clearWheelDataAndMarkers() {
+    detectedWheelData = null;
+    if (markersGroup) {
+      while (markersGroup.children.length > 0) {
+        disposeObject(markersGroup.children[0]);
+        markersGroup.remove(markersGroup.children[0]);
+      }
+    }
+    if (currentModel) {
+      currentModel.traverse(function(child) {
+        if (child.isMesh && child.userData.origMaterial) {
+          child.material = child.userData.origMaterial;
+          delete child.userData.origMaterial;
+        }
+        if (child.isMesh && child.userData.cyanOverride) {
+          delete child.userData.cyanOverride;
+        }
+      });
+    }
+  }
+
   function detectWheels(options) {
     if (!currentModel) return null;
     currentModel.updateMatrixWorld(true);
@@ -1402,9 +1424,15 @@
       }
     });
 
+    if (wheelNodeNames === false) return;
+
     let targets = null;
     if (detectedWheelData && detectedWheelData.allWheelMeshes && detectedWheelData.allWheelMeshes.length > 0) {
       targets = new Set(detectedWheelData.allWheelMeshes);
+    }
+
+    if (!targets && (!wheelNodeNames || (Array.isArray(wheelNodeNames) && wheelNodeNames.length === 0))) {
+      return;
     }
 
     currentModel.traverse(function(child) {
@@ -1412,10 +1440,8 @@
         let isWheel = false;
         if (targets) {
           isWheel = targets.has(child);
-        } else {
-          const names = Array.isArray(wheelNodeNames) && wheelNodeNames.length > 0
-            ? wheelNodeNames.map(n => (n || '').toLowerCase())
-            : ['wheel', 'tire', 'tyre', 'rim'];
+        } else if (Array.isArray(wheelNodeNames) && wheelNodeNames.length > 0) {
+          const names = wheelNodeNames.map(n => (n || '').toLowerCase());
           const cName = (child.name || '').toLowerCase();
           isWheel = names.some(n => cName.includes(n));
         }
@@ -1500,6 +1526,7 @@
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
     setWheelMarkers: setWheelMarkers,
+    clearWheelDataAndMarkers: clearWheelDataAndMarkers,
     detectWheels: detectWheels,
     highlightWheelMeshes: highlightWheelMeshes,
     highlightMeshesCyan: highlightMeshesCyan,

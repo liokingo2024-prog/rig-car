@@ -229,6 +229,17 @@ void highlightSketchfabWheels(List<String> wheelNodeNames) {
   }
 }
 
+void clearSketchfabWheels() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('clearWheelDataAndMarkers');
+    }
+  } catch (e) {
+    debugPrint('clearSketchfabWheels error: $e');
+  }
+}
+
 void highlightSketchfabMeshesCyan(dynamic meshNamesOrList) {
   try {
     final viewer = js.context['SketchfabViewer'];

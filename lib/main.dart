@@ -168,7 +168,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     if (_isTestDriveMode) _activeStep = 5;
     final car = widget.initialCar;
     if (car != null) {
-      _modelName = '${car.name} (Pre-rigged)';
+      _modelName = '${car.name} (Template)';
       _drive = car.drive;
       _mass = car.mass;
       _engineForce = car.engineForce;
@@ -180,7 +180,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _frontTraction = car.frontTraction;
       _rearTraction = car.rearTraction;
 
-      if (car.wheelPositions.length >= 4) {
+      if (_isTestDriveMode && car.wheelPositions.length >= 4) {
         _assignedWheels['FL'] = DetectedWheel(
           nodeIndex: 0,
           nodeName: 'Wheel_FL',
@@ -221,12 +221,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           suggestedPreset: car.name,
           warnings: const [],
         );
+        _scanCompleted = true;
+        _highlightFoundWheels = true;
       }
       _parsedModel = ParsedModel.createProceduralDefault(
         name: car.name,
         wheelPositions: car.wheelPositions,
       );
-      _activeStep = 1;
+      if (!_isTestDriveMode) _activeStep = 1;
     } else {
       _modelName = 'Apex GT Coupe (Template)';
       _parsedModel = ParsedModel.createProceduralDefault(
@@ -235,12 +237,36 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
   }
 
+  void _resetRiggingProcess({bool resetStep = true}) {
+    _assignedWheels['FL'] = null;
+    _assignedWheels['FR'] = null;
+    _assignedWheels['RL'] = null;
+    _assignedWheels['RR'] = null;
+    _detection = null;
+    _selectedBodyNodeIndex = null;
+    _selectedNodeIndex = null;
+    _hoveredNodeIndex = null;
+    _isScanningWheels = false;
+    _scanCompleted = false;
+    _highlightFoundWheels = false;
+    _detectedGroups = _initDetectedGroups();
+    if (resetStep) {
+      _activeStep = 1;
+    }
+    _viewportUpdateEpoch++;
+    clearSketchfabWheels();
+    updateSketchfabWheelMarkers(const []);
+    highlightSketchfabWheels(const []);
+  }
+
   Future<void> _pickModel() async {
     try {
       final picked = await pickModelFile();
       if (!mounted || picked == null) return;
 
+      // Discard current rigging process completely and start clear
       setState(() {
+        _resetRiggingProcess();
         _modelName = picked.name;
       });
 
@@ -255,8 +281,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         setState(() {
           _parsedModel = parsed;
           _modelBytes = picked.bytes;
-          _detection = null;
-          _selectedBodyNodeIndex = null;
 
           // Estimate mass from volume
           final size = parsed.worldBBox.size;
@@ -272,6 +296,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           'Model loaded: ${picked.name}',
         );
       } else {
+        setState(() {
+          _parsedModel = ParsedModel.createProceduralDefault(name: picked.name);
+          _modelBytes = null;
+          _activeStep = 1;
+        });
         _showMessage('Loaded ${picked.name} (procedural fallback)');
       }
     } catch (e) {
@@ -280,23 +309,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 
   void _autoRigModel() {
-    final model = _parsedModel;
-    if (model == null) {
-      _pickModel();
-      return;
-    }
-
-    final detection = AutoDetector.detect(model);
-    setState(() {
-      _detection = detection;
-      _selectedBodyNodeIndex = detection.body?.nodeIndex;
-      _drive = detection.suggestedDrive;
-      _mapDetectedWheels(detection.wheels);
-      _activeStep = 1;
-    });
-    _showMessage(
-      'Model processed: ${detection.wheels.length}/4 wheels detected.',
-    );
+    _onStartWheelScan();
   }
 
   void _mapDetectedWheels(List<DetectedWheel> wheels) {
@@ -710,6 +723,13 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           subMeshCount: source.subMeshCount,
         );
       }
+      setState(() {
+        _scanCompleted = true;
+        _highlightFoundWheels = true;
+        _viewportUpdateEpoch++;
+      });
+      final effectiveWheels = _getEffectiveWheelPositions();
+      updateSketchfabWheelMarkers(effectiveWheels);
       _showMessage('Assigned selected part to Wheel $corner & auto-mirrored to $mirrorCorner');
     } else {
       _showMessage('Select a tire in the 3D viewport, then click Pick to assign Wheel $corner');
@@ -727,6 +747,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _mapDetectedWheels(detection.wheels);
       setState(() {
         _detection = detection;
+        _scanCompleted = true;
         _highlightFoundWheels = true;
         _viewportUpdateEpoch++;
       });

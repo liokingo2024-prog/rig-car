@@ -39,5 +39,6 @@ void snapSketchfabModelToGround() {}
 void scaleSketchfabModel(double targetLength) {}
 void updateSketchfabWheelMarkers(List<dynamic> wheels) {}
 void highlightSketchfabWheels(List<String> wheelNodeNames) {}
+void clearSketchfabWheels() {}
 void highlightSketchfabMeshesCyan(dynamic meshNamesOrList) {}
 dynamic detectSketchfabWheels({double groundTol = 0.08, double inboardTol = 0.015}) => null;

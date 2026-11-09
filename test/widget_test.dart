@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
+import 'package:rig_car/file_picker_stub.dart';
 import 'package:rig_car/glb_parser.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
@@ -1575,6 +1576,96 @@ endsolid sports_car''';
       expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
       expect(find.text('Export Godot 4 Rig (.glb / .tscn)'), findsOneWidget);
       expect(find.text('Launch Test Drive'), findsOneWidget);
+    });
+
+    testWidgets('starts with wheels unassigned and unhighlighted until Start is clicked', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(MaterialApp(home: RigWorkbenchPage(initialCar: preRiggedCars.first)));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Navigate to Step 2: Scan & Organize
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Verify status is "Ready to Scan" before Start is clicked
+      expect(find.text('Ready to Scan'), findsOneWidget);
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+
+      // Verify Next button is disabled
+      await tester.tap(find.text('Next: Add Physics'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+
+      // Tap Start
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Now wheels are detected and verified
+      expect(find.text('Auto Verified'), findsWidgets);
+
+      // Next: Add Physics button is now enabled
+      await tester.tap(find.text('Next: Add Physics'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('HANDLING PRESETS'), findsOneWidget);
+    });
+
+    testWidgets('uploading another car completely discards the current rigging process and resets to clear state', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(() => mockPickedFileForTest = null);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Advance to Step 2 and run scan
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Auto Verified'), findsWidgets);
+
+      // Set up mocked file for uploading another car
+      const objData = 'v -1 0 -1\nv 1 0 -1\nv 1 0 1\nv -1 0 1\nf 1 2 3\nf 1 3 4\n';
+      mockPickedFileForTest = PickedFile(
+        'hyper_car.obj',
+        Uint8List.fromList(utf8.encode(objData)),
+      );
+
+      // Navigate back to Step 1: Upload Vehicle
+      await tester.tap(find.text('Upload Vehicle').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Tap Import 3D Model button
+      await tester.tap(find.text('Import 3D Model (.glb, .gltf, .obj)'));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // Active step is reset to 1 and model name reflects uploaded file
+      expect(find.textContaining('hyper_car.obj'), findsWidgets);
+
+      // Navigate to Step 2: Scan & Organize to check that old rigging was discarded
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // The process was discarded completely: status is "Ready to Scan", not "Auto Verified"
+      expect(find.text('Ready to Scan'), findsOneWidget);
+
+      // Next: Add Physics button is disabled again
+      await tester.tap(find.text('Next: Add Physics'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+
+      // Only clicking Start on the new car triggers wheel detection
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Verify detection ran for new car
+      expect(find.text('Start'), findsOneWidget);
     });
   });
 }

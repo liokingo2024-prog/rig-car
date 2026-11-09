@@ -1065,7 +1065,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const SizedBox(height: 18),
         _NextStepButton(
           label: 'Next: Add Physics',
-          onPressed: (widget.isScanDone || widget.assignedWheels.values.whereType<DetectedWheel>().length >= 4)
+          onPressed: (widget.isScanDone && widget.assignedWheels.values.whereType<DetectedWheel>().length >= 4)
               ? () => widget.onStepSelect(3)
               : null,
         ),

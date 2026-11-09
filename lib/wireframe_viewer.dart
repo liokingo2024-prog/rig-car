@@ -140,7 +140,7 @@ class _WireframeViewerState extends State<WireframeViewer>
   @override
   void initState() {
     super.initState();
-    _showMarkers = widget.highlightWheels || (widget.detection?.wheels.isNotEmpty ?? false);
+    _showMarkers = widget.highlightWheels;
     _resetCameraToModel();
     _animController =
         AnimationController(
@@ -166,8 +166,8 @@ class _WireframeViewerState extends State<WireframeViewer>
     if (widget.model != oldWidget.model && widget.model != null) {
       _resetCameraToModel();
     }
-    if (widget.highlightWheels != oldWidget.highlightWheels && widget.highlightWheels) {
-      _showMarkers = true;
+    if (widget.highlightWheels != oldWidget.highlightWheels) {
+      _showMarkers = widget.highlightWheels;
     }
   }
 
@@ -721,7 +721,7 @@ class _WireframeViewerState extends State<WireframeViewer>
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  if (widget.detection != null && widget.detection!.wheels.isNotEmpty) ...[
+                  if (widget.highlightWheels && widget.detection != null && widget.detection!.wheels.isNotEmpty) ...[
                     _LegendItem(color: widget.wheelColor, label: 'Wheels'),
                     const SizedBox(width: 8),
                   ],
@@ -729,8 +729,8 @@ class _WireframeViewerState extends State<WireframeViewer>
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
                   const SizedBox(width: 16),
-                // Toggle markers (only shown when detection markers are present)
-                if (widget.detection != null && widget.detection!.wheels.isNotEmpty)
+                // Toggle markers (only shown when detection markers are present and highlighted)
+                if (widget.highlightWheels && widget.detection != null && widget.detection!.wheels.isNotEmpty)
                   IconButton(
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
@@ -1196,7 +1196,7 @@ class _WireframeScenePainter extends CustomPainter {
     }
 
     // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
-    if ((showMarkers || highlightWheels) && (detection?.wheels.isNotEmpty ?? false)) {
+    if (highlightWheels && showMarkers && (detection?.wheels.isNotEmpty ?? false)) {
       _drawMarkers(canvas, size, projectPoint);
     }
   }
@@ -2524,8 +2524,8 @@ class _WireframeScenePainter extends CustomPainter {
       ..color = bodyColor.withValues(alpha: 0.8)
       ..strokeWidth = 1.2;
     final wheelPaint = Paint()
-      ..color = wheelColor
-      ..strokeWidth = 1.4;
+      ..color = highlightWheels ? const Color(0xFF10B981) : wireColor
+      ..strokeWidth = highlightWheels ? 2.0 : 1.3;
 
     // Body chassis wireframe vertices
     final bodyCorners = [
