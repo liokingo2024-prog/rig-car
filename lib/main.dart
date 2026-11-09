@@ -497,7 +497,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     return [
       DetectedMeshGroup(
         id: 1,
-        name: 'Group 1 — 4x Cylindrical (Wheels)',
+        name: 'Outer Tires + Rims (4 corners · Grounded)',
         count: 4,
         shapeType: 'Cylindrical',
         role: 'Spin (Wheel)',
@@ -505,27 +505,19 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       ),
       DetectedMeshGroup(
         id: 2,
-        name: 'Group 2 — 2x Front Caliper Pair',
-        count: 2,
+        name: 'Brake Discs / Calipers (4x · Coaxial)',
+        count: 4,
         shapeType: 'Box',
-        role: 'Steer Only (Caliper)',
-        isEnabled: true,
+        role: 'Steer Only (Knuckle/Caliper)',
+        isEnabled: false,
       ),
       DetectedMeshGroup(
         id: 3,
-        name: 'Group 3 — 2x Rear Caliper / Exhaust',
-        count: 2,
-        shapeType: 'Cylindrical',
-        role: 'Static (Chassis/Exhaust)',
-        isEnabled: true,
-      ),
-      DetectedMeshGroup(
-        id: 4,
-        name: 'Group 4 — 4x Rim Caps & Hub Rings',
+        name: 'Suspension Uprights / Knuckles (4x · Inboard)',
         count: 4,
-        shapeType: 'Cylindrical',
-        role: 'Spin (Wheel)',
-        isEnabled: true,
+        shapeType: 'Irregular',
+        role: 'Static (Chassis)',
+        isEnabled: false,
       ),
     ];
   }
@@ -688,16 +680,61 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   void _onPickWheelInViewport(String corner) {
     if (_selectedNodeIndex != null) {
       _reassignWheel(corner, _selectedNodeIndex);
-      _showMessage('Assigned selected part to Wheel $corner');
+      final mirrorCorner = corner == 'FL'
+          ? 'FR'
+          : (corner == 'FR'
+              ? 'FL'
+              : (corner == 'RL' ? 'RR' : 'RL'));
+      final source = _assignedWheels[corner];
+      if (source != null) {
+        final mirroredPos = Vec3(
+          -source.worldPosition.x,
+          source.worldPosition.y,
+          source.worldPosition.z,
+        );
+        final mirrorAxle = mirrorCorner.startsWith('F') ? 'front' : 'rear';
+        final mirrorSide = mirrorCorner.endsWith('L') ? 'left' : 'right';
+        _assignedWheels[mirrorCorner] = DetectedWheel(
+          nodeIndex: source.nodeIndex,
+          nodeName: '${source.nodeName}_mirrored',
+          worldPosition: mirroredPos,
+          confidence: source.confidence,
+          meshIndex: source.meshIndex,
+          partNodeIndices: source.partNodeIndices,
+          partIds: source.partIds,
+          axle: mirrorAxle,
+          side: mirrorSide,
+          radius: source.radius,
+          width: source.width,
+          circularity: source.circularity,
+          subMeshCount: source.subMeshCount,
+        );
+      }
+      _showMessage('Assigned selected part to Wheel $corner & auto-mirrored to $mirrorCorner');
     } else {
-      _showMessage('Select a node in the 3D viewport, then click Pick to assign Wheel $corner');
+      _showMessage('Select a tire in the 3D viewport, then click Pick to assign Wheel $corner');
     }
   }
 
   void _onRecalculateHeightFilter(double threshold) {
     if (_parsedModel != null) {
-      _autoRigModel();
-      _showMessage('Re-calculated wheel detection with ${threshold.round()}% height cutoff');
+      final groundTol = (threshold / 100.0).clamp(0.02, 0.25);
+      final detection = AutoDetector.detect(
+        _parsedModel!,
+        groundTolRatio: groundTol,
+        inboardTolRatio: 0.015,
+      );
+      _mapDetectedWheels(detection.wheels);
+      setState(() {
+        _detection = detection;
+        _highlightFoundWheels = true;
+        _viewportUpdateEpoch++;
+      });
+      final effectiveWheels = _getEffectiveWheelPositions();
+      updateSketchfabWheelMarkers(effectiveWheels);
+      final wheelNames = detection.wheels.map((w) => w.nodeName).toList();
+      highlightSketchfabWheels(wheelNames);
+      _showMessage('Re-run detection with ${threshold.round()}% ground tolerance cutoff');
     } else {
       _showMessage('Import a model first to run wheel detection');
     }
@@ -805,9 +842,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() {
       if (partId == null) {
         _hoveredNodeIndex = null;
+        highlightSketchfabMeshesCyan(null);
       } else if (partId.startsWith('wheel_')) {
         final slot = partId.substring('wheel_'.length).toUpperCase();
         _hoveredNodeIndex = _assignedWheels[slot]?.nodeIndex;
+        highlightSketchfabMeshesCyan([slot, 'wheel', 'tire']);
       } else if (partId.startsWith('group_')) {
         final id = int.tryParse(partId.substring('group_'.length));
         final grp = _detectedGroups.firstWhere(
@@ -817,6 +856,13 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         _hoveredNodeIndex = grp.nodeIndices.isNotEmpty
             ? grp.nodeIndices.first
             : null;
+        if (id == 1) {
+          highlightSketchfabMeshesCyan(['wheel', 'tire', 'tyre', 'rim']);
+        } else if (id == 2) {
+          highlightSketchfabMeshesCyan(['caliper', 'disc', 'brake']);
+        } else if (id == 3) {
+          highlightSketchfabMeshesCyan(['knuckle', 'upright', 'suspension', 'arm', 'wishbone']);
+        }
       } else if (partId == 'model_root' ||
           partId == 'bbox' ||
           partId == 'ground_plane' ||
@@ -824,6 +870,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         _hoveredNodeIndex = _selectedBodyNodeIndex;
       } else {
         _hoveredNodeIndex = null;
+        highlightSketchfabMeshesCyan(null);
       }
     });
   }

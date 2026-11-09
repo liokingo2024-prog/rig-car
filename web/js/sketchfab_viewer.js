@@ -1186,15 +1186,240 @@
     });
   }
 
-  function highlightWheelMeshes(wheelNodeNames) {
-    if (!currentModel) return;
-    const names = Array.isArray(wheelNodeNames) && wheelNodeNames.length > 0
-      ? wheelNodeNames.map(n => (n || '').toLowerCase())
-      : ['wheel', 'tire', 'tyre', 'rim'];
+  let detectedWheelData = null;
+
+  function detectWheels(options) {
+    if (!currentModel) return null;
+    currentModel.updateMatrixWorld(true);
+
+    const groundTol = (options && options.groundTolerance != null) ? options.groundTolerance : 0.08;
+    const inbTol = (options && options.inboardCaptureWidth != null) ? options.inboardCaptureWidth : 0.015;
+
+    // Step A: Bounding Box & Axis Normalization
+    const carBox = new THREE.Box3().setFromObject(currentModel);
+    const carSize = carBox.getSize(new THREE.Vector3());
+    const carCenter = carBox.getCenter(new THREE.Vector3());
+
+    const fAxis = carSize.z >= carSize.x ? 'z' : 'x';
+    const lAxis = fAxis === 'z' ? 'x' : 'z';
+    const carLength = Math.max(0.001, carSize[fAxis]);
+    const carWidth = Math.max(0.001, carSize[lAxis]);
+    const carHeight = Math.max(0.001, carSize.y);
+    const groundY = carBox.min.y;
+
+    // Step B: Per-Part Geometric Scoring
+    const allParts = [];
     currentModel.traverse(function(child) {
       if (child.isMesh) {
+        child.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(child);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const dForward = size[fAxis];
+        const dUp = size.y;
+        const dLat = size[lAxis];
+        const diameter = Math.max(dForward, dUp);
+        const circularity = diameter > 1e-5 ? Math.min(dForward, dUp) / diameter : 0.0;
+        const heightAboveGround = Math.max(0, box.min.y - groundY);
+        const groundScore = Math.max(0, 1.0 - heightAboveGround / Math.max(1e-4, groundTol * carHeight));
+        const outerLatDist = Math.max(Math.abs(box.min[lAxis] - carCenter[lAxis]), Math.abs(box.max[lAxis] - carCenter[lAxis]));
+        const outerScore = Math.min(1.0, outerLatDist / Math.max(1e-4, 0.48 * carWidth));
+        const sizeScore = Math.min(1.0, diameter / Math.max(1e-4, 0.22 * carLength));
+
         const cName = (child.name || '').toLowerCase();
-        const isWheel = names.some(n => cName.includes(n));
+        const namedWheel = cName.includes('wheel') || cName.includes('tire') || cName.includes('tyre');
+
+        const isEligible = (
+          (circularity >= (namedWheel ? 0.60 : 0.80)) &&
+          (groundScore >= (namedWheel ? 0.20 : 0.35)) &&
+          (diameter >= 0.10 * carLength && diameter <= 0.36 * carLength) &&
+          (dLat >= 0.12 * diameter && dLat <= 0.95 * diameter) &&
+          (Math.abs(center[lAxis] - carCenter[lAxis]) > 0.22 * carWidth)
+        );
+
+        const score = 0.35 * groundScore + 0.25 * circularity + 0.25 * outerScore + 0.15 * sizeScore;
+
+        allParts.push({
+          mesh: child,
+          name: child.name || ('mesh_' + allParts.length),
+          box: box,
+          size: size,
+          center: center,
+          dForward: dForward,
+          dUp: dUp,
+          dLat: dLat,
+          diameter: diameter,
+          circularity: circularity,
+          groundScore: groundScore,
+          outerScore: outerScore,
+          sizeScore: sizeScore,
+          isEligible: isEligible,
+          score: score
+        });
+      }
+    });
+
+    // Step C: 4-Quadrant Bucketing & 2+2 Axle Symmetry
+    const quadrantMap = { FL: [], FR: [], RL: [], RR: [] };
+    const eligibleParts = allParts.filter(p => p.isEligible);
+
+    eligibleParts.forEach(part => {
+      const isFront = part.center[fAxis] <= carCenter[fAxis];
+      const isLeft = part.center[lAxis] <= carCenter[lAxis];
+      const corner = (isFront ? 'F' : 'R') + (isLeft ? 'L' : 'R');
+      quadrantMap[corner].push(part);
+    });
+
+    Object.keys(quadrantMap).forEach(k => {
+      quadrantMap[k].sort((a, b) => b.score - a.score);
+    });
+
+    function matchAxlePair(leftList, rightList) {
+      if (!leftList.length && !rightList.length) return [null, null];
+      if (!leftList.length) return [null, rightList[0]];
+      if (!rightList.length) return [leftList[0], null];
+
+      let bestL = leftList[0], bestR = rightList[0], bestScore = -Infinity;
+      for (const l of leftList) {
+        for (const r of rightList) {
+          const maxD = Math.max(l.diameter, r.diameter);
+          const diffD = maxD > 1e-4 ? Math.abs(l.diameter - r.diameter) / maxD : 0;
+          const maxW = Math.max(l.dLat, r.dLat);
+          const diffW = maxW > 1e-4 ? Math.abs(l.dLat - r.dLat) / maxW : 0;
+          const diffPos = Math.abs(l.center[fAxis] - r.center[fAxis]);
+
+          let bonus = 0;
+          if (diffD <= 0.06) bonus += 0.5;
+          if (diffW <= 0.08) bonus += 0.5;
+          if (diffPos <= 0.05 * carLength) bonus += 0.5;
+
+          const pairScore = l.score + r.score + bonus;
+          if (pairScore > bestScore) {
+            bestScore = pairScore;
+            bestL = l;
+            bestR = r;
+          }
+        }
+      }
+      return [bestL, bestR];
+    }
+
+    const [flTire, frTire] = matchAxlePair(quadrantMap.FL, quadrantMap.FR);
+    const [rlTire, rrTire] = matchAxlePair(quadrantMap.RL, quadrantMap.RR);
+
+    const lockedTires = { FL: flTire, FR: frTire, RL: rlTire, RR: rrTire };
+
+    // Staggered check (2+2 vs 4x)
+    let isStaggered = false;
+    if (flTire && rlTire) {
+      const diffDiam = Math.abs(flTire.diameter - rlTire.diameter) / Math.max(flTire.diameter, rlTire.diameter);
+      const diffW = Math.abs(flTire.dLat - rlTire.dLat) / Math.max(flTire.dLat, rlTire.dLat);
+      if (diffDiam > 0.06 || diffW > 0.06) {
+        isStaggered = true;
+      }
+    }
+
+    // Step D: Coaxial Inner-Rim & Spoke Merging
+    const allWheelMeshes = new Set();
+    const wheelsResult = {};
+    const brakeDiscsParts = [];
+    const suspensionKnuckleParts = [];
+
+    Object.entries(lockedTires).forEach(([corner, tire]) => {
+      if (!tire) return;
+      const tireRadius = tire.diameter * 0.5;
+      const merged = [tire.mesh];
+      allWheelMeshes.add(tire.mesh);
+
+      const tireLoLat = tire.box.min[lAxis];
+      const tireHiLat = tire.box.max[lAxis];
+
+      allParts.forEach(part => {
+        if (part.mesh === tire.mesh) return;
+
+        // 1. Coaxial Spin Center
+        const isCoaxial = Math.abs(part.center.y - tire.center.y) < (0.08 * tireRadius) &&
+                          Math.abs(part.center[fAxis] - tire.center[fAxis]) < (0.08 * tireRadius);
+        // 2. Fits Radially Inside Tire
+        const fitsRadially = part.diameter <= tire.diameter * 1.02;
+        // 3. Fits Strictly Inside Tire Lateral Width (blocks inboard knuckles!)
+        const fitsLat = part.box.min[lAxis] >= (tireLoLat - inbTol * carWidth) &&
+                        part.box.max[lAxis] <= (tireHiLat + inbTol * carWidth);
+        // 4. Circular Symmetry
+        const isCircular = part.circularity >= 0.75;
+
+        if (isCoaxial && fitsRadially && fitsLat && isCircular) {
+          merged.push(part.mesh);
+          allWheelMeshes.add(part.mesh);
+        } else if (isCoaxial && fitsRadially && (!isCircular || part.groundScore < 0.35)) {
+          brakeDiscsParts.push(part.mesh);
+        } else if (Math.abs(part.center.y - tire.center.y) < 0.25 * carHeight &&
+                   Math.abs(part.center[fAxis] - tire.center[fAxis]) < 0.15 * carLength &&
+                   !fitsLat) {
+          // Part pokes inboard past inner tire sidewall -> suspension knuckle!
+          suspensionKnuckleParts.push(part.mesh);
+        }
+      });
+
+      wheelsResult[corner] = {
+        name: tire.name,
+        mesh: tire.mesh,
+        x: tire.center.x,
+        y: tire.center.y,
+        z: tire.center.z,
+        radius: tireRadius,
+        width: tire.dLat,
+        circularity: tire.circularity,
+        subMeshCount: merged.length,
+        meshes: merged
+      };
+    });
+
+    detectedWheelData = {
+      wheels: wheelsResult,
+      allWheelMeshes: Array.from(allWheelMeshes),
+      isStaggered: isStaggered,
+      loosePartsCount: allParts.length,
+      candidateGroups: [
+        { id: 1, name: 'Outer Tires + Rims (4 corners · Grounded)', count: Object.keys(wheelsResult).length, role: 'Spin (Wheel)', isEnabled: true, meshes: Array.from(allWheelMeshes) },
+        { id: 2, name: 'Brake Discs / Calipers (4x · Coaxial)', count: 4, role: 'Steer Only (Knuckle/Caliper)', isEnabled: false, meshes: brakeDiscsParts },
+        { id: 3, name: 'Suspension Uprights / Knuckles (4x · Inboard)', count: 4, role: 'Static (Chassis)', isEnabled: false, meshes: suspensionKnuckleParts }
+      ]
+    };
+
+    return detectedWheelData;
+  }
+
+  function highlightWheelMeshes(wheelNodeNames) {
+    if (!currentModel) return;
+
+    // Reset previous overrides if any
+    currentModel.traverse(function(child) {
+      if (child.isMesh && child.userData.origMaterial) {
+        child.material = child.userData.origMaterial;
+        delete child.userData.origMaterial;
+      }
+    });
+
+    let targets = null;
+    if (detectedWheelData && detectedWheelData.allWheelMeshes && detectedWheelData.allWheelMeshes.length > 0) {
+      targets = new Set(detectedWheelData.allWheelMeshes);
+    }
+
+    currentModel.traverse(function(child) {
+      if (child.isMesh) {
+        let isWheel = false;
+        if (targets) {
+          isWheel = targets.has(child);
+        } else {
+          const names = Array.isArray(wheelNodeNames) && wheelNodeNames.length > 0
+            ? wheelNodeNames.map(n => (n || '').toLowerCase())
+            : ['wheel', 'tire', 'tyre', 'rim'];
+          const cName = (child.name || '').toLowerCase();
+          isWheel = names.some(n => cName.includes(n));
+        }
+
         if (isWheel) {
           if (!child.userData.origMaterial) {
             child.userData.origMaterial = child.material;
@@ -1203,6 +1428,42 @@
             color: 0x10b981,
             emissive: 0x059669,
             emissiveIntensity: 0.5,
+            roughness: 0.2,
+            metalness: 0.8
+          });
+        }
+      }
+    });
+  }
+
+  function highlightMeshesCyan(meshNamesOrList) {
+    if (!currentModel) return;
+    currentModel.traverse(function(child) {
+      if (child.isMesh && child.userData.cyanOverride) {
+        child.material = child.userData.origMaterial || child.material;
+        delete child.userData.cyanOverride;
+      }
+    });
+
+    if (!meshNamesOrList) return;
+
+    const nameList = Array.isArray(meshNamesOrList)
+      ? meshNamesOrList.map(n => (typeof n === 'string' ? n.toLowerCase() : ''))
+      : [String(meshNamesOrList).toLowerCase()];
+
+    currentModel.traverse(function(child) {
+      if (child.isMesh) {
+        const cName = (child.name || '').toLowerCase();
+        const matches = nameList.some(n => cName.includes(n) || (child.uuid && child.uuid === n));
+        if (matches) {
+          if (!child.userData.origMaterial) {
+            child.userData.origMaterial = child.material;
+          }
+          child.userData.cyanOverride = true;
+          child.material = new THREE.MeshStandardMaterial({
+            color: 0x00e5ff,
+            emissive: 0x008ba3,
+            emissiveIntensity: 0.7,
             roughness: 0.2,
             metalness: 0.8
           });
@@ -1239,7 +1500,9 @@
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
     setWheelMarkers: setWheelMarkers,
+    detectWheels: detectWheels,
     highlightWheelMeshes: highlightWheelMeshes,
+    highlightMeshesCyan: highlightMeshesCyan,
     rotateModel: rotateModel,
     flipModel: flipModel,
     snapToGround: snapToGround,

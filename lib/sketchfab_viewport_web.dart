@@ -228,3 +228,31 @@ void highlightSketchfabWheels(List<String> wheelNodeNames) {
     debugPrint('highlightSketchfabWheels error: $e');
   }
 }
+
+void highlightSketchfabMeshesCyan(dynamic meshNamesOrList) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('highlightMeshesCyan', [js.JsObject.jsify(meshNamesOrList)]);
+    }
+  } catch (e) {
+    debugPrint('highlightSketchfabMeshesCyan error: $e');
+  }
+}
+
+dynamic detectSketchfabWheels({double groundTol = 0.08, double inboardTol = 0.015}) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      return viewer.callMethod('detectWheels', [
+        js.JsObject.jsify({
+          'groundTolerance': groundTol,
+          'inboardCaptureWidth': inboardTol,
+        })
+      ]);
+    }
+  } catch (e) {
+    debugPrint('detectSketchfabWheels error: $e');
+  }
+  return null;
+}

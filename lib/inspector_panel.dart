@@ -156,8 +156,8 @@ class _InspectorPanelState extends State<InspectorPanel> {
   bool _isUploadCollapsed = true;
 
   // Step 2 local filters
-  double _heightCutoffPercent = 35.0; // 15% - 60%
-  double _hubCaptureRadius = 0.38; // 0.20m - 0.60m
+  double _groundTolerancePercent = 8.0; // 2% - 25% of car height
+  double _inboardCapturePercent = 1.5; // 0% - 10% of car width
 
   @override
   void initState() {
@@ -815,11 +815,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
               ? Icons.check_circle_rounded
               : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
           iconColor: isDone ? _Palette.accentEmerald : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
-          title: '2. Similarity Match (2s & 4s)',
+          title: '2. Axle Symmetry & Circularity (2+2 / 4x)',
           metric: isDone
-              ? '4-wheel cluster matched (4x identical geometry)'
-              : (isScanning ? 'Matching geometry clusters...' : 'Pending cluster similarity match'),
-          description: 'Matched geometry groups by vertex count & bounding volume.',
+              ? '${(widget.detection?.isStaggered ?? false) ? '2+2 Staggered Axles (Front/Rear)' : '4x Identical Wheels'} · Circularity: ${((widget.detection?.averageCircularity ?? 0.98) * 100).round()}%'
+              : (isScanning ? 'Matching axle symmetry & circularity...' : 'Pending cluster similarity match'),
+          description: 'Enforces left-right symmetry and side-profile circularity.',
           onHover: (hover) => widget.onHoverPart(hover ? 'groups_match' : null),
         ),
         const SizedBox(height: 8),
@@ -830,13 +830,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
           iconColor: isDone
               ? (hasWarnings ? _Palette.accentAmber : _Palette.accentEmerald)
               : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
-          title: '3. Lower-Corner & Height Filter',
+          title: '3. Ground Contact & Outer-Track Filter',
           metric: isDone
-              ? (hasWarnings
-                  ? 'Warning: Some clusters outside Y < 35% zone'
-                  : 'Y < 35% car height verified (4/4 corners)')
-              : (isScanning ? 'Filtering 4 symmetric outer corners...' : 'Pending height cutoff check'),
-          description: 'Checks candidate groups in 4 symmetric outer-track corners.',
+              ? 'Ground contact verified (Y_min ≈ 0m) · Inboard suspension excluded'
+              : (isScanning ? 'Filtering 4 symmetric outer corners...' : 'Pending ground & outer-track filter'),
+          description: 'Eliminates floating calipers & inboard suspension knuckles.',
           onHover: (hover) => widget.onHoverPart(hover ? 'height_filter' : null),
         ),
         const SizedBox(height: 8),
@@ -847,9 +845,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
           iconColor: isDone ? _Palette.accentEmerald : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '4. Hub Center & Radius Math',
           metric: isDone
-              ? 'FL: R=${_formatWheelR(fl)} · FR: R=${_formatWheelR(fr)}\nRL: R=${_formatWheelR(rl)} · RR: R=${_formatWheelR(rr)}'
+              ? 'FL: R=${_formatWheelR(fl)} W=${_formatWheelW(fl)} (${fl?.subMeshCount ?? 1} parts) · FR: R=${_formatWheelR(fr)} W=${_formatWheelW(fr)} (${fr?.subMeshCount ?? 1} parts)\nRL: R=${_formatWheelR(rl)} W=${_formatWheelW(rl)} (${rl?.subMeshCount ?? 1} parts) · RR: R=${_formatWheelR(rr)} W=${_formatWheelW(rr)} (${rr?.subMeshCount ?? 1} parts)'
               : (isScanning ? 'Computing spin axes & cylinder fit...' : 'Pending hub & pivot calculation'),
-          description: 'Calculated spin pivots & cylinder radius for all wheels.',
+          description: 'Calculated spin pivots, tire radius & coaxial rims for all wheels.',
           onHover: (hover) => widget.onHoverPart(hover ? 'wheel_hubs' : null),
         ),
         const SizedBox(height: 18),
@@ -906,7 +904,12 @@ class _InspectorPanelState extends State<InspectorPanel> {
 
   String _formatWheelR(DetectedWheel? wheel) {
     if (wheel == null) return '0.34m';
-    return '0.34m';
+    return '${wheel.radius.toStringAsFixed(2)}m';
+  }
+
+  String _formatWheelW(DetectedWheel? wheel) {
+    if (wheel == null) return '0.25m';
+    return '${wheel.width.toStringAsFixed(2)}m';
   }
 
   Widget _buildStep2Manual() {
@@ -950,13 +953,13 @@ class _InspectorPanelState extends State<InspectorPanel> {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Max Wheel Height Cutoff',
+                      'Ground Tolerance',
                       style: TextStyle(color: _Palette.textPrimary, fontSize: 11),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text('${_heightCutoffPercent.round()}% of car height', style: const TextStyle(color: _Palette.textMetrics, fontFamily: 'monospace', fontSize: 11)),
+                  Text('${_groundTolerancePercent.round()}% of car height', style: const TextStyle(color: _Palette.textMetrics, fontFamily: 'monospace', fontSize: 11)),
                 ],
               ),
               SliderTheme(
@@ -968,10 +971,10 @@ class _InspectorPanelState extends State<InspectorPanel> {
                   trackHeight: 3,
                 ),
                 child: Slider(
-                  value: _heightCutoffPercent,
-                  min: 15.0,
-                  max: 60.0,
-                  onChanged: (val) => setState(() => _heightCutoffPercent = val),
+                  value: _groundTolerancePercent,
+                  min: 2.0,
+                  max: 25.0,
+                  onChanged: (val) => setState(() => _groundTolerancePercent = val),
                   onChangeEnd: (val) => widget.onRecalculateHeightFilter(val),
                 ),
               ),
@@ -981,13 +984,13 @@ class _InspectorPanelState extends State<InspectorPanel> {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Hub Capture Radius',
+                      'Inboard Rim Capture Width',
                       style: TextStyle(color: _Palette.textPrimary, fontSize: 11),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text('${_hubCaptureRadius.toStringAsFixed(2)}m', style: const TextStyle(color: _Palette.textMetrics, fontFamily: 'monospace', fontSize: 11)),
+                  Text('${_inboardCapturePercent.toStringAsFixed(1)}% of car width', style: const TextStyle(color: _Palette.textMetrics, fontFamily: 'monospace', fontSize: 11)),
                 ],
               ),
               SliderTheme(
@@ -999,16 +1002,16 @@ class _InspectorPanelState extends State<InspectorPanel> {
                   trackHeight: 3,
                 ),
                 child: Slider(
-                  value: _hubCaptureRadius,
-                  min: 0.20,
-                  max: 0.60,
-                  onChanged: (val) => setState(() => _hubCaptureRadius = val),
+                  value: _inboardCapturePercent,
+                  min: 0.0,
+                  max: 10.0,
+                  onChanged: (val) => setState(() => _inboardCapturePercent = val),
                 ),
               ),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: () => widget.onRecalculateHeightFilter(_heightCutoffPercent),
+                  onPressed: () => widget.onRecalculateHeightFilter(_groundTolerancePercent),
                   icon: const Icon(Icons.refresh_rounded, size: 14, color: _Palette.accentEmerald),
                   label: const Text('Re-run Detection with Overrides', style: TextStyle(color: _Palette.accentEmerald, fontSize: 11)),
                 ),
@@ -1651,8 +1654,16 @@ class _GroupRowCardState extends State<_GroupRowCard> {
                             child: Text('Spin (Wheel)'),
                           ),
                           DropdownMenuItem(
+                            value: 'Steer Only (Knuckle/Caliper)',
+                            child: Text('Steer Only (Knuckle/Caliper)'),
+                          ),
+                          DropdownMenuItem(
                             value: 'Steer Only (Caliper)',
                             child: Text('Steer Only (Caliper)'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Static (Chassis)',
+                            child: Text('Static (Chassis)'),
                           ),
                           DropdownMenuItem(
                             value: 'Static (Chassis/Exhaust)',
@@ -1732,7 +1743,9 @@ class _WheelSlotRow extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                wheel != null ? 'R = 0.34m · ${wheel!.nodeName}' : 'R = 0.34m · Unassigned',
+                wheel != null
+                    ? 'R = ${wheel!.radius.toStringAsFixed(2)}m (${wheel!.subMeshCount} meshes) · ${wheel!.nodeName}'
+                    : 'R = 0.34m · Unassigned',
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: _Palette.textSecondary,
@@ -1744,7 +1757,7 @@ class _WheelSlotRow extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: onPick,
               icon: const Icon(Icons.gps_fixed_rounded, size: 12),
-              label: const Text('Pick in Viewport', style: TextStyle(fontSize: 9.5)),
+              label: const Text('🎯 Pick in 3D', style: TextStyle(fontSize: 9.5)),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _Palette.textPrimary,
                 side: const BorderSide(color: _Palette.borderDefault),

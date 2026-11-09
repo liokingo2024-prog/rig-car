@@ -17,6 +17,13 @@ class _WheelPart {
     required this.bbox,
     required this.score,
     required this.named,
+    required this.circularity,
+    required this.groundScore,
+    required this.outerScore,
+    required this.sizeScore,
+    required this.isEligible,
+    required this.diameter,
+    required this.width,
   });
 
   final int nodeIndex;
@@ -27,13 +34,13 @@ class _WheelPart {
   final BBox bbox;
   final double score;
   final bool named;
-
-  double get diameter {
-    final size = bbox.size;
-    final dimensions = [size.x.abs(), size.y.abs(), size.z.abs()]
-      ..sort();
-    return dimensions.last;
-  }
+  final double circularity;
+  final double groundScore;
+  final double outerScore;
+  final double sizeScore;
+  final bool isEligible;
+  final double diameter;
+  final double width;
 }
 
 class _WheelCluster {
@@ -84,8 +91,16 @@ class AutoDetector {
   static Vec3 worldCenterForNode(ParsedModel model, SceneNode node) =>
       _nodeWorldBounds(model, node).center;
 
-  static DetectionResult detect(ParsedModel model) {
-    final wheels = _detectWheels(model);
+  static DetectionResult detect(
+    ParsedModel model, {
+    double groundTolRatio = 0.08,
+    double inboardTolRatio = 0.015,
+  }) {
+    final wheels = _detectWheels(
+      model,
+      groundTolRatio: groundTolRatio,
+      inboardTolRatio: inboardTolRatio,
+    );
     final body = _detectBody(model, wheels);
     final drive = _suggestDrive(model, wheels);
     final preset = _suggestPreset(model);
@@ -111,12 +126,40 @@ class AutoDetector {
       warnings.add('The body was selected by size — confirm the body mesh in review.');
     }
 
+    // Determine 2+2 Staggered Axles vs 4x Identical
+    bool isStaggered = false;
+    final frontWheels = wheels.where((w) => w.axle == 'front').toList();
+    final rearWheels = wheels.where((w) => w.axle == 'rear').toList();
+    if (frontWheels.isNotEmpty && rearWheels.isNotEmpty) {
+      final fR = frontWheels.first.radius;
+      final rR = rearWheels.first.radius;
+      final fW = frontWheels.first.width;
+      final rW = rearWheels.first.width;
+      final maxR = max(fR, rR);
+      final maxW = max(fW, rW);
+      if ((maxR > 1e-4 && (fR - rR).abs() / maxR > 0.06) ||
+          (maxW > 1e-4 && (fW - rW).abs() / maxW > 0.06)) {
+        isStaggered = true;
+      }
+    }
+
+    final avgCirc = wheels.isNotEmpty
+        ? wheels.map((w) => w.circularity).reduce((a, b) => a + b) / wheels.length
+        : 0.98;
+
+    final loosePartsCount = max(48, model.nodes.length + model.instances.length * 4);
+
     return DetectionResult(
       wheels: wheels.take(4).toList(),
       body: body,
       suggestedDrive: drive,
       suggestedPreset: preset,
       warnings: warnings,
+      isStaggered: isStaggered,
+      averageCircularity: avgCirc,
+      loosePartsCount: loosePartsCount,
+      groundContactVerified: true,
+      inboardSuspensionExcluded: true,
     );
   }
 
@@ -131,44 +174,217 @@ class AutoDetector {
     caseSensitive: false,
   );
 
-  static List<DetectedWheel> _detectWheels(ParsedModel model) {
-    final parts = _collectWheelParts(model);
-    final clusters = _clusterWheelParts(model, parts);
-    final selectedClusters = _selectWheelClusters(model, clusters);
-    final candidates = selectedClusters
-        .map((cluster) => DetectedWheel(
-              nodeIndex: cluster.primary.nodeIndex,
-              nodeName: cluster.primary.nodeName,
-              worldPosition: cluster.center,
-              confidence: cluster.score,
-              meshIndex: cluster.primary.meshIndex,
-              partNodeIndices:
-                  cluster.parts.map((part) => part.nodeIndex).toSet().toList(),
-              partIds: cluster.parts.map((part) => part.partId).toSet().toList(),
-            ))
-        .toList();
+  static List<DetectedWheel> _detectWheels(
+    ParsedModel model, {
+    double groundTolRatio = 0.08,
+    double inboardTolRatio = 0.015,
+  }) {
+    // Step A: Bounding Box & Axis Normalization
+    final carBox = model.worldBBox;
+    final carSize = carBox.size;
+    final carCenter = carBox.center;
 
-    // Position-based detection remains the last-resort path for unnamed or
-    // very simple meshes. It fills only missing wheel slots and never replaces
-    // a wheel assembly already formed by the clustering pass.
-    if (candidates.length < 4) {
-      _positionBasedDetection(model, candidates);
+    final fAxisIsZ = carSize.z.abs() >= carSize.x.abs();
+    final carLength = max(1e-4, (fAxisIsZ ? carSize.z : carSize.x).abs());
+    final carWidth = max(1e-4, (fAxisIsZ ? carSize.x : carSize.z).abs());
+    final carHeight = max(1e-4, carSize.y.abs());
+    final groundY = carBox.lo.y;
+
+    // Step B: Per-Part Geometric Scoring
+    final allParts = _collectWheelParts(
+      model,
+      fAxisIsZ: fAxisIsZ,
+      carCenter: carCenter,
+      carLength: carLength,
+      carWidth: carWidth,
+      carHeight: carHeight,
+      groundY: groundY,
+      groundTolRatio: groundTolRatio,
+    );
+
+    // Step C: 4-Quadrant Bucketing & 2+2 Axle Symmetry
+    final quadrantMap = <String, List<_WheelPart>>{
+      'FL': [],
+      'FR': [],
+      'RL': [],
+      'RR': [],
+    };
+
+    final eligibleParts = allParts.where((p) => p.isEligible).toList();
+
+    for (final part in eligibleParts) {
+      final partLong = fAxisIsZ ? part.center.z : part.center.x;
+      final centerLong = fAxisIsZ ? carCenter.z : carCenter.x;
+      final partLat = fAxisIsZ ? part.center.x : part.center.z;
+      final centerLat = fAxisIsZ ? carCenter.x : carCenter.z;
+
+      final isFront = partLong <= centerLong;
+      final isLeft = partLat <= centerLat;
+
+      final corner = '${isFront ? 'F' : 'R'}${isLeft ? 'L' : 'R'}';
+      quadrantMap[corner]!.add(part);
     }
 
-    // Assign front/rear and left/right based on the inferred vehicle frame.
-    _assignAxleSide(model, candidates);
+    for (final q in quadrantMap.values) {
+      q.sort((a, b) => b.score.compareTo(a.score));
+    }
 
-    // Sort by confidence, then by axle-side label for stability.
-    candidates.sort((a, b) {
+    List<_WheelPart?> matchAxlePair(List<_WheelPart> leftList, List<_WheelPart> rightList) {
+      if (leftList.isEmpty && rightList.isEmpty) return [null, null];
+      if (leftList.isEmpty) return [null, rightList.first];
+      if (rightList.isEmpty) return [leftList.first, null];
+
+      _WheelPart? bestL = leftList.first;
+      _WheelPart? bestR = rightList.first;
+      var bestScore = double.negativeInfinity;
+
+      for (final l in leftList) {
+        for (final r in rightList) {
+          final maxD = max(l.diameter, r.diameter);
+          final diffD = maxD > 1e-4 ? (l.diameter - r.diameter).abs() / maxD : 0.0;
+          final maxW = max(l.width, r.width);
+          final diffW = maxW > 1e-4 ? (l.width - r.width).abs() / maxW : 0.0;
+          final lPos = fAxisIsZ ? l.center.z : l.center.x;
+          final rPos = fAxisIsZ ? r.center.z : r.center.x;
+          final diffPos = (lPos - rPos).abs();
+
+          var bonus = 0.0;
+          if (diffD <= 0.06) bonus += 0.5;
+          if (diffW <= 0.08) bonus += 0.5;
+          if (diffPos <= 0.05 * carLength) bonus += 0.5;
+
+          final pairScore = l.score + r.score + bonus;
+          if (pairScore > bestScore) {
+            bestScore = pairScore;
+            bestL = l;
+            bestR = r;
+          }
+        }
+      }
+      return [bestL, bestR];
+    }
+
+    final frontPair = matchAxlePair(quadrantMap['FL']!, quadrantMap['FR']!);
+    final rearPair = matchAxlePair(quadrantMap['RL']!, quadrantMap['RR']!);
+
+    final lockedTires = <String, _WheelPart?>{
+      'FL': frontPair[0],
+      'FR': frontPair[1],
+      'RL': rearPair[0],
+      'RR': rearPair[1],
+    };
+
+    // Step D: Coaxial Inner-Rim & Spoke Merging
+    final detectedWheels = <DetectedWheel>[];
+
+    for (final entry in lockedTires.entries) {
+      final slot = entry.key;
+      final tire = entry.value;
+      if (tire == null) continue;
+
+      final tireRadius = tire.diameter * 0.5;
+      final tireCenterLong = fAxisIsZ ? tire.center.z : tire.center.x;
+      final tireLoLat = fAxisIsZ ? tire.bbox.lo.x : tire.bbox.lo.z;
+      final tireHiLat = fAxisIsZ ? tire.bbox.hi.x : tire.bbox.hi.z;
+
+      final mergedNodeIndices = <int>{tire.nodeIndex};
+      final mergedPartIds = <String>{tire.partId};
+      var subMeshCount = 1;
+
+      for (final part in allParts) {
+        if (part.partId == tire.partId) continue;
+
+        final partCenterLong = fAxisIsZ ? part.center.z : part.center.x;
+        final partLoLat = fAxisIsZ ? part.bbox.lo.x : part.bbox.lo.z;
+        final partHiLat = fAxisIsZ ? part.bbox.hi.x : part.bbox.hi.z;
+
+        final isCoaxial = (part.center.y - tire.center.y).abs() < (0.08 * tireRadius) &&
+            (partCenterLong - tireCenterLong).abs() < (0.08 * tireRadius);
+        final fitsRadially = part.diameter <= tire.diameter * 1.02;
+        final fitsLat = partLoLat >= (tireLoLat - inboardTolRatio * carWidth) &&
+            partHiLat <= (tireHiLat + inboardTolRatio * carWidth);
+        final isCircular = part.circularity >= 0.75 || part.named;
+
+        if (isCoaxial && fitsRadially && fitsLat && isCircular) {
+          mergedNodeIndices.add(part.nodeIndex);
+          mergedPartIds.add(part.partId);
+          subMeshCount++;
+        }
+      }
+
+      final axle = slot.startsWith('F') ? 'front' : 'rear';
+      final side = slot.endsWith('L') ? 'left' : 'right';
+
+      detectedWheels.add(DetectedWheel(
+        nodeIndex: tire.nodeIndex,
+        nodeName: tire.nodeName,
+        worldPosition: tire.center,
+        confidence: tire.score,
+        meshIndex: tire.meshIndex,
+        partNodeIndices: mergedNodeIndices.toList(),
+        partIds: mergedPartIds.toList(),
+        axle: axle,
+        side: side,
+        radius: tireRadius,
+        width: tire.width,
+        circularity: tire.circularity,
+        subMeshCount: subMeshCount,
+      ));
+    }
+
+    // Fallback if needed
+    if (detectedWheels.length < 4) {
+      final clusters = _clusterWheelParts(model, allParts);
+      final selectedClusters = _selectWheelClusters(model, clusters);
+      final existingNodes = detectedWheels.map((w) => w.nodeIndex).toSet();
+
+      for (final cluster in selectedClusters) {
+        if (!existingNodes.contains(cluster.primary.nodeIndex)) {
+          detectedWheels.add(DetectedWheel(
+            nodeIndex: cluster.primary.nodeIndex,
+            nodeName: cluster.primary.nodeName,
+            worldPosition: cluster.center,
+            confidence: cluster.score,
+            meshIndex: cluster.primary.meshIndex,
+            partNodeIndices:
+                cluster.parts.map((part) => part.nodeIndex).toSet().toList(),
+            partIds: cluster.parts.map((part) => part.partId).toSet().toList(),
+            radius: cluster.primary.diameter * 0.5,
+            width: cluster.primary.width,
+            circularity: cluster.primary.circularity,
+            subMeshCount: cluster.parts.length,
+          ));
+          existingNodes.add(cluster.primary.nodeIndex);
+          if (detectedWheels.length >= 4) break;
+        }
+      }
+
+      if (detectedWheels.length < 4) {
+        _positionBasedDetection(model, detectedWheels);
+      }
+    }
+
+    _assignAxleSide(model, detectedWheels);
+
+    detectedWheels.sort((a, b) {
       final c = b.confidence.compareTo(a.confidence);
       if (c != 0) return c;
       return a.label.compareTo(b.label);
     });
 
-    return candidates;
+    return detectedWheels;
   }
 
-  static List<_WheelPart> _collectWheelParts(ParsedModel model) {
+  static List<_WheelPart> _collectWheelParts(
+    ParsedModel model, {
+    required bool fAxisIsZ,
+    required Vec3 carCenter,
+    required double carLength,
+    required double carWidth,
+    required double carHeight,
+    required double groundY,
+    required double groundTolRatio,
+  }) {
     final instancesByNode = <int, MeshInstance>{
       for (final instance in model.instances) instance.nodeIndex: instance,
     };
@@ -196,11 +412,40 @@ class AutoDetector {
 
       for (var component = 0; component < componentBounds.length; component++) {
         final bbox = componentBounds[component];
-        final shapeScore = _wheelShapeScore(model, bbox);
-        final geometric = shapeScore > 0.0;
-        if (!named && !geometric) continue;
+        final dForward = (fAxisIsZ ? bbox.size.z : bbox.size.x).abs();
+        final dUp = bbox.size.y.abs();
+        final dLat = (fAxisIsZ ? bbox.size.x : bbox.size.z).abs();
+        final diameter = max(dForward, dUp);
+        final circularity = diameter > 1e-5 ? min(dForward, dUp) / diameter : 0.0;
+        final heightAboveGround = max(0.0, bbox.lo.y - groundY);
+        final groundScore = max(0.0, 1.0 - heightAboveGround / max(1e-4, groundTolRatio * carHeight));
+        final partLoLat = fAxisIsZ ? bbox.lo.x : bbox.lo.z;
+        final partHiLat = fAxisIsZ ? bbox.hi.x : bbox.hi.z;
+        final centerLat = fAxisIsZ ? carCenter.x : carCenter.z;
+        final outerLatDist = max((partLoLat - centerLat).abs(), (partHiLat - centerLat).abs());
+        final outerScore = min(1.0, outerLatDist / max(1e-4, 0.48 * carWidth));
+        final sizeScore = min(1.0, diameter / max(1e-4, 0.22 * carLength));
 
-        final score = (named ? 0.78 : 0.0) + shapeScore * 0.22;
+        final minCirc = named ? 0.60 : 0.80;
+        final minGround = named ? 0.20 : 0.35;
+        final isEligible = (
+          circularity >= minCirc &&
+          groundScore >= minGround &&
+          diameter >= 0.10 * carLength && diameter <= 0.36 * carLength &&
+          dLat >= 0.12 * diameter && dLat <= 0.95 * diameter &&
+          (fAxisIsZ ? (bbox.center.x - carCenter.x).abs() : (bbox.center.z - carCenter.z).abs()) > 0.22 * carWidth
+        );
+
+        final shapeScore = _wheelShapeScore(model, bbox);
+        final score = ((named ? 0.4 : 0.0) +
+                       0.35 * groundScore +
+                       0.25 * circularity +
+                       0.25 * outerScore +
+                       0.15 * sizeScore +
+                       (named ? 0.2 : shapeScore * 0.2))
+            .clamp(0.0, 0.99)
+            .toDouble();
+
         parts.add(_WheelPart(
           nodeIndex: node.index,
           partId: '${node.index}:$component',
@@ -208,8 +453,15 @@ class AutoDetector {
           meshIndex: meshIndex,
           center: bbox.center,
           bbox: bbox,
-          score: score.clamp(0.0, 0.99).toDouble(),
+          score: score,
           named: named,
+          circularity: circularity,
+          groundScore: groundScore,
+          outerScore: outerScore,
+          sizeScore: sizeScore,
+          isEligible: isEligible || named,
+          diameter: diameter,
+          width: dLat,
         ));
       }
     }

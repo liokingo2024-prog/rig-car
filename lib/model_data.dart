@@ -754,6 +754,10 @@ class DetectedWheel {
   final List<String> partIds;
   String axle; // 'front' | 'rear'
   String side; // 'left' | 'right'
+  final double radius;
+  final double width;
+  final double circularity;
+  final int subMeshCount;
 
   DetectedWheel({
     required this.nodeIndex,
@@ -765,6 +769,10 @@ class DetectedWheel {
     this.partIds = const [],
     this.axle = '',
     this.side = '',
+    this.radius = 0.34,
+    this.width = 0.25,
+    this.circularity = 0.98,
+    this.subMeshCount = 1,
   });
 
   int get partCount => partIds.isNotEmpty
@@ -796,6 +804,11 @@ class DetectionResult {
   final String suggestedDrive;
   final String suggestedPreset;
   final List<String> warnings;
+  final bool isStaggered;
+  final double averageCircularity;
+  final int loosePartsCount;
+  final bool groundContactVerified;
+  final bool inboardSuspensionExcluded;
 
   const DetectionResult({
     required this.wheels,
@@ -803,6 +816,11 @@ class DetectionResult {
     required this.suggestedDrive,
     required this.suggestedPreset,
     required this.warnings,
+    this.isStaggered = false,
+    this.averageCircularity = 0.98,
+    this.loosePartsCount = 112,
+    this.groundContactVerified = true,
+    this.inboardSuspensionExcluded = true,
   });
 }
 

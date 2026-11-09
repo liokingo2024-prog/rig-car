@@ -296,6 +296,168 @@ void main() {
       expect(result.body?.nodeName, 'Car_Body');
     });
 
+    test('4-Quadrant Tire Scoring handles staggered 2+2 axles and rejects inboard knuckles', () {
+      final nodes = <SceneNode>[
+        SceneNode(
+          index: 0,
+          name: 'Root',
+          localTransform: Mat4.identity(),
+          meshIndex: null,
+          childIndices: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+          parentIndex: null,
+        ),
+        SceneNode(
+          index: 1,
+          name: 'Car_Body',
+          localTransform: Mat4.identity(),
+          meshIndex: 0,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        // Front Axle: Diameter 0.60m, Width 0.20m, Grounded Y=0.30
+        SceneNode(
+          index: 2,
+          name: 'FrontTire_L',
+          localTransform: Mat4.fromTRS(const Vec3(-0.85, 0.30, -1.2), Quat.identity, Vec3.one),
+          meshIndex: 1,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        SceneNode(
+          index: 3,
+          name: 'FrontTire_R',
+          localTransform: Mat4.fromTRS(const Vec3(0.85, 0.30, -1.2), Quat.identity, Vec3.one),
+          meshIndex: 1,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        // Rear Axle (Staggered wider & larger): Diameter 0.70m, Width 0.30m, Grounded Y=0.35
+        SceneNode(
+          index: 4,
+          name: 'RearTire_L',
+          localTransform: Mat4.fromTRS(const Vec3(-0.90, 0.35, 1.2), Quat.identity, Vec3.one),
+          meshIndex: 2,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        SceneNode(
+          index: 5,
+          name: 'RearTire_R',
+          localTransform: Mat4.fromTRS(const Vec3(0.90, 0.35, 1.2), Quat.identity, Vec3.one),
+          meshIndex: 2,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        // Inboard Suspension Knuckles (Inboard lateral X=0.45, Higher up Y=0.45, Irregular profile): MUST BE REJECTED
+        SceneNode(
+          index: 6,
+          name: 'Knuckle_FL',
+          localTransform: Mat4.fromTRS(const Vec3(-0.45, 0.45, -1.2), Quat.identity, Vec3.one),
+          meshIndex: 3,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        SceneNode(
+          index: 7,
+          name: 'Knuckle_FR',
+          localTransform: Mat4.fromTRS(const Vec3(0.45, 0.45, -1.2), Quat.identity, Vec3.one),
+          meshIndex: 3,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        SceneNode(
+          index: 8,
+          name: 'Knuckle_RL',
+          localTransform: Mat4.fromTRS(const Vec3(-0.45, 0.45, 1.2), Quat.identity, Vec3.one),
+          meshIndex: 3,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+        SceneNode(
+          index: 9,
+          name: 'Knuckle_RR',
+          localTransform: Mat4.fromTRS(const Vec3(0.45, 0.45, 1.2), Quat.identity, Vec3.one),
+          meshIndex: 3,
+          childIndices: [],
+          parentIndex: 0,
+        ),
+      ];
+
+      for (final n in nodes) {
+        n.worldTransform = n.localTransform;
+      }
+
+      final bodyMesh = MeshData(
+        index: 0,
+        name: 'BodyMesh',
+        vertices: const [Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.4, 2.0)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.4, 2.0)),
+      );
+
+      final frontTireMesh = MeshData(
+        index: 1,
+        name: 'FrontTireMesh',
+        vertices: const [Vec3(-0.10, -0.30, -0.30), Vec3(0.10, 0.30, 0.30)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.10, -0.30, -0.30), Vec3(0.10, 0.30, 0.30)),
+      );
+
+      final rearTireMesh = MeshData(
+        index: 2,
+        name: 'RearTireMesh',
+        vertices: const [Vec3(-0.15, -0.35, -0.35), Vec3(0.15, 0.35, 0.35)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.15, -0.35, -0.35), Vec3(0.15, 0.35, 0.35)),
+      );
+
+      final knuckleMesh = MeshData(
+        index: 3,
+        name: 'KnuckleMesh',
+        vertices: const [Vec3(-0.08, -0.12, -0.25), Vec3(0.08, 0.12, 0.25)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.08, -0.12, -0.25), Vec3(0.08, 0.12, 0.25)),
+      );
+
+      final instances = <MeshInstance>[];
+      instances.add(MeshInstance(
+        nodeIndex: 1,
+        meshIndex: 0,
+        worldVertices: bodyMesh.vertices,
+        edges: bodyMesh.edges,
+        worldBBox: bodyMesh.bbox,
+      ));
+      for (var i = 2; i <= 9; i++) {
+        final node = nodes[i];
+        final mesh = [bodyMesh, frontTireMesh, rearTireMesh, knuckleMesh][node.meshIndex!];
+        instances.add(MeshInstance(
+          nodeIndex: i,
+          meshIndex: node.meshIndex!,
+          worldVertices: mesh.vertices.map(node.localTransform.transformPoint).toList(),
+          edges: mesh.edges,
+          worldBBox: BBox.fromPoints(mesh.vertices.map(node.localTransform.transformPoint).toList()),
+        ));
+      }
+
+      final model = ParsedModel(
+        fileName: 'staggered_car.glb',
+        nodes: nodes,
+        meshes: [bodyMesh, frontTireMesh, rearTireMesh, knuckleMesh],
+        instances: instances,
+        rootNodeIndices: [0],
+        worldBBox: const BBox(Vec3(-1.0, 0.0, -2.0), Vec3(1.0, 1.4, 2.0)),
+      );
+
+      final result = AutoDetector.detect(model);
+      expect(result.wheels.length, 4);
+      expect(result.wheels.every((w) => !w.nodeName.contains('Knuckle')), isTrue);
+      expect(result.wheels.any((w) => w.nodeName == 'FrontTire_L'), isTrue);
+      expect(result.wheels.any((w) => w.nodeName == 'RearTire_R'), isTrue);
+      expect(result.isStaggered, isTrue);
+      expect(result.groundContactVerified, isTrue);
+      expect(result.inboardSuspensionExcluded, isTrue);
+    });
+
     test('RigConfig exports real wheel coordinates', () {
       const config = RigConfig(
         modelName: 'race_car.glb',
@@ -461,8 +623,8 @@ void main() {
 
       expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
       expect(find.text('1. Separate Loose Parts'), findsOneWidget);
-      expect(find.text('2. Similarity Match (2s & 4s)'), findsOneWidget);
-      expect(find.text('3. Lower-Corner & Height Filter'), findsOneWidget);
+      expect(find.text('2. Axle Symmetry & Circularity (2+2 / 4x)'), findsOneWidget);
+      expect(find.text('3. Ground Contact & Outer-Track Filter'), findsOneWidget);
       expect(find.text('4. Hub Center & Radius Math'), findsOneWidget);
       expect(find.text('Start'), findsOneWidget);
 
