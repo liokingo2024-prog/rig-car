@@ -752,6 +752,8 @@ class DetectedWheel {
   /// separate tire, rim, hub, and brake meshes.
   final List<int> partNodeIndices;
   final List<String> partIds;
+  final List<int> spinNodeIndices;
+  final List<int> caliperHubNodeIndices;
   String axle; // 'front' | 'rear'
   String side; // 'left' | 'right'
   final double radius;
@@ -767,6 +769,8 @@ class DetectedWheel {
     this.meshIndex,
     this.partNodeIndices = const [],
     this.partIds = const [],
+    this.spinNodeIndices = const [],
+    this.caliperHubNodeIndices = const [],
     this.axle = '',
     this.side = '',
     this.radius = 0.34,

@@ -1403,7 +1403,9 @@
 
     const winningClusters = { FL: flCluster, FR: frCluster, RL: rlCluster, RR: rrCluster };
 
-    // Step 3 & Step 4: 3D Cylinder Volume Capture & Final Wheel Union Box
+    // Step 3A: Lock the True Tire & Rim Envelope First (coreWheelBox)
+    // Step 3B: Two-Zone Capture (Outer Tire Envelope + Inner Brake/Hub Pocket)
+    // Step 4: Sub-Classify spinMeshes vs. caliperHubMeshes & Preserve Tire R/W
     const allWheelMeshes = new Set();
     const wheelsResult = {};
     const brakeDiscsParts = [];
@@ -1411,58 +1413,97 @@
 
     Object.entries(winningClusters).forEach(([corner, cluster]) => {
       if (!cluster) return;
-      const clusterBox = cluster.clusterBox;
-      const hubF = (clusterBox.min[fAxis] + clusterBox.max[fAxis]) / 2;
-      const hubY = (clusterBox.min.y + clusterBox.max.y) / 2;
-      const outerRadius = Math.max(clusterBox.max[fAxis] - clusterBox.min[fAxis], clusterBox.max.y - clusterBox.min.y) / 2;
-      const minLat = clusterBox.min[lAxis];
-      const maxLat = clusterBox.max[lAxis];
+      // Step 3A: Lock the True Tire & Rim Envelope First (coreWheelBox)
+      const coreWheelBox = cluster.clusterBox;
+      const hubF = (coreWheelBox.min[fAxis] + coreWheelBox.max[fAxis]) / 2;
+      const hubY = (coreWheelBox.min.y + coreWheelBox.max.y) / 2;
+      const tireRadius = Math.max(coreWheelBox.max[fAxis] - coreWheelBox.min[fAxis], coreWheelBox.max.y - coreWheelBox.min.y) / 2;
+      const tireWidth = coreWheelBox.max[lAxis] - coreWheelBox.min[lAxis];
+      const minLat = coreWheelBox.min[lAxis];
+      const maxLat = coreWheelBox.max[lAxis];
+      const hubCenter = coreWheelBox.getCenter(new THREE.Vector3());
 
       const cornerMeshes = new Set();
-      // Always include winning cluster rings
-      cluster.rings.forEach(r => cornerMeshes.add(r.mesh));
+      const spinMeshes = [];
+      const caliperHubMeshes = [];
 
-      // 3D Cylinder Volume Capture across all loose parts
+      // Always include winning cluster rings (Tire, Rim)
+      cluster.rings.forEach(r => {
+        cornerMeshes.add(r.mesh);
+        spinMeshes.push(r.mesh);
+      });
+
+      // Step 3B: Two-Zone Capture across all loose parts
+      const inboardAllowance = Math.max(0.45 * tireWidth, 0.06 * carWidth);
+
       allParts.forEach(part => {
-        // 1. Fits Radially Inside Outer Tire Cylinder (no circularity check!)
-        const fitsRadially = (
-          part.box.min[fAxis] >= hubF - outerRadius * 1.04 &&
-          part.box.max[fAxis] <= hubF + outerRadius * 1.04 &&
-          part.box.min.y >= hubY - outerRadius * 1.04 &&
-          part.box.max.y <= hubY + outerRadius * 1.04
-        );
+        if (cluster.rings.some(r => r.mesh === part.mesh)) return;
 
-        // 2. Fits Inside Tire+Rim Lateral Width (blocks inboard suspension knuckles)
-        const fitsLat = (
-          part.box.min[lAxis] >= minLat - inbTol * carWidth &&
-          part.box.max[lAxis] <= maxLat + inbTol * carWidth
+        // Zone 1 — Tire, Rim, Spokes, Lug Nuts & Center Caps:
+        // 1. Radially inside the tire in side view (fAxis, y):
+        const fitsRadiallyZone1 = (
+          part.box.min[fAxis] >= hubF - tireRadius * 1.04 &&
+          part.box.max[fAxis] <= hubF + tireRadius * 1.04 &&
+          part.box.min.y >= hubY - tireRadius * 1.04 &&
+          part.box.max.y <= hubY + tireRadius * 1.04
         );
+        // 2. Laterally inside the tire sidewalls:
+        const fitsLatZone1 = (
+          part.box.min[lAxis] >= minLat - 0.05 * tireWidth &&
+          part.box.max[lAxis] <= maxLat + 0.05 * tireWidth
+        );
+        const isZone1 = fitsRadiallyZone1 && fitsLatZone1;
 
-        if (fitsRadially && fitsLat) {
+        // Zone 2 — Inner Brake Disc, Caliper & Hub Frame Pocket:
+        // 1. Fits Inside the Rim Barrel in Side View (fAxis, y):
+        const fitsRadiallyZone2 = (
+          part.box.min[fAxis] >= hubF - tireRadius * 0.95 &&
+          part.box.max[fAxis] <= hubF + tireRadius * 0.95 &&
+          part.box.min.y >= hubY - tireRadius * 0.95 &&
+          part.box.max.y <= hubY + tireRadius * 0.95
+        );
+        // 2. Expanded Inboard Hub Pocket (lAxis):
+        const fitsLatZone2 = (
+          part.box.min[lAxis] >= minLat - inboardAllowance &&
+          part.box.max[lAxis] <= maxLat + inboardAllowance
+        );
+        // 3. Compactness Guard (blocks long suspension wishbones, tie rods, axles):
+        const isCompact = part.size[lAxis] <= tireWidth * 1.15;
+        const touchesHub = (
+          part.box.max[lAxis] >= minLat - 0.15 * tireWidth &&
+          part.box.min[lAxis] <= maxLat + 0.15 * tireWidth
+        );
+        const inOuterTrack = Math.abs(part.center[lAxis] - carCenter[lAxis]) >= 0.26 * carWidth;
+
+        const isZone2 = fitsRadiallyZone2 && fitsLatZone2 && isCompact && touchesHub && inOuterTrack;
+
+        if (isZone1 || isZone2) {
           cornerMeshes.add(part.mesh);
-        } else if (fitsRadially && !fitsLat) {
+
+          // Step 4: Sub-classify spinMeshes vs caliperHubMeshes
+          const isCoaxial = (
+            Math.abs(part.center.y - hubY) < 0.10 * tireRadius &&
+            Math.abs(part.center[fAxis] - hubF) < 0.10 * tireRadius
+          );
+
+          if (!isCoaxial || (isZone2 && part.circularity < 0.78)) {
+            caliperHubMeshes.push(part.mesh); // Brake Caliper / Hub Frame
+          } else {
+            spinMeshes.push(part.mesh); // Tire, Rim, Spokes, Brake Rotor
+            if (isZone2) {
+              brakeDiscsParts.push(part.mesh);
+            }
+          }
+        } else if (fitsRadiallyZone1 && !fitsLatZone2) {
           if (Math.abs(part.center.y - hubY) < 0.25 * carHeight &&
               Math.abs(part.center[fAxis] - hubF) < 0.15 * carLength) {
             suspensionKnuckleParts.push(part.mesh);
-          } else {
-            brakeDiscsParts.push(part.mesh);
           }
         }
       });
 
-      // Step 4: Compute Final R and W from the Combined Wheel Union Box
       const cornerMeshList = Array.from(cornerMeshes);
-      const finalWheelBox = new THREE.Box3();
-      cornerMeshList.forEach(m => {
-        m.updateWorldMatrix(true, false);
-        finalWheelBox.union(new THREE.Box3().setFromObject(m));
-      });
-
-      const finalSize = finalWheelBox.getSize(new THREE.Vector3());
-      const finalCenter = finalWheelBox.getCenter(new THREE.Vector3());
-      const radius = Math.max(finalSize[fAxis], finalSize.y) / 2;
-      const width = finalSize[lAxis];
-      const hubCenter = finalCenter;
+      cornerMeshList.forEach(m => allWheelMeshes.add(m));
 
       // Primary mesh for naming: ring with largest diameter in this cluster
       let primaryPart = cluster.rings[0];
@@ -1474,19 +1515,20 @@
         }
       });
 
-      cornerMeshList.forEach(m => allWheelMeshes.add(m));
-
+      // Step 4: Keep R and W strictly locked to coreWheelBox (prevents caliper inflation!)
       wheelsResult[corner] = {
         name: primaryPart ? primaryPart.name : ('Wheel_' + corner),
         mesh: primaryPart ? primaryPart.mesh : cornerMeshList[0],
         x: hubCenter.x,
         y: hubCenter.y,
         z: hubCenter.z,
-        radius: radius,
-        width: width,
+        radius: tireRadius,         // Preserved from coreWheelBox!
+        width: tireWidth,           // Preserved from coreWheelBox!
         circularity: cluster.circularity,
         subMeshCount: cornerMeshList.length,
-        meshes: cornerMeshList
+        meshes: cornerMeshList,
+        spinMeshes: spinMeshes,
+        caliperHubMeshes: caliperHubMeshes
       };
     });
 
@@ -1500,6 +1542,11 @@
       }
     }
 
+    const allCaliperHubMeshes = [];
+    Object.values(wheelsResult).forEach(w => {
+      if (w.caliperHubMeshes) allCaliperHubMeshes.push(...w.caliperHubMeshes);
+    });
+
     detectedWheelData = {
       wheels: wheelsResult,
       allWheelMeshes: Array.from(allWheelMeshes),
@@ -1507,10 +1554,12 @@
       loosePartsCount: allParts.length,
       candidateGroups: [
         { id: 1, name: 'Outer Tires + Rims (4 corners · Grounded)', count: Object.keys(wheelsResult).length, role: 'Spin (Wheel)', isEnabled: true, meshes: Array.from(allWheelMeshes) },
-        { id: 2, name: 'Brake Discs / Calipers (4x · Coaxial)', count: 4, role: 'Steer Only (Knuckle/Caliper)', isEnabled: false, meshes: brakeDiscsParts },
-        { id: 3, name: 'Suspension Uprights / Knuckles (4x · Inboard)', count: 4, role: 'Static (Chassis)', isEnabled: false, meshes: suspensionKnuckleParts }
+        { id: 2, name: 'Brake Calipers & Hub Frames (Captured in Wheel Group)', count: allCaliperHubMeshes.length, role: 'Steer Only (Knuckle/Caliper)', isEnabled: true, meshes: allCaliperHubMeshes },
+        { id: 3, name: 'Suspension Uprights / Knuckles (Inboard Chassis)', count: suspensionKnuckleParts.length, role: 'Static (Chassis)', isEnabled: false, meshes: suspensionKnuckleParts }
       ]
     };
+
+    return detectedWheelData;
 
     return detectedWheelData;
   }

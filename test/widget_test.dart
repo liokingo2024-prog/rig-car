@@ -645,6 +645,236 @@ void main() {
       }
     });
 
+    test('Two-Zone Capture automatically captures inner brake rotors, calipers, and hub frames without inflating tire R and W', () {
+      final bodyMesh = MeshData(
+        index: 0,
+        name: 'Chassis',
+        vertices: const [Vec3(-0.7, 0.3, -1.8), Vec3(0.7, 1.1, 1.8)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.7, 0.3, -1.8), Vec3(0.7, 1.1, 1.8)),
+      );
+
+      // Rubber Tire: R=0.33m, W=0.23m
+      final tireMesh = MeshData(
+        index: 1,
+        name: 'TireMesh',
+        vertices: const [Vec3(-0.115, -0.33, -0.33), Vec3(0.115, 0.33, 0.33)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.115, -0.33, -0.33), Vec3(0.115, 0.33, 0.33)),
+      );
+
+      // Outer Rim Face
+      final rimFaceMesh = MeshData(
+        index: 2,
+        name: 'RimFaceMesh',
+        vertices: const [Vec3(-0.01, -0.31, -0.31), Vec3(0.01, 0.31, 0.31)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.01, -0.31, -0.31), Vec3(0.01, 0.31, 0.31)),
+      );
+
+      // Spokes (Zone 1)
+      final spokesMesh = MeshData(
+        index: 3,
+        name: 'SpokesMesh',
+        vertices: const [Vec3(-0.03, -0.25, -0.20), Vec3(0.03, 0.25, 0.20)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.03, -0.25, -0.20), Vec3(0.03, 0.25, 0.20)),
+      );
+
+      // Inner Brake Rotor: R=0.26m, W=0.03m (Zone 2, Coaxial & Circular)
+      final brakeRotorMesh = MeshData(
+        index: 4,
+        name: 'BrakeRotorMesh',
+        vertices: const [Vec3(-0.015, -0.26, -0.26), Vec3(0.015, 0.26, 0.26)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.015, -0.26, -0.26), Vec3(0.015, 0.26, 0.26)),
+      );
+
+      // Inner Brake Caliper: W=0.08m, asymmetric/eccentric (Zone 2, CaliperHub)
+      final brakeCaliperMesh = MeshData(
+        index: 5,
+        name: 'BrakeCaliperMesh',
+        vertices: const [Vec3(-0.04, 0.05, -0.06), Vec3(0.04, 0.25, 0.06)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.04, 0.05, -0.06), Vec3(0.04, 0.25, 0.06)),
+      );
+
+      // Hub Frame Bracket: W=0.06m (Zone 2, CaliperHub)
+      final hubFrameMesh = MeshData(
+        index: 6,
+        name: 'HubFrameMesh',
+        vertices: const [Vec3(-0.03, -0.09, -0.09), Vec3(0.03, 0.09, 0.09)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.03, -0.09, -0.09), Vec3(0.03, 0.09, 0.09)),
+      );
+
+      // Inboard Suspension Wishbone: W=0.45m (MUST BE EXCLUDED)
+      final wishboneMesh = MeshData(
+        index: 7,
+        name: 'SuspensionWishbone',
+        vertices: const [Vec3(-0.225, -0.04, -0.04), Vec3(0.225, 0.04, 0.04)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.225, -0.04, -0.04), Vec3(0.225, 0.04, 0.04)),
+      );
+
+      final nodes = <SceneNode>[
+        SceneNode(
+          index: 0,
+          name: 'Root',
+          parentIndex: null,
+          meshIndex: null,
+          childIndices: List.generate(29, (i) => i + 1),
+          localTransform: Mat4.identity(),
+        ),
+        SceneNode(
+          index: 1,
+          name: 'CarBody',
+          parentIndex: 0,
+          meshIndex: 0,
+          childIndices: [],
+          localTransform: Mat4.identity(),
+        ),
+      ];
+
+      final cornerCenters = [
+        const Vec3(-0.85, 0.33, 1.3),   // FL
+        const Vec3(0.85, 0.33, 1.3),    // FR
+        const Vec3(-0.85, 0.33, -1.3),  // RL
+        const Vec3(0.85, 0.33, -1.3),   // RR
+      ];
+
+      var nodeIdx = 2;
+      for (var c = 0; c < 4; c++) {
+        final pos = cornerCenters[c];
+        final sideSign = pos.x < 0 ? -1.0 : 1.0;
+
+        // Tire
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Tire_$c',
+          parentIndex: 0,
+          meshIndex: 1,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(pos, Quat.identity, Vec3.one),
+        ));
+        // Rim face
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'RimFace_$c',
+          parentIndex: 0,
+          meshIndex: 2,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x + sideSign * 0.11, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Spokes
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Spokes_$c',
+          parentIndex: 0,
+          meshIndex: 3,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Inner Brake Rotor (mounted behind spokes)
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'BrakeRotor_$c',
+          parentIndex: 0,
+          meshIndex: 4,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x - sideSign * 0.05, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Inner Brake Caliper (extends 0.08m inboard into hub pocket)
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'BrakeCaliper_$c',
+          parentIndex: 0,
+          meshIndex: 5,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x - sideSign * 0.08, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Hub Frame Bracket
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'HubFrame_$c',
+          parentIndex: 0,
+          meshIndex: 6,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x - sideSign * 0.06, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Suspension Wishbone (inboard chassis, wide arm -> MUST BE REJECTED)
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Wishbone_$c',
+          parentIndex: 0,
+          meshIndex: 7,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x - sideSign * 0.35, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+      }
+
+      for (final n in nodes) {
+        n.worldTransform = n.localTransform;
+      }
+
+      final allMeshes = [bodyMesh, tireMesh, rimFaceMesh, spokesMesh, brakeRotorMesh, brakeCaliperMesh, hubFrameMesh, wishboneMesh];
+      final instances = <MeshInstance>[];
+      instances.add(MeshInstance(
+        nodeIndex: 1,
+        meshIndex: 0,
+        worldVertices: bodyMesh.vertices,
+        edges: bodyMesh.edges,
+        worldBBox: bodyMesh.bbox,
+      ));
+
+      for (var i = 2; i < nodes.length; i++) {
+        final node = nodes[i];
+        final mesh = allMeshes[node.meshIndex!];
+        final wVerts = mesh.vertices.map(node.localTransform.transformPoint).toList();
+        instances.add(MeshInstance(
+          nodeIndex: i,
+          meshIndex: node.meshIndex!,
+          worldVertices: wVerts,
+          edges: mesh.edges,
+          worldBBox: BBox.fromPoints(wVerts),
+        ));
+      }
+
+      final model = ParsedModel(
+        fileName: 'dirt_2_mitsubishi_lancer_evolution_ix.glb',
+        nodes: nodes,
+        meshes: allMeshes,
+        instances: instances,
+        rootNodeIndices: [0],
+        worldBBox: const BBox(Vec3(-1.0, 0.0, -2.1), Vec3(1.0, 1.2, 2.1)),
+      );
+
+      final result = AutoDetector.detect(model);
+
+      expect(result.wheels.length, 4);
+
+      for (final wheel in result.wheels) {
+        // True tire radius is preserved from coreWheelBox (not corrupted by rotor or caliper)
+        expect((wheel.radius - 0.33).abs() < 0.015, isTrue,
+            reason: 'Tire radius should be preserved at ~0.33m, got ${wheel.radius}');
+        // True tire width is preserved from coreWheelBox (not inflated by the inboard caliper bracket)
+        expect((wheel.width - 0.23).abs() < 0.015, isTrue,
+            reason: 'Tire width should be preserved at ~0.23m, got ${wheel.width}');
+        // Sub-mesh count includes tire, rim face, spokes, brake rotor, caliper, hub frame (at least 5 parts)
+        expect(wheel.subMeshCount >= 5, isTrue,
+            reason: 'Wheel should capture brake rotor, caliper, and hub frame (subMeshCount=${wheel.subMeshCount})');
+        // Sub-classified: spinNodeIndices contains tire, rim, rotor
+        expect(wheel.spinNodeIndices.isNotEmpty, isTrue);
+        // Sub-classified: caliperHubNodeIndices contains asymmetric caliper/hub frame
+        expect(wheel.caliperHubNodeIndices.isNotEmpty, isTrue);
+        // Inboard long suspension wishbones were NOT captured
+        expect(wheel.partIds.any((p) => p.contains('Wishbone')), isFalse);
+      }
+
+      // No false wheel warnings when 4 grounded wheels are present
+      expect(result.warnings.any((w) => w.contains('Some wheel assemblies were inferred')), isFalse);
+    });
+
     test('RigConfig exports real wheel coordinates', () {
       const config = RigConfig(
         modelName: 'race_car.glb',

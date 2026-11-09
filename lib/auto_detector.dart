@@ -149,7 +149,7 @@ class AutoDetector {
     if (body == null) {
       warnings.add('Could not identify the car body mesh.');
     }
-    if (wheels.isNotEmpty && wheels.any((wheel) => wheel.confidence < 0.8)) {
+    if (wheels.length < 4 && wheels.any((wheel) => wheel.confidence < 0.8)) {
       warnings.add(
         'Some wheel assemblies were inferred from geometry — confirm them in review.',
       );
@@ -407,7 +407,9 @@ class AutoDetector {
       'RR': rearPair[1],
     };
 
-    // Step 3 & Step 4: 3D Cylinder Volume Capture & Final Wheel Union Box
+    // Step 3A: Lock the True Tire & Rim Envelope First (coreWheelBox)
+    // Step 3B: Two-Zone Capture (Outer Tire Envelope + Inner Brake/Hub Pocket)
+    // Step 4: Sub-Classify spinMeshes vs. caliperHubMeshes & Preserve Tire R/W
     final detectedWheels = <DetectedWheel>[];
 
     for (final entry in winningClusters.entries) {
@@ -415,15 +417,24 @@ class AutoDetector {
       final cluster = entry.value;
       if (cluster == null) continue;
 
-      final clusterBox = cluster.clusterBox;
-      final hubFLong = ((fAxisIsZ ? clusterBox.lo.z : clusterBox.lo.x) + (fAxisIsZ ? clusterBox.hi.z : clusterBox.hi.x)) * 0.5;
-      final hubY = (clusterBox.lo.y + clusterBox.hi.y) * 0.5;
-      final outerRadius = cluster.outerDiameter * 0.5;
-      final minLat = fAxisIsZ ? clusterBox.lo.x : clusterBox.lo.z;
-      final maxLat = fAxisIsZ ? clusterBox.hi.x : clusterBox.hi.z;
+      // Step 3A: Lock the True Tire & Rim Envelope First (coreWheelBox)
+      final coreWheelBox = cluster.clusterBox;
+      final hubFLong = ((fAxisIsZ ? coreWheelBox.lo.z : coreWheelBox.lo.x) + (fAxisIsZ ? coreWheelBox.hi.z : coreWheelBox.hi.x)) * 0.5;
+      final hubY = (coreWheelBox.lo.y + coreWheelBox.hi.y) * 0.5;
+      final tireRadius = cluster.outerDiameter * 0.5;
+      final tireWidth = (fAxisIsZ ? coreWheelBox.size.x : coreWheelBox.size.z).abs();
+      final minLat = fAxisIsZ ? coreWheelBox.lo.x : coreWheelBox.lo.z;
+      final maxLat = fAxisIsZ ? coreWheelBox.hi.x : coreWheelBox.hi.z;
+      final hubCenter = coreWheelBox.center;
 
       final cornerParts = <_WheelPart>[...cluster.rings];
       final cornerPartIds = cluster.rings.map((r) => r.partId).toSet();
+      final spinPartNodes = <int>{...cluster.rings.map((r) => r.nodeIndex)};
+      final caliperHubPartNodes = <int>{};
+
+      // Step 3B: Two-Zone Capture across all loose parts
+      final inboardAllowance = max(0.45 * tireWidth, 0.06 * carWidth);
+      final carCenterLat = fAxisIsZ ? carCenter.x : carCenter.z;
 
       for (final part in allParts) {
         if (cornerPartIds.contains(part.partId)) continue;
@@ -432,35 +443,62 @@ class AutoDetector {
         final partLongHi = fAxisIsZ ? part.bbox.hi.z : part.bbox.hi.x;
         final partLatLo = fAxisIsZ ? part.bbox.lo.x : part.bbox.lo.z;
         final partLatHi = fAxisIsZ ? part.bbox.hi.x : part.bbox.hi.z;
+        final partCenterLong = fAxisIsZ ? part.center.z : part.center.x;
+        final partCenterLat = fAxisIsZ ? part.center.x : part.center.z;
 
-        // 1. Fits Radially Inside Outer Tire Cylinder (no circularity check!)
-        final fitsRadially = (
-          partLongLo >= hubFLong - outerRadius * 1.04 &&
-          partLongHi <= hubFLong + outerRadius * 1.04 &&
-          part.bbox.lo.y >= hubY - outerRadius * 1.04 &&
-          part.bbox.hi.y <= hubY + outerRadius * 1.04
+        // Zone 1 — Tire, Rim, Spokes, Lug Nuts & Center Caps:
+        // 1. Radially inside the tire in side view (fAxis, y):
+        final fitsRadiallyZone1 = (
+          partLongLo >= hubFLong - tireRadius * 1.04 &&
+          partLongHi <= hubFLong + tireRadius * 1.04 &&
+          part.bbox.lo.y >= hubY - tireRadius * 1.04 &&
+          part.bbox.hi.y <= hubY + tireRadius * 1.04
         );
-
-        // 2. Fits Inside Tire+Rim Lateral Width (blocks inboard suspension knuckles)
-        final fitsLat = (
-          partLatLo >= minLat - inboardTolRatio * carWidth &&
-          partLatHi <= maxLat + inboardTolRatio * carWidth
+        // 2. Laterally inside the tire sidewalls:
+        final fitsLatZone1 = (
+          partLatLo >= minLat - 0.05 * tireWidth &&
+          partLatHi <= maxLat + 0.05 * tireWidth
         );
+        final isZone1 = fitsRadiallyZone1 && fitsLatZone1;
 
-        if (fitsRadially && fitsLat) {
+        // Zone 2 — Inner Brake Disc, Caliper & Hub Frame Pocket:
+        // 1. Fits Inside the Rim Barrel in Side View (fAxis, y):
+        final fitsRadiallyZone2 = (
+          partLongLo >= hubFLong - tireRadius * 0.95 &&
+          partLongHi <= hubFLong + tireRadius * 0.95 &&
+          part.bbox.lo.y >= hubY - tireRadius * 0.95 &&
+          part.bbox.hi.y <= hubY + tireRadius * 0.95
+        );
+        // 2. Expanded Inboard Hub Pocket (lAxis):
+        final fitsLatZone2 = (
+          partLatLo >= minLat - inboardAllowance &&
+          partLatHi <= maxLat + inboardAllowance
+        );
+        // 3. Compactness Guard (blocks long suspension wishbones, tie rods, axles):
+        final isCompact = part.width <= tireWidth * 1.15;
+        final touchesHub = (
+          partLatHi >= minLat - 0.15 * tireWidth &&
+          partLatLo <= maxLat + 0.15 * tireWidth
+        );
+        final inOuterTrack = (partCenterLat - carCenterLat).abs() >= 0.26 * carWidth;
+
+        final isZone2 = fitsRadiallyZone2 && fitsLatZone2 && isCompact && touchesHub && inOuterTrack;
+
+        if (isZone1 || isZone2) {
           cornerParts.add(part);
           cornerPartIds.add(part.partId);
+
+          // Step 4: Sub-classify spinMeshes vs caliperHubMeshes
+          final isCoaxial = (partCenterLong - hubFLong).abs() < 0.10 * tireRadius &&
+              (part.center.y - hubY).abs() < 0.10 * tireRadius;
+
+          if (!isCoaxial || (isZone2 && part.circularity < 0.78)) {
+            caliperHubPartNodes.add(part.nodeIndex); // Brake Caliper / Hub Frame
+          } else {
+            spinPartNodes.add(part.nodeIndex); // Tire, Rim, Spokes, Brake Rotor
+          }
         }
       }
-
-      // Step 4: Compute Final R and W from the Combined Wheel Union Box
-      final finalWheelBox = BBox.union(cornerParts.map((p) => p.bbox).toList());
-      final radius = max(
-        (fAxisIsZ ? finalWheelBox.size.z : finalWheelBox.size.x).abs(),
-        finalWheelBox.size.y.abs(),
-      ) * 0.5;
-      final width = (fAxisIsZ ? finalWheelBox.size.x : finalWheelBox.size.z).abs();
-      final hubCenter = finalWheelBox.center;
 
       // Primary part for naming: ring in cluster with largest diameter
       var primaryPart = cluster.rings.first;
@@ -475,6 +513,7 @@ class AutoDetector {
       final axle = slot.startsWith('F') ? 'front' : 'rear';
       final side = slot.endsWith('L') ? 'left' : 'right';
 
+      // Step 4: Keep R and W strictly locked to coreWheelBox (prevents caliper inflation!)
       detectedWheels.add(DetectedWheel(
         nodeIndex: primaryPart.nodeIndex,
         nodeName: primaryPart.nodeName,
@@ -483,10 +522,12 @@ class AutoDetector {
         meshIndex: primaryPart.meshIndex,
         partNodeIndices: cornerParts.map((p) => p.nodeIndex).toSet().toList(),
         partIds: cornerParts.map((p) => p.partId).toSet().toList(),
+        spinNodeIndices: spinPartNodes.toList(),
+        caliperHubNodeIndices: caliperHubPartNodes.toList(),
         axle: axle,
         side: side,
-        radius: radius,
-        width: width,
+        radius: tireRadius,         // Preserved from coreWheelBox!
+        width: tireWidth,           // Preserved from coreWheelBox!
         circularity: cluster.circularity,
         subMeshCount: cornerParts.length,
       ));

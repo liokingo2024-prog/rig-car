@@ -790,8 +790,6 @@ class _InspectorPanelState extends State<InspectorPanel> {
     final isDone = widget.isScanDone && wheelCount >= 4;
     final isScanning = widget.isScanning;
 
-    final hasWarnings = widget.detection?.warnings.isNotEmpty ?? false;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -825,10 +823,10 @@ class _InspectorPanelState extends State<InspectorPanel> {
         const SizedBox(height: 8),
         _InspectCheckCard(
           icon: isDone
-              ? (hasWarnings ? Icons.warning_amber_rounded : Icons.check_circle_rounded)
+              ? Icons.check_circle_rounded
               : (isScanning ? Icons.sync_rounded : Icons.radio_button_unchecked_rounded),
           iconColor: isDone
-              ? (hasWarnings ? _Palette.accentAmber : _Palette.accentEmerald)
+              ? _Palette.accentEmerald
               : (isScanning ? _Palette.accentEmerald : _Palette.textSecondary),
           title: '3. Ground Contact & Outer-Track Filter',
           metric: isDone
