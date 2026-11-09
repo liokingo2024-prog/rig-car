@@ -165,6 +165,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   late List<DetectedMeshGroup> _detectedGroups;
   late List<AudioSlotConfig> _audioSlots;
   bool _isScanningWheels = false;
+  int _scanStage = 0;
   bool _scanCompleted = false;
   bool _highlightFoundWheels = false;
 
@@ -220,6 +221,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     _selectedNodeIndex = null;
     _hoveredNodeIndex = null;
     _isScanningWheels = false;
+    _scanStage = 0;
     _scanCompleted = false;
     _highlightFoundWheels = false;
     _detectedGroups = _initDetectedGroups();
@@ -638,10 +640,26 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() {
       _isScanningWheels = true;
       _highlightFoundWheels = false;
+      _scanStage = 1;
     });
-    _showMessage('Scanning geometry and filtering wheels...');
+    _showMessage('Neural Rig: Isolating mesh vertex islands (Stage 1/4)...');
 
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(const Duration(milliseconds: 35));
+    if (!mounted) return;
+    setState(() => _scanStage = 2);
+    _showMessage('Neural Rig: Coaxial hub clustering & circularity analysis (Stage 2/4)...');
+
+    await Future.delayed(const Duration(milliseconds: 35));
+    if (!mounted) return;
+    setState(() => _scanStage = 3);
+    _showMessage('Neural Rig: Ground contact patch & outer-track filtering (Stage 3/4)...');
+
+    await Future.delayed(const Duration(milliseconds: 35));
+    if (!mounted) return;
+    setState(() => _scanStage = 4);
+    _showMessage('Neural Rig: Solving hub centers & radius cylinder fit (Stage 4/4)...');
+
+    await Future.delayed(const Duration(milliseconds: 35));
     if (!mounted) return;
 
     final jsResult = detectSketchfabWheels();
@@ -697,6 +715,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _selectedBodyNodeIndex = detection.body?.nodeIndex;
       _drive = detection.suggestedDrive;
       _isScanningWheels = false;
+      _scanStage = 4;
       _scanCompleted = true;
       _highlightFoundWheels = true;
       _viewportUpdateEpoch++;
@@ -1285,6 +1304,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       onApplyScale: _onApplyScale,
       onStartScan: _onStartWheelScan,
       isScanning: _isScanningWheels,
+      scanStage: _scanStage,
       isScanDone: _scanCompleted,
       onApproveAutoRig: _onStartWheelScan,
       onGroupRoleChange: _onGroupRoleChange,
