@@ -66,6 +66,7 @@ class VehiclePhysicsSimulation {
   double yawRate = 0.0; // Angular velocity (rad/s)
   double steerAngle = 0.0; // Current steering angle in radians
   double targetSteerAngle = 0.0;
+  double wheelRoll = 0.0; // Integrated wheel roll travel in meters
 
   // Suspension deflection (visual tilt in radians)
   double pitch = 0.0; // Dive (braking) / Squat (accel)
@@ -96,6 +97,7 @@ class VehiclePhysicsSimulation {
     yawRate = 0.0;
     steerAngle = 0.0;
     targetSteerAngle = 0.0;
+    wheelRoll = 0.0;
     pitch = 0.0;
     roll = 0.0;
     currentGear = 1;
@@ -146,6 +148,7 @@ class VehiclePhysicsSimulation {
     final longSpeed = velocity.dot(fwd);
     final latSpeed = velocity.dot(right);
     speedKmh = (longSpeed * 3.6).abs();
+    wheelRoll += longSpeed * dt;
 
     // 4. Transmission & Engine RPM model
     final gearRatios = [3.4, 2.1, 1.45, 1.1, 0.88, 0.72];

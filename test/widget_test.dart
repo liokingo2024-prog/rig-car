@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
 import 'package:rig_car/file_picker_stub.dart';
@@ -2429,6 +2429,115 @@ endsolid sports_car''';
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('HYBRID'), findsOneWidget);
+    });
+
+    test('VehiclePhysicsSimulation accurately tracks wheel roll travel and resets', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1400.0,
+        engineForce: 7500.0,
+        grip: 1.2,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.36, -1.25),
+          Vec3(0.95, 0.36, -1.25),
+          Vec3(-0.95, 0.36, 1.25),
+          Vec3(0.95, 0.36, 1.25),
+        ],
+      );
+
+      expect(sim.wheelRoll, equals(0.0));
+
+      // Simulate forward driving with throttle
+      for (var i = 0; i < 60; i++) {
+        sim.step(
+          1.0 / 60.0,
+          throttleInput: 1.0,
+          steerInput: 0.0,
+          handbrake: false,
+        );
+      }
+
+      // wheelRoll must be positive and track distance traveled in meters
+      expect(sim.wheelRoll, greaterThan(0.5));
+      expect(sim.speedKmh, greaterThan(1.0));
+
+      // Resetting simulation must zero out wheel roll
+      sim.reset();
+      expect(sim.wheelRoll, equals(0.0));
+      expect(sim.speedKmh, equals(0.0));
+    });
+
+    testWidgets('renders TestDriveViewport with dynamic wheel steering, roll and ground-pinned shadow', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final model = ParsedModel.createProceduralDefault();
+      final detection = AutoDetector.detect(model);
+
+      final testWheels = <String, DetectedWheel>{};
+      for (final w in detection.wheels) {
+        final key = '${w.axle == "front" ? "F" : "R"}${w.side == "left" ? "L" : "R"}';
+        testWheels[key] = w;
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TestDriveViewport(
+              mass: 1400.0,
+              engineForce: 7500.0,
+              grip: 1.4,
+              suspension: 1.0,
+              centerOfMass: 0.35,
+              drive: 'AWD',
+              frontSteering: true,
+              rearSteering: false,
+              frontTraction: true,
+              rearTraction: true,
+              wheelPositions: const [
+                Vec3(-0.95, 0.36, -1.25),
+                Vec3(0.95, 0.36, -1.25),
+                Vec3(-0.95, 0.36, 1.25),
+                Vec3(0.95, 0.36, 1.25),
+              ],
+              steerAngle: 36.0,
+              model: model,
+              detection: detection,
+              assignedWheels: testWheels,
+              onExit: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Verifies custom painter renders with no exceptions or render overflow
+      expect(tester.takeException(), isNull);
+      expect(find.byType(CustomPaint), findsWidgets);
+      expect(find.text('SOLID'), findsOneWidget);
+
+      // Simulate keyboard input driving forward and steering right
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // No crashes or render anomalies during physics simulation and wheel animation
+      expect(tester.takeException(), isNull);
+
+      // Release keys
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump(const Duration(milliseconds: 100));
     });
   });
 }

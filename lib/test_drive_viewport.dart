@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'fullscreen.dart';
+import 'auto_detector.dart';
 import 'model_data.dart';
 import 'physics_sim.dart';
 import 'solid_mesh_lod.dart';
@@ -359,6 +360,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                   orbitElevation: _orbitElevation,
                   orbitDistance: _orbitDistance,
                   model: widget.model,
+                  detection: widget.detection,
                   accentColor: widget.accentColor,
                   uiPulse: _uiPulse,
                   assignedWheels: widget.assignedWheels,
@@ -1410,6 +1412,7 @@ class _TestDriveScenePainter extends CustomPainter {
     required this.orbitElevation,
     required this.orbitDistance,
     required this.model,
+    this.detection,
     required this.accentColor,
     required this.uiPulse,
     this.assignedWheels = const {},
@@ -1428,11 +1431,117 @@ class _TestDriveScenePainter extends CustomPainter {
   final double orbitElevation;
   final double orbitDistance;
   final ParsedModel? model;
+  final DetectionResult? detection;
   final Color accentColor;
   final double uiPulse;
   final Map<String, DetectedWheel?> assignedWheels;
   final String soundProfile;
   final bool sirenEnabled;
+
+  Map<String, DetectedWheel> get _resolvedWheels {
+    final result = <String, DetectedWheel>{};
+    for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
+      final assigned = assignedWheels[corner];
+      if (assigned != null) {
+        result[corner] = assigned;
+        continue;
+      }
+      if (detection != null) {
+        for (final w in detection!.wheels) {
+          final isFront = w.axle == 'front';
+          final isLeft = w.side == 'left';
+          final key = (isFront ? 'F' : 'R') + (isLeft ? 'L' : 'R');
+          if (key == corner) {
+            result[corner] = w;
+            break;
+          }
+        }
+      }
+    }
+    if (result.length < 4 && model != null) {
+      final autoResult = AutoDetector.detect(model!);
+      for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
+        if (!result.containsKey(corner)) {
+          for (final w in autoResult.wheels) {
+            final isFront = w.axle == 'front';
+            final isLeft = w.side == 'left';
+            final key = (isFront ? 'F' : 'R') + (isLeft ? 'L' : 'R');
+            if (key == corner) {
+              result[corner] = w;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  static Mat4 _buildWheelLocalMatrix(
+    Vec3 hub,
+    Vec3 alignOffset,
+    double steer,
+    double roll,
+  ) {
+    final cs = cos(steer);
+    final ss = sin(steer);
+    final cr = cos(roll);
+    final sr = sin(roll);
+
+    // R = R_steer * R_roll
+    final r00 = cs;
+    final r10 = 0.0;
+    final r20 = -ss;
+
+    final r01 = sr * ss;
+    final r11 = cr;
+    final r21 = sr * cs;
+
+    final r02 = cr * ss;
+    final r12 = -sr;
+    final r22 = cr * cs;
+
+    // R * hub
+    final rhX = r00 * hub.x + r01 * hub.y + r02 * hub.z;
+    final rhY = r10 * hub.x + r11 * hub.y + r12 * hub.z;
+    final rhZ = r20 * hub.x + r21 * hub.y + r22 * hub.z;
+
+    // T = (hub + alignOffset) - R * hub
+    final tx = (hub.x + alignOffset.x) - rhX;
+    final ty = (hub.y + alignOffset.y) - rhY;
+    final tz = (hub.z + alignOffset.z) - rhZ;
+
+    return Mat4([
+      r00, r10, r20, 0.0,
+      r01, r11, r21, 0.0,
+      r02, r12, r22, 0.0,
+      tx, ty, tz, 1.0,
+    ]);
+  }
+
+  static Vec3 _applyWheelRotTranspose(Vec3 v, double steer, double roll) {
+    final cs = cos(steer);
+    final ss = sin(steer);
+    final cr = cos(roll);
+    final sr = sin(roll);
+
+    final r00 = cs;
+    final r20 = -ss;
+
+    final r01 = sr * ss;
+    final r11 = cr;
+    final r21 = sr * cs;
+
+    final r02 = cr * ss;
+    final r12 = -sr;
+    final r22 = cr * cs;
+
+    return Vec3(
+      r00 * v.x + r20 * v.z,
+      r01 * v.x + r11 * v.y + r21 * v.z,
+      r02 * v.x + r12 * v.y + r22 * v.z,
+    );
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2937,9 +3046,10 @@ class _TestDriveScenePainter extends CustomPainter {
     ]);
 
     final vehicleMatrix = trans * rot;
+    final wheels = _resolvedWheels;
 
-    // Contact shadow under vehicle chassis onto asphalt
-    _drawVehicleContactShadow(canvas, vehicleMatrix, project);
+    // Contact shadow under vehicle chassis onto asphalt (ground pinned)
+    _drawVehicleContactShadow(canvas, project, wheels);
 
     final showSolid = renderMode == TestDriveRenderMode.solid ||
         renderMode == TestDriveRenderMode.hybrid;
@@ -2948,18 +3058,19 @@ class _TestDriveScenePainter extends CustomPainter {
 
     if (showSolid) {
       if (model != null && model!.instances.isNotEmpty) {
-        _drawModelSolid(canvas, size, vehicleMatrix, rot, viewProj, eye);
+        _drawModelSolid(
+            canvas, size, vehicleMatrix, rot, viewProj, eye, wheels);
       } else {
         _drawProceduralSolidCar(
-            canvas, size, vehicleMatrix, rot, viewProj, eye, project);
+            canvas, size, vehicleMatrix, rot, viewProj, eye, project, wheels);
       }
     }
 
     if (showWire) {
       if (model != null && model!.instances.isNotEmpty) {
-        _drawModelGeometry(canvas, vehicleMatrix, project);
+        _drawModelGeometry(canvas, vehicleMatrix, project, wheels);
       } else {
-        _drawProceduralSportsCar(canvas, vehicleMatrix, project);
+        _drawProceduralSportsCar(canvas, vehicleMatrix, project, wheels);
       }
     }
 
@@ -3032,6 +3143,7 @@ class _TestDriveScenePainter extends CustomPainter {
     Mat4 rot,
     Mat4 viewProj,
     Vec3 eye,
+    Map<String, DetectedWheel> wheels,
   ) {
     final scene = SolidScene.of(model!);
     if (scene.isEmpty) {
@@ -3041,7 +3153,7 @@ class _TestDriveScenePainter extends CustomPainter {
         final sx = (clip[0] / clip[3] * 0.5 + 0.5) * size.width;
         final sy = (1.0 - (clip[1] / clip[3] * 0.5 + 0.5)) * size.height;
         return Offset(sx, sy);
-      });
+      }, wheels);
       return;
     }
 
@@ -3121,12 +3233,84 @@ class _TestDriveScenePainter extends CustomPainter {
     final localEyeUnshifted = rotTranspose(dEye);
     final localEye = localEyeUnshifted - alignOffset;
 
-    // 1. Project all vertices with carViewProj
-    final m = carViewProj.m;
-    final m0 = m[0], m1 = m[1], m3 = m[3];
-    final m4 = m[4], m5 = m[5], m7 = m[7];
-    final m8 = m[8], m9 = m[9], m11 = m[11];
-    final m12 = m[12], m13 = m[13], m15 = m[15];
+    // Build the 9 transforms:
+    // 0..3: spinning wheel parts (steer + roll)
+    // 4..7: caliper & hub frame parts (steer only)
+    // 8: chassis / vehicle body
+    final wvpMatrices = List<Mat4>.filled(9, carViewProj);
+    final keyLights = List<Vec3>.filled(9, keyLight);
+    final fillLights = List<Vec3>.filled(9, fillLight);
+    final rimLights = List<Vec3>.filled(9, rimLight);
+    final eyes = List<Vec3>.filled(9, localEye);
+
+    final nodeToTransform = <int, int>{};
+    const corners = ['FL', 'FR', 'RL', 'RR'];
+    for (var c = 0; c < 4; c++) {
+      final corner = corners[c];
+      final w = wheels[corner];
+      if (w == null) continue;
+
+      final spinIdx = c;
+      final calIdx = c + 4;
+
+      final isFront = corner.startsWith('F') || w.axle == 'front';
+      final steer = isFront ? sim.steerAngle : 0.0;
+      final r = w.radius > 0.05 ? w.radius : 0.34;
+      final roll = -sim.wheelRoll / r;
+      final hub = w.worldPosition;
+
+      // Spinning matrix (steer + roll)
+      final spinLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, roll);
+      wvpMatrices[spinIdx] = viewProj * (vehicleMatrix * spinLocalMat);
+      keyLights[spinIdx] = _applyWheelRotTranspose(keyLight, steer, roll);
+      fillLights[spinIdx] = _applyWheelRotTranspose(fillLight, steer, roll);
+      rimLights[spinIdx] = _applyWheelRotTranspose(rimLight, steer, roll);
+      final dVehHubSpin = localEyeUnshifted - (hub + alignOffset);
+      eyes[spinIdx] = hub + _applyWheelRotTranspose(dVehHubSpin, steer, roll);
+
+      // Caliper matrix (steer only)
+      final calLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, 0.0);
+      wvpMatrices[calIdx] = viewProj * (vehicleMatrix * calLocalMat);
+      keyLights[calIdx] = _applyWheelRotTranspose(keyLight, steer, 0.0);
+      fillLights[calIdx] = _applyWheelRotTranspose(fillLight, steer, 0.0);
+      rimLights[calIdx] = _applyWheelRotTranspose(rimLight, steer, 0.0);
+      final dVehHubCal = localEyeUnshifted - (hub + alignOffset);
+      eyes[calIdx] = hub + _applyWheelRotTranspose(dVehHubCal, steer, 0.0);
+
+      // Map nodes to transforms
+      if (w.partNodeIndices.isNotEmpty) {
+        for (final n in w.partNodeIndices) {
+          nodeToTransform[n] = spinIdx;
+        }
+      } else {
+        nodeToTransform[w.nodeIndex] = spinIdx;
+      }
+      for (final n in w.spinNodeIndices) {
+        nodeToTransform[n] = spinIdx;
+      }
+      for (final n in w.caliperHubNodeIndices) {
+        nodeToTransform[n] = calIdx;
+      }
+    }
+
+    final triTransform = Uint8List(triCount);
+    final vertexTransform = Uint8List(mesh.vertexCount);
+    vertexTransform.fillRange(0, mesh.vertexCount, 8);
+
+    final indices = mesh.indices;
+    final triNode = mesh.triNode;
+    for (var t = 0; t < triCount; t++) {
+      final k = nodeToTransform[triNode[t]] ?? 8;
+      triTransform[t] = k;
+      if (k != 8) {
+        final t3 = t * 3;
+        vertexTransform[indices[t3]] = k;
+        vertexTransform[indices[t3 + 1]] = k;
+        vertexTransform[indices[t3 + 2]] = k;
+      }
+    }
+
+    // 1. Project all vertices with respective transform matrices
     final width = size.width;
     final height = size.height;
     const near = 0.05;
@@ -3134,13 +3318,15 @@ class _TestDriveScenePainter extends CustomPainter {
     final pos = mesh.positions;
     final sx = mesh.screenX, sy = mesh.screenY, sw = mesh.screenW;
     for (var v = 0, p = 0; v < mesh.vertexCount; v++, p += 3) {
+      final k = vertexTransform[v];
+      final m = wvpMatrices[k].m;
       final x = pos[p], y = pos[p + 1], z = pos[p + 2];
-      final w = m3 * x + m7 * y + m11 * z + m15;
+      final w = m[3] * x + m[7] * y + m[11] * z + m[15];
       sw[v] = w;
       if (w > near) {
         final invW = 1.0 / w;
-        final cx = m0 * x + m4 * y + m8 * z + m12;
-        final cy = m1 * x + m5 * y + m9 * z + m13;
+        final cx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        final cy = m[1] * x + m[5] * y + m[9] * z + m[13];
         sx[v] = (cx * invW * 0.5 + 0.5) * width;
         sy[v] = (1.0 - (cy * invW * 0.5 + 0.5)) * height;
       }
@@ -3149,7 +3335,6 @@ class _TestDriveScenePainter extends CustomPainter {
     // 2. Cull, shade, and record visible triangles
     final normals = mesh.normals;
     final centroids = mesh.centroids;
-    final indices = mesh.indices;
     final triKind = mesh.triKind;
     final triColor = mesh.triColor;
     final visTri = mesh.visTri;
@@ -3173,13 +3358,15 @@ class _TestDriveScenePainter extends CustomPainter {
     var maxDepth = double.negativeInfinity;
 
     for (var t = 0; t < triCount; t++) {
+      final k = triTransform[t];
       final t3 = t * 3;
       final nx = normals[t3], ny = normals[t3 + 1], nz = normals[t3 + 2];
       final cx = centroids[t3], cy = centroids[t3 + 1], cz = centroids[t3 + 2];
 
-      final toEyeX = localEye.x - cx;
-      final toEyeY = localEye.y - cy;
-      final toEyeZ = localEye.z - cz;
+      final eyeL = eyes[k];
+      final toEyeX = eyeL.x - cx;
+      final toEyeY = eyeL.y - cy;
+      final toEyeZ = eyeL.z - cz;
 
       final dotEye = nx * toEyeX + ny * toEyeY + nz * toEyeZ;
       final isDoubleSided = triKind[t] == 1 ||
@@ -3221,19 +3408,23 @@ class _TestDriveScenePainter extends CustomPainter {
       if (materialColor != 0) {
         base = materialColor;
       } else {
-        final k = triKind[t];
-        if (k < kindColors.length) {
-          base = kindColors[k];
+        final kind = triKind[t];
+        if (kind < kindColors.length) {
+          base = kindColors[kind];
         } else {
           base = 0xFFD6DBDF;
         }
       }
 
-      final dotKey = effNx * keyLight.x + effNy * keyLight.y + effNz * keyLight.z;
+      final keyL = keyLights[k];
+      final fillL = fillLights[k];
+      final rimL = rimLights[k];
+
+      final dotKey = effNx * keyL.x + effNy * keyL.y + effNz * keyL.z;
       final diffuseKey = dotKey > 0.0 ? dotKey : 0.0;
-      final dotFill = effNx * fillLight.x + effNy * fillLight.y + effNz * fillLight.z;
+      final dotFill = effNx * fillL.x + effNy * fillL.y + effNz * fillL.z;
       final diffuseFill = dotFill > 0.0 ? dotFill : 0.0;
-      final dotRim = effNx * rimLight.x + effNy * rimLight.y + effNz * rimLight.z;
+      final dotRim = effNx * rimL.x + effNy * rimL.y + effNz * rimL.z;
       final diffuseRim = dotRim > 0.0 ? dotRim : 0.0;
 
       var ambient = ambientBase + ambientScale * effNy;
@@ -3248,7 +3439,7 @@ class _TestDriveScenePainter extends CustomPainter {
       if (diffuse > 1.05) diffuse = 1.05;
 
       // Specular highlight
-      final hx = keyLight.x + ex, hy = keyLight.y + ey, hz = keyLight.z + ez;
+      final hx = keyL.x + ex, hy = keyL.y + ey, hz = keyL.z + ez;
       final hLenSq = hx * hx + hy * hy + hz * hz;
       var specKey = 0.0;
       if (hLenSq > 1e-6) {
@@ -3274,7 +3465,8 @@ class _TestDriveScenePainter extends CustomPainter {
       final b = (baseB * diffuse + whiteGloss).round().clamp(0, 255);
       final argb = (base & 0xFF000000) | (r << 16) | (g << 8) | b;
 
-      final depth = m3 * cx + m7 * cy + m11 * cz + m15;
+      final wm = wvpMatrices[k].m;
+      final depth = wm[3] * cx + wm[7] * cy + wm[11] * cz + wm[15];
       visTri[visCount] = t;
       visColor[visCount] = argb;
       visDepth[visCount] = depth;
@@ -3348,6 +3540,7 @@ class _TestDriveScenePainter extends CustomPainter {
     Mat4 viewProj,
     Vec3 eye,
     Offset? Function(Vec3) project,
+    Map<String, DetectedWheel> wheels,
   ) {
     final isDay = lighting == TestDriveLighting.day;
     final isSunset = lighting == TestDriveLighting.sunset;
@@ -3497,24 +3690,24 @@ class _TestDriveScenePainter extends CustomPainter {
 
     // 9. 4 Solid 3D Wheels with Alloy Rims, Calipers, Steering and Roll
     final wheelPositions = [
-      assignedWheels['FL']?.worldPosition ?? (sim.wheelPositions.isNotEmpty ? sim.wheelPositions[0] : const Vec3(-0.95, 0.36, -1.25)),
-      assignedWheels['FR']?.worldPosition ?? (sim.wheelPositions.length > 1 ? sim.wheelPositions[1] : const Vec3(0.95, 0.36, -1.25)),
-      assignedWheels['RL']?.worldPosition ?? (sim.wheelPositions.length > 2 ? sim.wheelPositions[2] : const Vec3(-0.95, 0.36, 1.25)),
-      assignedWheels['RR']?.worldPosition ?? (sim.wheelPositions.length > 3 ? sim.wheelPositions[3] : const Vec3(0.95, 0.36, 1.25)),
+      wheels['FL']?.worldPosition ?? (sim.wheelPositions.isNotEmpty ? sim.wheelPositions[0] : const Vec3(-0.95, 0.36, -1.25)),
+      wheels['FR']?.worldPosition ?? (sim.wheelPositions.length > 1 ? sim.wheelPositions[1] : const Vec3(0.95, 0.36, -1.25)),
+      wheels['RL']?.worldPosition ?? (sim.wheelPositions.length > 2 ? sim.wheelPositions[2] : const Vec3(-0.95, 0.36, 1.25)),
+      wheels['RR']?.worldPosition ?? (sim.wheelPositions.length > 3 ? sim.wheelPositions[3] : const Vec3(0.95, 0.36, 1.25)),
     ];
 
     final wheelRadii = [
-      assignedWheels['FL']?.radius ?? 0.36,
-      assignedWheels['FR']?.radius ?? 0.36,
-      assignedWheels['RL']?.radius ?? 0.36,
-      assignedWheels['RR']?.radius ?? 0.36,
+      wheels['FL']?.radius ?? 0.36,
+      wheels['FR']?.radius ?? 0.36,
+      wheels['RL']?.radius ?? 0.36,
+      wheels['RR']?.radius ?? 0.36,
     ];
 
     final wheelWidths = [
-      assignedWheels['FL']?.width ?? 0.26,
-      assignedWheels['FR']?.width ?? 0.26,
-      assignedWheels['RL']?.width ?? 0.26,
-      assignedWheels['RR']?.width ?? 0.26,
+      wheels['FL']?.width ?? 0.26,
+      wheels['FR']?.width ?? 0.26,
+      wheels['RL']?.width ?? 0.26,
+      wheels['RR']?.width ?? 0.26,
     ];
 
     for (var i = 0; i < 4; i++) {
@@ -3522,7 +3715,7 @@ class _TestDriveScenePainter extends CustomPainter {
       final isLeft = (i % 2 == 0);
       final r = wheelRadii[i].clamp(0.20, 0.55);
       final w = wheelWidths[i].clamp(0.12, 0.40);
-      final roll = sim.position.z / r;
+      final roll = -sim.wheelRoll / r;
       final steer = isFront ? sim.steerAngle : 0.0;
 
       _drawSolidProceduralWheel(
@@ -3635,30 +3828,175 @@ class _TestDriveScenePainter extends CustomPainter {
 
   void _drawVehicleContactShadow(
     Canvas canvas,
-    Mat4 vehicleMatrix,
     Offset? Function(Vec3) project,
+    Map<String, DetectedWheel> wheels,
   ) {
-    final p0 = project(
-        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, -2.1)));
-    final p1 = project(
-        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, -2.1)));
-    final p2 = project(
-        vehicleMatrix.transformPoint(const Vec3(1.1, 0.02, 2.1)));
-    final p3 = project(
-        vehicleMatrix.transformPoint(const Vec3(-1.1, 0.02, 2.1)));
+    // Pinned strictly to ground plane Y = 0.003 (never tilts with pitch or roll)
+    const groundY = 0.003;
+    final carX = sim.position.x;
+    final carZ = sim.position.z;
+    final groundPos = Vec3(carX, groundY, carZ);
 
-    if (p0 != null && p1 != null && p2 != null && p3 != null) {
-      final shadowPath = Path()
-        ..moveTo(p0.dx, p0.dy)
-        ..lineTo(p1.dx, p1.dy)
-        ..lineTo(p2.dx, p2.dy)
-        ..lineTo(p3.dx, p3.dy)
-        ..close();
-      final shadowPaint = Paint()
-        ..color = Color.fromRGBO(
-            0, 0, 0, lighting == TestDriveLighting.day ? 0.40 : 0.65)
-        ..style = PaintingStyle.fill;
-      canvas.drawPath(shadowPath, shadowPaint);
+    // Ground forward and right vectors (strictly horizontal)
+    final fwd = Vec3(-sin(sim.yaw), 0.0, -cos(sim.yaw));
+    final right = Vec3(cos(sim.yaw), 0.0, -sin(sim.yaw));
+
+    // Vehicle dimensions
+    double halfL;
+    double halfW;
+    if (model != null) {
+      final size = model!.worldBBox.size;
+      halfL = (max(size.x.abs(), size.z.abs()) * 0.48).clamp(1.6, 2.8);
+      halfW = (min(size.x.abs(), size.z.abs()) * 0.50).clamp(0.75, 1.25);
+    } else {
+      halfL = 2.15;
+      halfW = 1.05;
+    }
+
+    final isDay = lighting == TestDriveLighting.day;
+    final isSunset = lighting == TestDriveLighting.sunset;
+    final penumbraAlpha = isDay ? 0.35 : (isSunset ? 0.45 : 0.60);
+    final coreAlpha = isDay ? 0.55 : (isSunset ? 0.65 : 0.78);
+
+    // 1. Soft Penumbra Shadow (Rounded aerodynamic envelope on ground)
+    final penumbraPoints = [
+      groundPos + (fwd * (halfL + 0.12)),
+      groundPos + (fwd * (halfL * 0.92)) - (right * (halfW * 0.88)),
+      groundPos + (fwd * (halfL * 0.55)) - (right * (halfW + 0.08)),
+      groundPos - (fwd * (halfL * 0.60)) - (right * (halfW + 0.06)),
+      groundPos - (fwd * (halfL * 0.95)) - (right * (halfW * 0.85)),
+      groundPos - (fwd * (halfL + 0.10)),
+      groundPos - (fwd * (halfL * 0.95)) + (right * (halfW * 0.85)),
+      groundPos - (fwd * (halfL * 0.60)) + (right * (halfW + 0.06)),
+      groundPos + (fwd * (halfL * 0.55)) + (right * (halfW + 0.08)),
+      groundPos + (fwd * (halfL * 0.92)) + (right * (halfW * 0.88)),
+    ];
+
+    final penumbraPath = Path();
+    var firstPoint = true;
+    var allPenValid = true;
+    for (final pt in penumbraPoints) {
+      final p = project(pt);
+      if (p == null) {
+        allPenValid = false;
+        break;
+      }
+      if (firstPoint) {
+        penumbraPath.moveTo(p.dx, p.dy);
+        firstPoint = false;
+      } else {
+        penumbraPath.lineTo(p.dx, p.dy);
+      }
+    }
+    if (allPenValid && !firstPoint) {
+      penumbraPath.close();
+      final penumbraPaint = Paint()
+        ..color = Color.fromRGBO(0, 0, 0, penumbraAlpha)
+        ..style = PaintingStyle.fill
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+      canvas.drawPath(penumbraPath, penumbraPaint);
+    }
+
+    // 2. Dense Core Underbody Ambient Occlusion Shadow
+    final corePoints = [
+      groundPos + (fwd * (halfL * 0.82)) - (right * (halfW * 0.75)),
+      groundPos + (fwd * (halfL * 0.82)) + (right * (halfW * 0.75)),
+      groundPos - (fwd * (halfL * 0.85)) + (right * (halfW * 0.72)),
+      groundPos - (fwd * (halfL * 0.85)) - (right * (halfW * 0.72)),
+    ];
+
+    final corePath = Path();
+    var coreFirst = true;
+    var allCoreValid = true;
+    for (final pt in corePoints) {
+      final p = project(pt);
+      if (p == null) {
+        allCoreValid = false;
+        break;
+      }
+      if (coreFirst) {
+        corePath.moveTo(p.dx, p.dy);
+        coreFirst = false;
+      } else {
+        corePath.lineTo(p.dx, p.dy);
+      }
+    }
+    if (allCoreValid && !coreFirst) {
+      corePath.close();
+      final corePaint = Paint()
+        ..color = Color.fromRGBO(0, 0, 0, coreAlpha)
+        ..style = PaintingStyle.fill
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+      canvas.drawPath(corePath, corePaint);
+    }
+
+    // 3. Four Steered Dark Tire Contact Footprints (Tire Patches)
+    final tirePatchPaint = Paint()
+      ..color = Color.fromRGBO(0, 0, 0, isDay ? 0.85 : 0.95)
+      ..style = PaintingStyle.fill
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+
+    final corners = const ['FL', 'FR', 'RL', 'RR'];
+    final defaultPos = [
+      const Vec3(-0.95, 0.35, -1.25),
+      const Vec3(0.95, 0.35, -1.25),
+      const Vec3(-0.95, 0.35, 1.25),
+      const Vec3(0.95, 0.35, 1.25),
+    ];
+
+    for (var i = 0; i < 4; i++) {
+      final corner = corners[i];
+      final w = wheels[corner];
+      final isFront = corner.startsWith('F');
+
+      double localX;
+      double localZ;
+      double radius;
+      double tireW;
+
+      if (w != null) {
+        if (model != null) {
+          final mbb = model!.worldBBox;
+          localX = w.worldPosition.x - mbb.center.x;
+          localZ = w.worldPosition.z - mbb.center.z;
+        } else {
+          localX = w.worldPosition.x;
+          localZ = w.worldPosition.z;
+        }
+        radius = w.radius.clamp(0.20, 0.55);
+        tireW = w.width.clamp(0.15, 0.45);
+      } else {
+        final def = defaultPos[i];
+        localX = def.x;
+        localZ = def.z;
+        radius = 0.35;
+        tireW = 0.26;
+      }
+
+      final steer = isFront ? sim.steerAngle : 0.0;
+      final wheelYaw = sim.yaw + steer;
+      final tireFwd = Vec3(-sin(wheelYaw), 0.0, -cos(wheelYaw));
+      final tireRight = Vec3(cos(wheelYaw), 0.0, -sin(wheelYaw));
+
+      final tireCenter = groundPos + (right * localX) - (fwd * localZ) + const Vec3(0.0, 0.001, 0.0);
+      final patchL = radius * 0.55;
+      final hw = tireW * 0.5;
+      final hl = patchL * 0.5;
+
+      final p0 = project(tireCenter - (tireRight * hw) - (tireFwd * hl));
+      final p1 = project(tireCenter + (tireRight * hw) - (tireFwd * hl));
+      final p2 = project(tireCenter + (tireRight * hw) + (tireFwd * hl));
+      final p3 = project(tireCenter - (tireRight * hw) + (tireFwd * hl));
+
+      if (p0 != null && p1 != null && p2 != null && p3 != null) {
+        final patchPath = Path()
+          ..moveTo(p0.dx, p0.dy)
+          ..lineTo(p1.dx, p1.dy)
+          ..lineTo(p2.dx, p2.dy)
+          ..lineTo(p3.dx, p3.dy)
+          ..close();
+        canvas.drawPath(patchPath, tirePatchPaint);
+      }
     }
   }
 
@@ -3666,9 +4004,58 @@ class _TestDriveScenePainter extends CustomPainter {
     Canvas canvas,
     Mat4 vehicleMatrix,
     Offset? Function(Vec3) project,
+    Map<String, DetectedWheel> wheels,
   ) {
     final modelCenter = model!.worldBBox.center;
     final modelBottom = model!.worldBBox.lo.y;
+    final alignOffset = Vec3(-modelCenter.x, -modelBottom + 0.05, -modelCenter.z);
+
+    final alignMatrix = Mat4([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      alignOffset.x, alignOffset.y, alignOffset.z, 1,
+    ]);
+    final carModelMatrix = vehicleMatrix * alignMatrix;
+
+    final worldMatrices = List<Mat4>.filled(9, carModelMatrix);
+    final nodeToTransform = <int, int>{};
+    const corners = ['FL', 'FR', 'RL', 'RR'];
+
+    for (var c = 0; c < 4; c++) {
+      final corner = corners[c];
+      final w = wheels[corner];
+      if (w == null) continue;
+
+      final spinIdx = c;
+      final calIdx = c + 4;
+
+      final isFront = corner.startsWith('F') || w.axle == 'front';
+      final steer = isFront ? sim.steerAngle : 0.0;
+      final r = w.radius > 0.05 ? w.radius : 0.34;
+      final roll = -sim.wheelRoll / r;
+      final hub = w.worldPosition;
+
+      final spinLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, roll);
+      worldMatrices[spinIdx] = vehicleMatrix * spinLocalMat;
+
+      final calLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, 0.0);
+      worldMatrices[calIdx] = vehicleMatrix * calLocalMat;
+
+      if (w.partNodeIndices.isNotEmpty) {
+        for (final n in w.partNodeIndices) {
+          nodeToTransform[n] = spinIdx;
+        }
+      } else {
+        nodeToTransform[w.nodeIndex] = spinIdx;
+      }
+      for (final n in w.spinNodeIndices) {
+        nodeToTransform[n] = spinIdx;
+      }
+      for (final n in w.caliperHubNodeIndices) {
+        nodeToTransform[n] = calIdx;
+      }
+    }
 
     final wirePaint = Paint()
       ..color = const Color(0xFF64B5F6)
@@ -3677,29 +4064,19 @@ class _TestDriveScenePainter extends CustomPainter {
     for (final inst in model!.instances) {
       final verts = inst.worldVertices;
       final edges = inst.edges;
+      final k = nodeToTransform[inst.nodeIndex] ?? 8;
+      final transMat = worldMatrices[k];
 
       final step = (edges.length > 2500) ? (edges.length ~/ 2500) : 1;
 
       for (var i = 0; i < edges.length; i += step) {
         final e = edges[i];
         if (e.a < verts.length && e.b < verts.length) {
-          // Normalize vertex relative to car center & bottom
           final v0 = verts[e.a];
           final v1 = verts[e.b];
 
-          final local0 = Vec3(
-            v0.x - modelCenter.x,
-            v0.y - modelBottom + 0.15,
-            v0.z - modelCenter.z,
-          );
-          final local1 = Vec3(
-            v1.x - modelCenter.x,
-            v1.y - modelBottom + 0.15,
-            v1.z - modelCenter.z,
-          );
-
-          final world0 = vehicleMatrix.transformPoint(local0);
-          final world1 = vehicleMatrix.transformPoint(local1);
+          final world0 = transMat.transformPoint(v0);
+          final world1 = transMat.transformPoint(v1);
 
           final p0 = project(world0);
           final p1 = project(world1);
@@ -3715,6 +4092,7 @@ class _TestDriveScenePainter extends CustomPainter {
     Canvas canvas,
     Mat4 vehicleMatrix,
     Offset? Function(Vec3) project,
+    Map<String, DetectedWheel> wheels,
   ) {
     final bodyPaint = Paint()
       ..color = accentColor
@@ -3769,22 +4147,31 @@ class _TestDriveScenePainter extends CustomPainter {
 
     // 4 Wheels
     final wheelCenters = [
-      const Vec3(-1.0, 0.36, -1.25), // FL
-      const Vec3(1.0, 0.36, -1.25),  // FR
-      const Vec3(-1.0, 0.36, 1.25),  // RL
-      const Vec3(1.0, 0.36, 1.25),   // RR
+      wheels['FL']?.worldPosition ?? const Vec3(-1.0, 0.36, -1.25),
+      wheels['FR']?.worldPosition ?? const Vec3(1.0, 0.36, -1.25),
+      wheels['RL']?.worldPosition ?? const Vec3(-1.0, 0.36, 1.25),
+      wheels['RR']?.worldPosition ?? const Vec3(1.0, 0.36, 1.25),
+    ];
+
+    final wheelRadii = [
+      wheels['FL']?.radius ?? 0.36,
+      wheels['FR']?.radius ?? 0.36,
+      wheels['RL']?.radius ?? 0.36,
+      wheels['RR']?.radius ?? 0.36,
     ];
 
     for (var i = 0; i < wheelCenters.length; i++) {
       final isFront = i < 2;
       final wc = wheelCenters[i];
+      final r = wheelRadii[i].clamp(0.20, 0.55);
       _drawDynamicWheel(
         canvas: canvas,
         vehicleMatrix: vehicleMatrix,
         project: project,
         localCenter: wc,
-        radius: 0.36,
+        radius: r,
         steerAngle: isFront ? sim.steerAngle : 0.0,
+        rollAngle: -sim.wheelRoll / r,
       );
     }
   }
@@ -3796,35 +4183,35 @@ class _TestDriveScenePainter extends CustomPainter {
     required Vec3 localCenter,
     required double radius,
     required double steerAngle,
+    required double rollAngle,
   }) {
     final wheelPaint = Paint()
       ..color = const Color(0xFF34D399)
       ..strokeWidth = 1.4;
+    final spokePaint = Paint()
+      ..color = const Color(0x9934D399)
+      ..strokeWidth = 1.0;
 
     // Steer rotation matrix around Y
     final cs = cos(steerAngle);
     final ss = sin(steerAngle);
 
-    const segments = 10;
+    const segments = 12;
     for (var i = 0; i < segments; i++) {
-      final a0 = i * 2 * pi / segments;
-      final a1 = (i + 1) * 2 * pi / segments;
+      final a0 = rollAngle + (i * 2 * pi / segments);
+      final a1 = rollAngle + ((i + 1) * 2 * pi / segments);
 
       // Unsteered rim point in wheel local space
-      final rx0 = 0.0;
       final ry0 = radius * sin(a0);
       final rz0 = radius * cos(a0);
-
-      final rx1 = 0.0;
       final ry1 = radius * sin(a1);
       final rz1 = radius * cos(a1);
 
-      // Rotate rim points by steerAngle
-      final sx0 = rx0 * cs + rz0 * ss;
-      final sz0 = -rx0 * ss + rz0 * cs;
-
-      final sx1 = rx1 * cs + rz1 * ss;
-      final sz1 = -rx1 * ss + rz1 * cs;
+      // Rotate rim points by steerAngle around Y
+      final sx0 = rz0 * ss;
+      final sz0 = rz0 * cs;
+      final sx1 = rz1 * ss;
+      final sz1 = rz1 * cs;
 
       final w0 = vehicleMatrix.transformPoint(
         Vec3(localCenter.x + sx0, localCenter.y + ry0, localCenter.z + sz0),
@@ -3837,6 +4224,26 @@ class _TestDriveScenePainter extends CustomPainter {
       final p1 = project(w1);
       if (p0 != null && p1 != null) {
         canvas.drawLine(p0, p1, wheelPaint);
+      }
+    }
+
+    // 5 Spokes from hub to rim
+    final centerWorld = vehicleMatrix.transformPoint(localCenter);
+    final pCenter = project(centerWorld);
+    if (pCenter != null) {
+      for (var s = 0; s < 5; s++) {
+        final sa = rollAngle + (s * 2 * pi / 5);
+        final sy = radius * sin(sa);
+        final sz = radius * cos(sa);
+        final sx = sz * ss;
+        final szSteered = sz * cs;
+        final wSpoke = vehicleMatrix.transformPoint(
+          Vec3(localCenter.x + sx, localCenter.y + sy, localCenter.z + szSteered),
+        );
+        final pSpoke = project(wSpoke);
+        if (pSpoke != null) {
+          canvas.drawLine(pCenter, pSpoke, spokePaint);
+        }
       }
     }
   }
