@@ -180,50 +180,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _frontTraction = car.frontTraction;
       _rearTraction = car.rearTraction;
 
-      if (_isTestDriveMode && car.wheelPositions.length >= 4) {
-        _assignedWheels['FL'] = DetectedWheel(
-          nodeIndex: 0,
-          nodeName: 'Wheel_FL',
-          worldPosition: car.wheelPositions[0],
-          confidence: 1.0,
-          axle: 'front',
-          side: 'left',
-        );
-        _assignedWheels['FR'] = DetectedWheel(
-          nodeIndex: 1,
-          nodeName: 'Wheel_FR',
-          worldPosition: car.wheelPositions[1],
-          confidence: 1.0,
-          axle: 'front',
-          side: 'right',
-        );
-        _assignedWheels['RL'] = DetectedWheel(
-          nodeIndex: 2,
-          nodeName: 'Wheel_RL',
-          worldPosition: car.wheelPositions[2],
-          confidence: 1.0,
-          axle: 'rear',
-          side: 'left',
-        );
-        _assignedWheels['RR'] = DetectedWheel(
-          nodeIndex: 3,
-          nodeName: 'Wheel_RR',
-          worldPosition: car.wheelPositions[3],
-          confidence: 1.0,
-          axle: 'rear',
-          side: 'right',
-        );
-
-        _detection = DetectionResult(
-          wheels: _assignedWheels.values.whereType<DetectedWheel>().toList(),
-          body: null,
-          suggestedDrive: car.drive,
-          suggestedPreset: car.name,
-          warnings: const [],
-        );
-        _scanCompleted = true;
-        _highlightFoundWheels = true;
-      }
       _parsedModel = ParsedModel.createProceduralDefault(
         name: car.name,
         wheelPositions: car.wheelPositions,
@@ -306,10 +262,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     } catch (e) {
       _showMessage('Error parsing model: $e');
     }
-  }
-
-  void _autoRigModel() {
-    _onStartWheelScan();
   }
 
   void _mapDetectedWheels(List<DetectedWheel> wheels) {
@@ -497,7 +449,23 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     });
   }
 
+  bool _isStepEnabled(int step) {
+    if (step == 1) return true;
+    if (_parsedModel == null) return false;
+    if (step == 2) return true;
+    final wheelCount = _assignedWheels.values.whereType<DetectedWheel>().length;
+    final step2Done = _scanCompleted && wheelCount >= 4;
+    if (step == 3) return step2Done;
+    if (step == 4) return step2Done;
+    if (step == 5) return step2Done;
+    return false;
+  }
+
   void _selectStep(int step) {
+    if (!_isStepEnabled(step)) {
+      _showMessage('Please complete Step 2 (Scan & Organize) before advancing.');
+      return;
+    }
     setState(() {
       _activeStep = step;
       _showRightPanel = true;
@@ -569,25 +537,27 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       case 1:
         return _parsedModel != null ? StepStatus.done : StepStatus.pending;
       case 2:
+        if (_parsedModel == null) return StepStatus.pending;
         if (_isScanningWheels) return StepStatus.running;
         if (_inspectMode == 'manual') return StepStatus.manual;
         final wheelCount =
             _assignedWheels.values.whereType<DetectedWheel>().length;
         if (_scanCompleted && wheelCount >= 4 && (_detection?.warnings.isEmpty ?? false)) {
           return StepStatus.done;
-        } else if (_detection != null && _detection!.warnings.isNotEmpty) {
+        } else if (_scanCompleted && _detection != null && _detection!.warnings.isNotEmpty) {
           return StepStatus.warning;
-        } else if (_parsedModel != null) {
-          return StepStatus.pending;
         }
         return StepStatus.pending;
       case 3:
-        return _parsedModel != null ? StepStatus.done : StepStatus.pending;
+        if (!_isStepEnabled(3)) return StepStatus.pending;
+        return StepStatus.done;
       case 4:
-        return _parsedModel != null ? StepStatus.done : StepStatus.pending;
+        if (!_isStepEnabled(4)) return StepStatus.pending;
+        return StepStatus.done;
       case 5:
+        if (!_isStepEnabled(5)) return StepStatus.pending;
         if (_exportBlockReason == null) return StepStatus.done;
-        return _parsedModel != null ? StepStatus.warning : StepStatus.pending;
+        return StepStatus.warning;
       default:
         return StepStatus.pending;
     }
@@ -975,7 +945,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
               if (!desktop)
                 _MobileHeader(
                   onExport: _exportGodotFiles,
-                  onAutoRig: _autoRigModel,
                   isTestDrive: _isTestDriveMode,
                   onToggleTestDrive: () {
                     if (_isTestDriveMode) {
@@ -1011,6 +980,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                             hasModel: _parsedModel != null,
                             isTestDrive: _isTestDriveMode,
                             getStepStatus: _getStepStatus,
+                            isStepEnabled: _isStepEnabled,
                             onToggleCollapse: () {
                               setState(() => _showLeftPanel = !_showLeftPanel);
                             },
@@ -1024,7 +994,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                             _DesktopTopbar(
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
-                              onAutoRig: _autoRigModel,
                               inspectMode: _inspectMode,
                               wheelsCount: _detection?.wheels.length ?? 0,
                               isTestDrive: _isTestDriveMode,
@@ -1048,6 +1017,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                             _StepStrip(
                               activeStep: _activeStep,
                               onStepSelected: _selectStep,
+                              isStepEnabled: _isStepEnabled,
                             ),
                           Expanded(
                             child: _isTestDriveMode
@@ -1251,6 +1221,7 @@ class _DesktopSidebar extends StatelessWidget {
     required this.hasModel,
     required this.isTestDrive,
     required this.getStepStatus,
+    required this.isStepEnabled,
     required this.onToggleCollapse,
   });
 
@@ -1259,6 +1230,7 @@ class _DesktopSidebar extends StatelessWidget {
   final bool hasModel;
   final bool isTestDrive;
   final StepStatus Function(int step) getStepStatus;
+  final bool Function(int step) isStepEnabled;
   final VoidCallback onToggleCollapse;
 
   @override
@@ -1305,6 +1277,7 @@ class _DesktopSidebar extends StatelessWidget {
                     subtitle: step.subtitle,
                     status: getStepStatus(step.number),
                     isActive: activeStep == step.number,
+                    isEnabled: isStepEnabled(step.number),
                     onTap: () => onStepSelected(step.number),
                   ),
                   const SizedBox(height: 6),
@@ -1366,6 +1339,7 @@ class _SidebarStepCard extends StatelessWidget {
     required this.subtitle,
     required this.status,
     required this.isActive,
+    required this.isEnabled,
     required this.onTap,
   });
 
@@ -1374,9 +1348,30 @@ class _SidebarStepCard extends StatelessWidget {
   final String subtitle;
   final StepStatus status;
   final bool isActive;
-  final VoidCallback onTap;
+  final bool isEnabled;
+  final VoidCallback? onTap;
 
   Widget _buildBadge() {
+    if (!isEnabled) {
+      return Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: const Color(0xFF131A16),
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF1B241F)),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          '$number',
+          style: const TextStyle(
+            color: Color(0xFF4B5563),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
     switch (status) {
       case StepStatus.done:
         return Container(
@@ -1466,56 +1461,71 @@ class _SidebarStepCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cardContent = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: !isEnabled
+            ? const Color(0xFF0C1310)
+            : (isActive ? const Color(0xFF13261F) : const Color(0xFF111C18)),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: !isEnabled
+              ? const Color(0xFF15221C)
+              : (isActive ? const Color(0xFF10B981) : const Color(0xFF1E352C)),
+        ),
+      ),
+      child: Row(
+        children: [
+          _buildBadge(),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: !isEnabled
+                        ? const Color(0xFF4B5563)
+                        : (isActive ? const Color(0xFFF3F4F6) : const Color(0xFFD1D5DB)),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: !isEnabled
+                        ? const Color(0xFF374151)
+                        : const Color(0xFF9CA3AF),
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isActive)
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF10B981),
+              size: 18,
+            ),
+        ],
+      ),
+    );
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF13261F) : const Color(0xFF111C18),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isActive ? const Color(0xFF10B981) : const Color(0xFF1E352C),
-          ),
-        ),
-        child: Row(
-          children: [
-            _buildBadge(),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: isActive ? const Color(0xFFF3F4F6) : const Color(0xFFD1D5DB),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF9CA3AF),
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isActive)
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF10B981),
-                size: 18,
-              ),
-          ],
-        ),
-      ),
+      child: !isEnabled
+          ? Opacity(
+              opacity: 0.38,
+              child: cardContent,
+            )
+          : cardContent,
     );
   }
 }
@@ -1526,7 +1536,6 @@ class _DesktopTopbar extends StatelessWidget {
   const _DesktopTopbar({
     required this.modelName,
     required this.onExport,
-    required this.onAutoRig,
     required this.inspectMode,
     required this.wheelsCount,
     required this.isTestDrive,
@@ -1539,7 +1548,6 @@ class _DesktopTopbar extends StatelessWidget {
 
   final String modelName;
   final VoidCallback onExport;
-  final VoidCallback onAutoRig;
   final String inspectMode;
   final int wheelsCount;
   final bool isTestDrive;
@@ -1646,14 +1654,6 @@ class _DesktopTopbar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton.filledTonal(
-            onPressed: onAutoRig,
-            tooltip: 'Auto-rig vehicle',
-            icon: const Icon(Icons.auto_awesome_rounded, size: 16),
-            color: const Color(0xFF10B981),
-            visualDensity: VisualDensity.compact,
-          ),
-          const SizedBox(width: 6),
           FilledButton.icon(
             onPressed: onToggleTestDrive,
             icon: Icon(
@@ -1722,12 +1722,10 @@ class _DesktopTopbar extends StatelessWidget {
 class _MobileHeader extends StatelessWidget {
   const _MobileHeader({
     required this.onExport,
-    required this.onAutoRig,
     required this.isTestDrive,
     required this.onToggleTestDrive,
   });
   final VoidCallback onExport;
-  final VoidCallback onAutoRig;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
 
@@ -1762,14 +1760,6 @@ class _MobileHeader extends StatelessWidget {
           const _Brand(),
           const Spacer(),
           IconButton(
-            onPressed: onAutoRig,
-            tooltip: 'Auto-rig vehicle',
-            icon: const Icon(
-              Icons.auto_awesome_rounded,
-              color: Color(0xFF10B981),
-            ),
-          ),
-          IconButton(
             onPressed: onToggleTestDrive,
             tooltip: isTestDrive ? 'Return to Workbench' : 'Test Drive Mode',
             icon: Icon(
@@ -1793,9 +1783,14 @@ class _MobileHeader extends StatelessWidget {
 }
 
 class _StepStrip extends StatelessWidget {
-  const _StepStrip({required this.activeStep, required this.onStepSelected});
+  const _StepStrip({
+    required this.activeStep,
+    required this.onStepSelected,
+    required this.isStepEnabled,
+  });
   final int activeStep;
   final ValueChanged<int> onStepSelected;
+  final bool Function(int step) isStepEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -1805,23 +1800,45 @@ class _StepStrip extends StatelessWidget {
       child: Row(
         children: [
           for (final step in kPipelineSteps) ...[
-            ChoiceChip(
-              label: Text('${step.number}  ${step.title}'),
-              selected: activeStep == step.number,
-              onSelected: (_) => onStepSelected(step.number),
-              showCheckmark: false,
-              backgroundColor: const Color(0xFF111C18),
-              selectedColor: const Color(0xFF10B981),
-              side: const BorderSide(color: Color(0xFF1E352C)),
-              labelStyle: TextStyle(
-                color: activeStep == step.number
-                    ? const Color(0xFF062319)
-                    : const Color(0xFF9CA3AF),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
+            Builder(
+              builder: (context) {
+                final enabled = isStepEnabled(step.number);
+                final selected = activeStep == step.number;
+                final chip = ChoiceChip(
+                  label: Text('${step.number}  ${step.title}'),
+                  selected: selected,
+                  onSelected: (_) => onStepSelected(step.number),
+                  showCheckmark: false,
+                  backgroundColor: !enabled
+                      ? const Color(0xFF0C1310)
+                      : const Color(0xFF111C18),
+                  selectedColor: const Color(0xFF10B981),
+                  side: BorderSide(
+                    color: !enabled
+                        ? const Color(0xFF15221C)
+                        : (selected ? const Color(0xFF10B981) : const Color(0xFF1E352C)),
+                  ),
+                  labelStyle: TextStyle(
+                    color: !enabled
+                        ? const Color(0xFF4B5563)
+                        : (selected
+                            ? const Color(0xFF062319)
+                            : const Color(0xFF9CA3AF)),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                );
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: enabled
+                      ? chip
+                      : Opacity(
+                          opacity: 0.38,
+                          child: chip,
+                        ),
+                );
+              },
             ),
-            const SizedBox(width: 8),
           ],
         ],
       ),

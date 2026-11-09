@@ -556,7 +556,7 @@ void main() {
       // Car name label and right sidepanel content are removed as requested
       expect(find.text('Procedural 3D Rig'), findsNothing);
       expect(find.text('Mixamo-Style Auto-Rig'), findsNothing);
-      expect(find.byTooltip('Auto-rig vehicle'), findsOneWidget);
+      expect(find.byTooltip('Auto-rig vehicle'), findsNothing);
       expect(find.text('ISO'), findsOneWidget);
       expect(find.byTooltip('Viewport lighting: Studio'), findsOneWidget);
       expect(find.byTooltip('Fullscreen Viewport'), findsOneWidget);
@@ -639,12 +639,20 @@ void main() {
       expect(find.text('D. ONE-CLICK SYMMETRY & PIVOT REPAIR'), findsOneWidget);
       expect(find.text('Mirror Left → Right Hubs'), findsOneWidget);
 
-      // Tap Step 3: Add Physics
+      // Tap Step 3: Add Physics while Step 2 is incomplete (should stay locked)
       await tester.tap(find.text('Add Physics').first);
       await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('HANDLING PRESETS'), findsNothing);
 
-      // Switch back to Auto
+      // Switch back to Auto and click Start to complete Step 2
       await tester.tap(find.text('✨ Auto'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      // Now that Step 2 is completed, tap Step 3: Add Physics
+      await tester.tap(find.text('Add Physics').first);
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('HANDLING PRESETS'), findsOneWidget);
@@ -726,6 +734,16 @@ void main() {
       await tester.ensureVisible(find.text('Recenter Pivots to Cylinder'));
       await tester.tap(find.text('Recenter Pivots to Cylinder'));
       await tester.pump(const Duration(milliseconds: 50));
+
+      // Run wheel detection via Start in Auto mode to complete Step 2
+      await tester.tap(find.text('✨ Auto'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+      // Return to Custom mode
+      await tester.tap(find.text('🛠 Custom'));
+      await tester.pump(const Duration(milliseconds: 100));
 
       // Step 3: Add Physics
       await tester.tap(find.text('Add Physics').first);
@@ -1666,6 +1684,85 @@ endsolid sports_car''';
 
       // Verify detection ran for new car
       expect(find.text('Start'), findsOneWidget);
+    });
+
+    testWidgets('grays out incomplete steps and blocks navigation until Step 2 is completed', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Initially on Step 1. Steps 3, 4, 5 are locked.
+      // Trying to tap Step 3 (Add Physics) from sidebar
+      await tester.tap(find.text('Add Physics').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Please complete Step 2 (Scan & Organize) before advancing.'), findsOneWidget);
+      // Detail panel remains on Step 1 (Upload Vehicle)
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+
+      // Trying to tap Step 4 (Add Sound)
+      await tester.tap(find.text('Add Sound').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Please complete Step 2 (Scan & Organize) before advancing.'), findsOneWidget);
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+
+      // Trying to tap Step 5 (Export Rig)
+      await tester.tap(find.text('Export Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Please complete Step 2 (Scan & Organize) before advancing.'), findsOneWidget);
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+
+      // Step 2 (Scan & Organize) is enabled
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+
+      // Click Start to run wheel detection
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      // Now Step 3 is unlocked and can be navigated to
+      await tester.tap(find.text('Add Physics').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('HANDLING PRESETS'), findsOneWidget);
+
+      // And Step 4 is unlocked
+      await tester.tap(find.text('Add Sound').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ACOUSTIC PROFILES'), findsOneWidget);
+
+      // And Step 5 is unlocked
+      await tester.tap(find.text('Export Rig').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
+    });
+
+    testWidgets('ensures viewport does not render circle markers or CoM text on middle object', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Advance to Step 2 and run wheel detection
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Start'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      // Confirm no CoM label or floating marker circle text is rendered in viewport
+      expect(find.textContaining('CoM ('), findsNothing);
+      expect(find.text('Wheel_FL'), findsNothing);
+      expect(find.text('Wheel_FR'), findsNothing);
+      expect(find.byTooltip('Hide Markers'), findsNothing);
+      expect(find.byTooltip('Show Markers'), findsNothing);
     });
   });
 }

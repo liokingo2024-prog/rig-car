@@ -729,22 +729,6 @@ class _WireframeViewerState extends State<WireframeViewer>
                   const SizedBox(width: 8),
                   _LegendItem(color: widget.wireColor, label: 'Chassis'),
                   const SizedBox(width: 16),
-                // Toggle markers (only shown when detection markers are present and highlighted)
-                if (widget.highlightWheels && widget.detection != null && widget.detection!.wheels.isNotEmpty)
-                  IconButton(
-                    iconSize: 18,
-                    visualDensity: VisualDensity.compact,
-                    tooltip: _showMarkers ? 'Hide Markers' : 'Show Markers',
-                    icon: Icon(
-                      _showMarkers
-                          ? Icons.pin_drop_rounded
-                          : Icons.pin_drop_outlined,
-                      color: _showMarkers
-                          ? const Color(0xFF34D399)
-                          : const Color(0xFF71818B),
-                    ),
-                    onPressed: () => setState(() => _showMarkers = !_showMarkers),
-                  ),
                 // Land Grid Style Selector (CAD, Radial Podium, Cyber Hex, Skidpad, Off)
                 PopupMenuButton<GroundGridStyle>(
                   tooltip: 'Land Grid: ${_gridStyle.label} (Click to choose)',
@@ -1193,11 +1177,6 @@ class _WireframeScenePainter extends CustomPainter {
       if (renderMode != ViewerRenderMode.solid) {
         _drawProceduralWireframeCar(canvas, size, projectPoint);
       }
-    }
-
-    // ── 3. Draw Detected Wheel Markers ──────────────────────────────────────
-    if (highlightWheels && showMarkers && (detection?.wheels.isNotEmpty ?? false)) {
-      _drawMarkers(canvas, size, projectPoint);
     }
   }
 
@@ -1872,7 +1851,7 @@ class _WireframeScenePainter extends CustomPainter {
       final int base;
       if (triNode[t] == selected) {
         base = selectedArgb;
-      } else if (highlightWheels && (wheelNodeSet.contains(triNode[t]) || triKind[t] == 2)) {
+      } else if (highlightWheels && wheelNodeSet.contains(triNode[t])) {
         base = 0xFF10B981;
       } else {
         final materialColor = triColor[t];
@@ -2612,72 +2591,6 @@ class _WireframeScenePainter extends CustomPainter {
       if (hub != null && p0 != null && i % 3 == 0) {
         canvas.drawLine(hub, p0, paint);
       }
-    }
-  }
-
-  void _drawMarkers(Canvas canvas, Size size, Offset? Function(Vec3) project) {
-    final wheels = detection?.wheels ?? [];
-
-    for (final w in wheels) {
-      final pos = project(w.worldPosition);
-      if (pos == null) continue;
-
-      // Marker circle
-      final markerPaint = Paint()
-        ..color = highlightWheels ? const Color(0xFF10B981) : wheelColor
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(pos, 5, markerPaint);
-
-      final ringPaint = Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawCircle(pos, 8, ringPaint);
-
-      // Pulsing animated ring
-      final pulseRadius = 7.0 + pulseProgress * 13.0;
-      final pulseAlpha = (1.0 - pulseProgress).clamp(0.0, 1.0);
-      final pulsePaint = Paint()
-        ..color = (highlightWheels ? const Color(0xFF10B981) : wheelColor).withValues(alpha: pulseAlpha * 0.85)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0;
-      canvas.drawCircle(pos, pulseRadius, pulsePaint);
-
-      // Label
-      final span = TextSpan(
-        text: w.label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.w800,
-          backgroundColor: Color(0xD017232B),
-        ),
-      );
-      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
-        ..layout();
-      tp.paint(canvas, pos + const Offset(10, -7));
-    }
-
-    // Center of mass marker
-    final comPos = project(Vec3(0, centerOfMassY, 0));
-    if (comPos != null) {
-      final comPaint = Paint()
-        ..color = const Color(0xFFFF5252)
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(comPos, 4, comPaint);
-
-      final span = TextSpan(
-        text: 'CoM (${centerOfMassY.toStringAsFixed(2)}m)',
-        style: const TextStyle(
-          color: Color(0xFFFF8A80),
-          fontSize: 9,
-          fontWeight: FontWeight.w700,
-          backgroundColor: Color(0xD017232B),
-        ),
-      );
-      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)
-        ..layout();
-      tp.paint(canvas, comPos + const Offset(8, -6));
     }
   }
 }
