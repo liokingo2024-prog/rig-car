@@ -433,6 +433,15 @@ void main() {
       // Right inspector fixed header and Step 1 merged view (no auto/custom toggle)
       expect(find.text('✨ Auto'), findsNothing);
       expect(find.text('🛠 Custom'), findsNothing);
+
+      // Step 1: Upload vehicle is collapsed by default
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+      expect(find.text('Next: Scan & Organize'), findsOneWidget);
+
+      // Tap to expand Step 1
+      await tester.tap(find.text('Expand Vehicle Details & Tools'));
+      await tester.pump(const Duration(milliseconds: 100));
+
       expect(find.text('PROGRESS & BOUNDS VERIFICATION'), findsOneWidget);
       expect(find.text('Model Parsed'), findsOneWidget);
       expect(find.text('Bounding Box'), findsOneWidget);
@@ -510,7 +519,12 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Step 1: Merged view contains orientation, scale, and bounds controls directly
+      // Step 1: Merged view is collapsed by default; expand to reveal controls
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+      expect(find.text('Next: Scan & Organize'), findsOneWidget);
+      await tester.tap(find.text('Expand Vehicle Details & Tools'));
+      await tester.pump(const Duration(milliseconds: 100));
+
       expect(find.text('ORIENTATION QUICK-FIX'), findsOneWidget);
       expect(find.text('Rotate +90° Yaw'), findsOneWidget);
       expect(find.text('Flip Front/Back'), findsOneWidget);
@@ -1315,6 +1329,10 @@ endsolid sports_car''';
       await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
+      // Expand Step 1 details & tools
+      await tester.tap(find.text('Expand Vehicle Details & Tools'));
+      await tester.pump(const Duration(milliseconds: 100));
+
       // Rotate +90° Yaw
       await tester.ensureVisible(find.text('Rotate +90° Yaw'));
       await tester.tap(find.text('Rotate +90° Yaw'));
@@ -1338,6 +1356,53 @@ endsolid sports_car''';
       await tester.tap(find.text('Apply Scale'));
       await tester.pump();
       expect(find.textContaining('Normalized vehicle footprint'), findsOneWidget);
+    });
+
+    testWidgets('advances sequentially through pipeline steps 1 to 5 using Next Step buttons', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 1: Upload Vehicle (starts collapsed)
+      expect(find.text('Expand Vehicle Details & Tools'), findsOneWidget);
+      expect(find.text('Next: Scan & Organize'), findsOneWidget);
+
+      // Advance to Step 2
+      await tester.tap(find.text('Next: Scan & Organize'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 2: Scan & Organize
+      expect(find.text('4-STAGE AUTO-RIG PIPELINE'), findsOneWidget);
+      expect(find.text('Next: Add Physics'), findsOneWidget);
+
+      // Advance to Step 3
+      await tester.tap(find.text('Next: Add Physics'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 3: Add Physics
+      expect(find.text('HANDLING PRESETS'), findsOneWidget);
+      expect(find.text('Next: Add Sound'), findsOneWidget);
+
+      // Advance to Step 4
+      await tester.tap(find.text('Next: Add Sound'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 4: Add Sound
+      expect(find.text('ACOUSTIC PROFILES'), findsOneWidget);
+      expect(find.text('Next: Export Rig'), findsOneWidget);
+
+      // Advance to Step 5
+      await tester.tap(find.text('Next: Export Rig'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Step 5: Export Rig
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
+      expect(find.text('Export Godot 4 Rig (.glb / .tscn)'), findsOneWidget);
+      expect(find.text('Launch Test Drive'), findsOneWidget);
     });
   });
 }

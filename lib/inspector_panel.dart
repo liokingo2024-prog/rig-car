@@ -147,6 +147,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
   // Step 1 local inputs
   late final TextEditingController _targetLengthController;
   bool _excludeRoofAntenna = false;
+  bool _isUploadCollapsed = true;
 
   // Step 2 local filters
   double _heightCutoffPercent = 35.0; // 15% - 60%
@@ -423,6 +424,10 @@ class _InspectorPanelState extends State<InspectorPanel> {
     final widthStr = size.x.abs().toStringAsFixed(1);
     final heightStr = size.y.abs().toStringAsFixed(1);
     final lowestY = model?.worldBBox.lo.y ?? 0.0;
+    final formattedVerts = vertCount.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -440,159 +445,212 @@ class _InspectorPanelState extends State<InspectorPanel> {
             ),
           ),
         ),
-        const SizedBox(height: 16),
-        const _SectionHeader('PROGRESS & BOUNDS VERIFICATION'),
-        const SizedBox(height: 8),
-        _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
-          title: 'Model Parsed',
-          metric: '$meshCount meshes · ${vertCount.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')} vertices',
-          description: hasModel
-              ? 'Clean manifold geometry and vertex islands parsed.'
-              : 'Default vehicle template loaded. Ready for import.',
-          onHover: (hover) => widget.onHoverPart(hover ? 'model_root' : null),
-        ),
-        const SizedBox(height: 8),
-        _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
-          title: 'Bounding Box',
-          metric: '${lengthStr}L × ${widthStr}W × ${heightStr}H m',
-          description: 'Calculated from oriented vehicle geometry bounds.',
-          onHover: (hover) => widget.onHoverPart(hover ? 'bbox' : null),
-        ),
-        const SizedBox(height: 8),
-        _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
-          title: 'Ground Plane Snap',
-          metric: 'Lowest Y = ${lowestY.abs() < 0.01 ? "0.00" : lowestY.toStringAsFixed(2)}m',
-          description: 'Lowest tire contact points aligned with zero road plane.',
-          onHover: (hover) => widget.onHoverPart(hover ? 'ground_plane' : null),
-        ),
-        const SizedBox(height: 8),
-        _InspectCheckCard(
-          icon: Icons.check_circle_rounded,
-          iconColor: _Palette.accentEmerald,
-          title: 'Forward Axis',
-          metric: 'Detected Front: +Z',
-          description: 'Heading aligns with standard Godot 4 VehicleBody3D forward.',
-          onHover: (hover) => widget.onHoverPart(hover ? 'forward_axis' : null),
-        ),
-        const SizedBox(height: 16),
-        const _SectionHeader('ORIENTATION QUICK-FIX'),
-        const SizedBox(height: 8),
+        const SizedBox(height: 14),
+        // Collapsible Summary Card
         Container(
-          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: _Palette.activeCardFill,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: _Palette.borderDefault),
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _QuickActionButton(
-                      label: 'Rotate +90° Yaw',
-                      icon: Icons.rotate_right_rounded,
-                      onTap: () => widget.onRotateYaw(pi / 2),
-                    ),
+              InkWell(
+                onTap: () => setState(() => _isUploadCollapsed = !_isUploadCollapsed),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0D1E17),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: _Palette.accentEmerald.withAlpha(70)),
+                        ),
+                        child: const Icon(
+                          Icons.check_circle_rounded,
+                          color: _Palette.accentEmerald,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    hasModel ? 'Vehicle Parsed' : 'Vehicle Ready',
+                                    style: const TextStyle(
+                                      color: _Palette.textPrimary,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF13261F),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: const Color(0xFF1E352C)),
+                                  ),
+                                  child: const Text(
+                                    'Verified',
+                                    style: TextStyle(
+                                      color: _Palette.accentEmerald,
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${lengthStr}L × ${widthStr}W × ${heightStr}H m · $meshCount meshes · $formattedVerts verts',
+                              style: const TextStyle(
+                                color: _Palette.textMetrics,
+                                fontFamily: 'monospace',
+                                fontSize: 10.5,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        _isUploadCollapsed
+                            ? Icons.keyboard_arrow_down_rounded
+                            : Icons.keyboard_arrow_up_rounded,
+                        color: _Palette.accentEmerald,
+                        size: 20,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _QuickActionButton(
-                      label: 'Flip Front/Back',
-                      icon: Icons.swap_horiz_rounded,
-                      onTap: widget.onFlipFrontBack,
-                    ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _isUploadCollapsed = !_isUploadCollapsed),
+                  icon: Icon(
+                    _isUploadCollapsed ? Icons.unfold_more_rounded : Icons.unfold_less_rounded,
+                    size: 14,
+                    color: _Palette.accentEmerald,
                   ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              _QuickActionButton(
-                label: 'Snap to Ground (Y = 0.0m)',
-                icon: Icons.vertical_align_bottom_rounded,
-                onTap: widget.onSnapToGround,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        const _SectionHeader('SCALE NORMALIZATION'),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _Palette.activeCardFill,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _Palette.borderDefault),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 38,
-                  child: TextField(
-                    controller: _targetLengthController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  label: Text(
+                    _isUploadCollapsed ? 'Expand Vehicle Details & Tools' : 'Collapse Vehicle Details',
                     style: const TextStyle(
-                      color: _Palette.textMetrics,
-                      fontFamily: 'monospace',
-                      fontSize: 13,
-                    ),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      labelText: 'Target Length (m)',
-                      labelStyle: const TextStyle(color: _Palette.textSecondary, fontSize: 11),
-                      suffixText: 'm',
-                      suffixStyle: const TextStyle(color: _Palette.textSecondary, fontSize: 11),
-                      filled: true,
-                      fillColor: const Color(0xFF0B1410),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(6),
-                        borderSide: const BorderSide(color: _Palette.borderDefault),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(6),
-                        borderSide: const BorderSide(color: _Palette.borderDefault),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(6),
-                        borderSide: const BorderSide(color: _Palette.accentEmerald),
-                      ),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _Palette.accentEmerald,
                     ),
                   ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF1E352C)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () {
-                  final val = double.tryParse(_targetLengthController.text.trim()) ?? 4.2;
-                  widget.onApplyScale(val.clamp(1.0, 15.0));
-                },
-                style: FilledButton.styleFrom(
-                  backgroundColor: _Palette.accentEmerald,
-                  foregroundColor: const Color(0xFF041D14),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                ),
-                child: const Text('Apply Scale', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        const _SectionHeader('BOUNDS FILTER'),
-        const SizedBox(height: 8),
-        InkWell(
-          onTap: () => setState(() => _excludeRoofAntenna = !_excludeRoofAntenna),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        if (!_isUploadCollapsed) ...[
+          const SizedBox(height: 16),
+          const _SectionHeader('PROGRESS & BOUNDS VERIFICATION'),
+          const SizedBox(height: 8),
+          _InspectCheckCard(
+            icon: Icons.check_circle_rounded,
+            iconColor: _Palette.accentEmerald,
+            title: 'Model Parsed',
+            metric: '$meshCount meshes · $formattedVerts vertices',
+            description: hasModel
+                ? 'Clean manifold geometry and vertex islands parsed.'
+                : 'Default vehicle template loaded. Ready for import.',
+            onHover: (hover) => widget.onHoverPart(hover ? 'model_root' : null),
+          ),
+          const SizedBox(height: 8),
+          _InspectCheckCard(
+            icon: Icons.check_circle_rounded,
+            iconColor: _Palette.accentEmerald,
+            title: 'Bounding Box',
+            metric: '${lengthStr}L × ${widthStr}W × ${heightStr}H m',
+            description: 'Calculated from oriented vehicle geometry bounds.',
+            onHover: (hover) => widget.onHoverPart(hover ? 'bbox' : null),
+          ),
+          const SizedBox(height: 8),
+          _InspectCheckCard(
+            icon: Icons.check_circle_rounded,
+            iconColor: _Palette.accentEmerald,
+            title: 'Ground Plane Snap',
+            metric: 'Lowest Y = ${lowestY.abs() < 0.01 ? "0.00" : lowestY.toStringAsFixed(2)}m',
+            description: 'Lowest tire contact points aligned with zero road plane.',
+            onHover: (hover) => widget.onHoverPart(hover ? 'ground_plane' : null),
+          ),
+          const SizedBox(height: 8),
+          _InspectCheckCard(
+            icon: Icons.check_circle_rounded,
+            iconColor: _Palette.accentEmerald,
+            title: 'Forward Axis',
+            metric: 'Detected Front: +Z',
+            description: 'Heading aligns with standard Godot 4 VehicleBody3D forward.',
+            onHover: (hover) => widget.onHoverPart(hover ? 'forward_axis' : null),
+          ),
+          const SizedBox(height: 16),
+          const _SectionHeader('ORIENTATION QUICK-FIX'),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _Palette.activeCardFill,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _Palette.borderDefault),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _QuickActionButton(
+                        label: 'Rotate +90° Yaw',
+                        icon: Icons.rotate_right_rounded,
+                        onTap: () => widget.onRotateYaw(pi / 2),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _QuickActionButton(
+                        label: 'Flip Front/Back',
+                        icon: Icons.swap_horiz_rounded,
+                        onTap: widget.onFlipFrontBack,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                _QuickActionButton(
+                  label: 'Snap to Ground (Y = 0.0m)',
+                  icon: Icons.vertical_align_bottom_rounded,
+                  onTap: widget.onSnapToGround,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _SectionHeader('SCALE NORMALIZATION'),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: _Palette.activeCardFill,
               borderRadius: BorderRadius.circular(8),
@@ -600,31 +658,105 @@ class _InspectorPanelState extends State<InspectorPanel> {
             ),
             child: Row(
               children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Checkbox(
-                    value: _excludeRoofAntenna,
-                    activeColor: _Palette.accentEmerald,
-                    checkColor: const Color(0xFF041D14),
-                    onChanged: (val) => setState(() => _excludeRoofAntenna = val ?? false),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Exclude roof/antenna parts from chassis bounds',
-                    style: TextStyle(
-                      color: _Palette.textPrimary,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
+                Expanded(
+                  child: SizedBox(
+                    height: 38,
+                    child: TextField(
+                      controller: _targetLengthController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(
+                        color: _Palette.textMetrics,
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        labelText: 'Target Length (m)',
+                        labelStyle: const TextStyle(color: _Palette.textSecondary, fontSize: 11),
+                        suffixText: 'm',
+                        suffixStyle: const TextStyle(color: _Palette.textSecondary, fontSize: 11),
+                        filled: true,
+                        fillColor: const Color(0xFF0B1410),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: _Palette.borderDefault),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: _Palette.borderDefault),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: _Palette.accentEmerald),
+                        ),
+                      ),
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () {
+                    final val = double.tryParse(_targetLengthController.text.trim()) ?? 4.2;
+                    widget.onApplyScale(val.clamp(1.0, 15.0));
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _Palette.accentEmerald,
+                    foregroundColor: const Color(0xFF041D14),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  child: const Text('Apply Scale', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          const _SectionHeader('BOUNDS FILTER'),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => setState(() => _excludeRoofAntenna = !_excludeRoofAntenna),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _Palette.activeCardFill,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _Palette.borderDefault),
+              ),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Checkbox(
+                      value: _excludeRoofAntenna,
+                      activeColor: _Palette.accentEmerald,
+                      checkColor: const Color(0xFF041D14),
+                      onChanged: (val) => setState(() => _excludeRoofAntenna = val ?? false),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Exclude roof/antenna parts from chassis bounds',
+                      style: TextStyle(
+                        color: _Palette.textPrimary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Scan & Organize',
+          onPressed: () => widget.onStepSelect(2),
         ),
       ],
     );
@@ -715,6 +847,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
               child: const Text('Fix Math Mistakes →', style: TextStyle(fontSize: 11)),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        _NextStepButton(
+          label: 'Next: Add Physics',
+          onPressed: () => widget.onStepSelect(3),
         ),
       ],
     );
@@ -875,6 +1012,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
             ),
           ],
         ),
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Add Physics',
+          onPressed: () => widget.onStepSelect(3),
+        ),
       ],
     );
   }
@@ -917,6 +1059,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
               _MetricRow(label: 'Tire Friction', value: widget.grip.toStringAsFixed(1)),
             ],
           ),
+        ),
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Add Sound',
+          onPressed: () => widget.onStepSelect(4),
         ),
       ],
     );
@@ -991,6 +1138,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
           onChanged: widget.onSteerAngleChanged,
           onReset: () => widget.onResetPhysicsProperty('steerAngle'),
         ),
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Add Sound',
+          onPressed: () => widget.onStepSelect(4),
+        ),
       ],
     );
   }
@@ -1038,6 +1190,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
             ],
           ),
         ),
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Export Rig',
+          onPressed: () => widget.onStepSelect(5),
+        ),
       ],
     );
   }
@@ -1056,6 +1213,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
           ),
           const SizedBox(height: 8),
         ],
+        const SizedBox(height: 18),
+        _NextStepButton(
+          label: 'Next: Export Rig',
+          onPressed: () => widget.onStepSelect(5),
+        ),
       ],
     );
   }
@@ -2025,6 +2187,45 @@ class _ArchitectureRadioOption extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NextStepButton extends StatelessWidget {
+  const _NextStepButton({
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: _Palette.accentEmerald,
+        foregroundColor: const Color(0xFF041D14),
+        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 0,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.arrow_forward_rounded, size: 15),
         ],
       ),
     );
