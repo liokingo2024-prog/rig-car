@@ -644,8 +644,53 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     await Future.delayed(const Duration(milliseconds: 150));
     if (!mounted) return;
 
+    final jsResult = detectSketchfabWheels();
     final detection = AutoDetector.detect(_parsedModel!);
     _mapDetectedWheels(detection.wheels);
+
+    if (jsResult != null) {
+      try {
+        final jsWheels = jsResult['wheels'];
+        if (jsWheels != null) {
+          for (final corner in ['FL', 'FR', 'RL', 'RR']) {
+            final cornerData = jsWheels[corner];
+            if (cornerData != null) {
+              final existing = _assignedWheels[corner];
+              final r = (cornerData['radius'] as num?)?.toDouble();
+              final w = (cornerData['width'] as num?)?.toDouble();
+              final smc = (cornerData['subMeshCount'] as num?)?.toInt();
+              final cName = cornerData['name'] as String?;
+              final cx = (cornerData['x'] as num?)?.toDouble();
+              final cy = (cornerData['y'] as num?)?.toDouble();
+              final cz = (cornerData['z'] as num?)?.toDouble();
+              if (r != null && w != null) {
+                final axle = corner.startsWith('F') ? 'front' : 'rear';
+                final side = corner.endsWith('L') ? 'left' : 'right';
+                _assignedWheels[corner] = DetectedWheel(
+                  nodeIndex: existing?.nodeIndex ?? 0,
+                  nodeName: cName ?? existing?.nodeName ?? 'Wheel_$corner',
+                  worldPosition: (cx != null && cy != null && cz != null)
+                      ? Vec3(cx, cy, cz)
+                      : (existing?.worldPosition ?? Vec3.zero),
+                  confidence: existing?.confidence ?? 0.95,
+                  meshIndex: existing?.meshIndex,
+                  partNodeIndices: existing?.partNodeIndices ?? [],
+                  partIds: existing?.partIds ?? [],
+                  axle: axle,
+                  side: side,
+                  radius: r,
+                  width: w,
+                  circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
+                  subMeshCount: smc ?? existing?.subMeshCount ?? 1,
+                );
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error syncing jsResult wheels: $e');
+      }
+    }
 
     setState(() {
       _detection = detection;
@@ -726,12 +771,56 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   void _onRecalculateHeightFilter(double threshold) {
     if (_parsedModel != null) {
       final groundTol = (threshold / 100.0).clamp(0.02, 0.25);
+      final jsResult = detectSketchfabWheels(groundTol: groundTol);
       final detection = AutoDetector.detect(
         _parsedModel!,
         groundTolRatio: groundTol,
-        inboardTolRatio: 0.015,
+        inboardTolRatio: 0.02,
       );
       _mapDetectedWheels(detection.wheels);
+      if (jsResult != null) {
+        try {
+          final jsWheels = jsResult['wheels'];
+          if (jsWheels != null) {
+            for (final corner in ['FL', 'FR', 'RL', 'RR']) {
+              final cornerData = jsWheels[corner];
+              if (cornerData != null) {
+                final existing = _assignedWheels[corner];
+                final r = (cornerData['radius'] as num?)?.toDouble();
+                final w = (cornerData['width'] as num?)?.toDouble();
+                final smc = (cornerData['subMeshCount'] as num?)?.toInt();
+                final cName = cornerData['name'] as String?;
+                final cx = (cornerData['x'] as num?)?.toDouble();
+                final cy = (cornerData['y'] as num?)?.toDouble();
+                final cz = (cornerData['z'] as num?)?.toDouble();
+                if (r != null && w != null) {
+                  final axle = corner.startsWith('F') ? 'front' : 'rear';
+                  final side = corner.endsWith('L') ? 'left' : 'right';
+                  _assignedWheels[corner] = DetectedWheel(
+                    nodeIndex: existing?.nodeIndex ?? 0,
+                    nodeName: cName ?? existing?.nodeName ?? 'Wheel_$corner',
+                    worldPosition: (cx != null && cy != null && cz != null)
+                        ? Vec3(cx, cy, cz)
+                        : (existing?.worldPosition ?? Vec3.zero),
+                    confidence: existing?.confidence ?? 0.95,
+                    meshIndex: existing?.meshIndex,
+                    partNodeIndices: existing?.partNodeIndices ?? [],
+                    partIds: existing?.partIds ?? [],
+                    axle: axle,
+                    side: side,
+                    radius: r,
+                    width: w,
+                    circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
+                    subMeshCount: smc ?? existing?.subMeshCount ?? 1,
+                  );
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Error syncing jsResult wheels: $e');
+        }
+      }
       setState(() {
         _detection = detection;
         _scanCompleted = true;

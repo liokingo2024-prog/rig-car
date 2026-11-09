@@ -53,6 +53,38 @@ class _WheelCluster {
   _WheelPart get primary => parts.first;
 }
 
+class _CoaxialCluster {
+  const _CoaxialCluster({
+    required this.rings,
+    required this.clusterBox,
+    required this.outerDiameter,
+    required this.clusterWidth,
+    required this.clusterCenter,
+    required this.groundScore,
+    required this.circularity,
+    required this.outerScore,
+    required this.sizeScore,
+    required this.score,
+    required this.touchesGround,
+    required this.validDiameter,
+    required this.hasNamed,
+  });
+
+  final List<_WheelPart> rings;
+  final BBox clusterBox;
+  final double outerDiameter;
+  final double clusterWidth;
+  final Vec3 clusterCenter;
+  final double groundScore;
+  final double circularity;
+  final double outerScore;
+  final double sizeScore;
+  final double score;
+  final bool touchesGround;
+  final bool validDiameter;
+  final bool hasNamed;
+}
+
 class _VehicleAxes {
   const _VehicleAxes({required this.longitudinal, required this.lateral});
 
@@ -202,8 +234,8 @@ class AutoDetector {
       groundTolRatio: groundTolRatio,
     );
 
-    // Step C: 4-Quadrant Bucketing & 2+2 Axle Symmetry
-    final quadrantMap = <String, List<_WheelPart>>{
+    // Step 2: Group Coaxial Circular Parts into Hub Clusters in 4 Quadrants
+    final quadrantRings = <String, List<_WheelPart>>{
       'FL': [],
       'FR': [],
       'RL': [],
@@ -222,30 +254,131 @@ class AutoDetector {
       final isLeft = partLat <= centerLat;
 
       final corner = '${isFront ? 'F' : 'R'}${isLeft ? 'L' : 'R'}';
-      quadrantMap[corner]!.add(part);
+      quadrantRings[corner]!.add(part);
     }
 
-    for (final q in quadrantMap.values) {
-      q.sort((a, b) => b.score.compareTo(a.score));
+    final maxSpinAxisDist = 0.05 * carLength;
+
+    List<_CoaxialCluster> buildHubClusters(List<_WheelPart> ringParts) {
+      if (ringParts.isEmpty) return const [];
+      final n = ringParts.length;
+      final parent = List<int>.generate(n, (i) => i);
+
+      int findRoot(int i) {
+        var root = i;
+        while (parent[root] != root) {
+          root = parent[root];
+        }
+        var curr = i;
+        while (parent[curr] != root) {
+          final next = parent[curr];
+          parent[curr] = root;
+          curr = next;
+        }
+        return root;
+      }
+
+      void unionRoots(int i, int j) {
+        final rootI = findRoot(i);
+        final rootJ = findRoot(j);
+        if (rootI != rootJ) parent[rootJ] = rootI;
+      }
+
+      for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+          final p1Long = fAxisIsZ ? ringParts[i].center.z : ringParts[i].center.x;
+          final p2Long = fAxisIsZ ? ringParts[j].center.z : ringParts[j].center.x;
+          final dist2D = sqrt(pow(p1Long - p2Long, 2) + pow(ringParts[i].center.y - ringParts[j].center.y, 2));
+          if (dist2D <= maxSpinAxisDist) {
+            unionRoots(i, j);
+          }
+        }
+      }
+
+      final clusterMap = <int, List<_WheelPart>>{};
+      for (var i = 0; i < n; i++) {
+        final root = findRoot(i);
+        clusterMap.putIfAbsent(root, () => []).add(ringParts[i]);
+      }
+
+      final clusters = <_CoaxialCluster>[];
+      for (final rings in clusterMap.values) {
+        final clusterBox = BBox.union(rings.map((r) => r.bbox).toList());
+        final outerDiameter = max(
+          (fAxisIsZ ? clusterBox.size.z : clusterBox.size.x).abs(),
+          clusterBox.size.y.abs(),
+        );
+        final clusterWidth = (fAxisIsZ ? clusterBox.size.x : clusterBox.size.z).abs();
+        final heightAboveGround = max(0.0, clusterBox.lo.y - groundY);
+        final groundScore = max(0.0, 1.0 - heightAboveGround / max(1e-4, 0.08 * carHeight));
+        final circularity = outerDiameter > 1e-5
+            ? min((fAxisIsZ ? clusterBox.size.z : clusterBox.size.x).abs(), clusterBox.size.y.abs()) / outerDiameter
+            : 0.0;
+        final clusterLoLat = fAxisIsZ ? clusterBox.lo.x : clusterBox.lo.z;
+        final clusterHiLat = fAxisIsZ ? clusterBox.hi.x : clusterBox.hi.z;
+        final centerLat = fAxisIsZ ? carCenter.x : carCenter.z;
+        final outerLatDist = max((clusterLoLat - centerLat).abs(), (clusterHiLat - centerLat).abs());
+        final outerScore = min(1.0, outerLatDist / max(1e-4, 0.48 * carWidth));
+        final sizeScore = min(1.0, outerDiameter / max(1e-4, 0.22 * carLength));
+        final hasNamed = rings.any((r) => r.named);
+
+        final touchesGround = heightAboveGround <= (groundTolRatio * carHeight + 1e-4);
+        final validDiameter = outerDiameter >= 0.10 * carLength && outerDiameter <= 0.38 * carLength;
+
+        final score = 0.35 * groundScore + 0.25 * circularity + 0.25 * outerScore + 0.15 * sizeScore + (hasNamed ? 0.3 : 0.0);
+
+        clusters.add(_CoaxialCluster(
+          rings: rings,
+          clusterBox: clusterBox,
+          outerDiameter: outerDiameter,
+          clusterWidth: clusterWidth,
+          clusterCenter: clusterBox.center,
+          groundScore: groundScore,
+          circularity: circularity,
+          outerScore: outerScore,
+          sizeScore: sizeScore,
+          score: score,
+          touchesGround: touchesGround,
+          validDiameter: validDiameter,
+          hasNamed: hasNamed,
+        ));
+      }
+
+      clusters.sort((a, b) {
+        final aValid = a.touchesGround && a.validDiameter;
+        final bValid = b.touchesGround && b.validDiameter;
+        if (aValid && !bValid) return -1;
+        if (!aValid && bValid) return 1;
+        return b.score.compareTo(a.score);
+      });
+
+      return clusters;
     }
 
-    List<_WheelPart?> matchAxlePair(List<_WheelPart> leftList, List<_WheelPart> rightList) {
-      if (leftList.isEmpty && rightList.isEmpty) return [null, null];
-      if (leftList.isEmpty) return [null, rightList.first];
-      if (rightList.isEmpty) return [leftList.first, null];
+    final quadrantClusters = <String, List<_CoaxialCluster>>{
+      'FL': buildHubClusters(quadrantRings['FL']!),
+      'FR': buildHubClusters(quadrantRings['FR']!),
+      'RL': buildHubClusters(quadrantRings['RL']!),
+      'RR': buildHubClusters(quadrantRings['RR']!),
+    };
 
-      _WheelPart? bestL = leftList.first;
-      _WheelPart? bestR = rightList.first;
+    List<_CoaxialCluster?> matchClusterAxlePair(List<_CoaxialCluster> leftClusters, List<_CoaxialCluster> rightClusters) {
+      if (leftClusters.isEmpty && rightClusters.isEmpty) return [null, null];
+      if (leftClusters.isEmpty) return [null, rightClusters.first];
+      if (rightClusters.isEmpty) return [leftClusters.first, null];
+
+      _CoaxialCluster? bestL = leftClusters.first;
+      _CoaxialCluster? bestR = rightClusters.first;
       var bestScore = double.negativeInfinity;
 
-      for (final l in leftList) {
-        for (final r in rightList) {
-          final maxD = max(l.diameter, r.diameter);
-          final diffD = maxD > 1e-4 ? (l.diameter - r.diameter).abs() / maxD : 0.0;
-          final maxW = max(l.width, r.width);
-          final diffW = maxW > 1e-4 ? (l.width - r.width).abs() / maxW : 0.0;
-          final lPos = fAxisIsZ ? l.center.z : l.center.x;
-          final rPos = fAxisIsZ ? r.center.z : r.center.x;
+      for (final l in leftClusters) {
+        for (final r in rightClusters) {
+          final maxD = max(l.outerDiameter, r.outerDiameter);
+          final diffD = maxD > 1e-4 ? (l.outerDiameter - r.outerDiameter).abs() / maxD : 0.0;
+          final maxW = max(l.clusterWidth, r.clusterWidth);
+          final diffW = maxW > 1e-4 ? (l.clusterWidth - r.clusterWidth).abs() / maxW : 0.0;
+          final lPos = fAxisIsZ ? l.clusterCenter.z : l.clusterCenter.x;
+          final rPos = fAxisIsZ ? r.clusterCenter.z : r.clusterCenter.x;
           final diffPos = (lPos - rPos).abs();
 
           var bonus = 0.0;
@@ -264,51 +397,78 @@ class AutoDetector {
       return [bestL, bestR];
     }
 
-    final frontPair = matchAxlePair(quadrantMap['FL']!, quadrantMap['FR']!);
-    final rearPair = matchAxlePair(quadrantMap['RL']!, quadrantMap['RR']!);
+    final frontPair = matchClusterAxlePair(quadrantClusters['FL']!, quadrantClusters['FR']!);
+    final rearPair = matchClusterAxlePair(quadrantClusters['RL']!, quadrantClusters['RR']!);
 
-    final lockedTires = <String, _WheelPart?>{
+    final winningClusters = <String, _CoaxialCluster?>{
       'FL': frontPair[0],
       'FR': frontPair[1],
       'RL': rearPair[0],
       'RR': rearPair[1],
     };
 
-    // Step D: Coaxial Inner-Rim & Spoke Merging
+    // Step 3 & Step 4: 3D Cylinder Volume Capture & Final Wheel Union Box
     final detectedWheels = <DetectedWheel>[];
 
-    for (final entry in lockedTires.entries) {
+    for (final entry in winningClusters.entries) {
       final slot = entry.key;
-      final tire = entry.value;
-      if (tire == null) continue;
+      final cluster = entry.value;
+      if (cluster == null) continue;
 
-      final tireRadius = tire.diameter * 0.5;
-      final tireCenterLong = fAxisIsZ ? tire.center.z : tire.center.x;
-      final tireLoLat = fAxisIsZ ? tire.bbox.lo.x : tire.bbox.lo.z;
-      final tireHiLat = fAxisIsZ ? tire.bbox.hi.x : tire.bbox.hi.z;
+      final clusterBox = cluster.clusterBox;
+      final hubFLong = ((fAxisIsZ ? clusterBox.lo.z : clusterBox.lo.x) + (fAxisIsZ ? clusterBox.hi.z : clusterBox.hi.x)) * 0.5;
+      final hubY = (clusterBox.lo.y + clusterBox.hi.y) * 0.5;
+      final outerRadius = cluster.outerDiameter * 0.5;
+      final minLat = fAxisIsZ ? clusterBox.lo.x : clusterBox.lo.z;
+      final maxLat = fAxisIsZ ? clusterBox.hi.x : clusterBox.hi.z;
 
-      final mergedNodeIndices = <int>{tire.nodeIndex};
-      final mergedPartIds = <String>{tire.partId};
-      var subMeshCount = 1;
+      final cornerParts = <_WheelPart>[...cluster.rings];
+      final cornerPartIds = cluster.rings.map((r) => r.partId).toSet();
 
       for (final part in allParts) {
-        if (part.partId == tire.partId) continue;
+        if (cornerPartIds.contains(part.partId)) continue;
 
-        final partCenterLong = fAxisIsZ ? part.center.z : part.center.x;
-        final partLoLat = fAxisIsZ ? part.bbox.lo.x : part.bbox.lo.z;
-        final partHiLat = fAxisIsZ ? part.bbox.hi.x : part.bbox.hi.z;
+        final partLongLo = fAxisIsZ ? part.bbox.lo.z : part.bbox.lo.x;
+        final partLongHi = fAxisIsZ ? part.bbox.hi.z : part.bbox.hi.x;
+        final partLatLo = fAxisIsZ ? part.bbox.lo.x : part.bbox.lo.z;
+        final partLatHi = fAxisIsZ ? part.bbox.hi.x : part.bbox.hi.z;
 
-        final isCoaxial = (part.center.y - tire.center.y).abs() < (0.08 * tireRadius) &&
-            (partCenterLong - tireCenterLong).abs() < (0.08 * tireRadius);
-        final fitsRadially = part.diameter <= tire.diameter * 1.02;
-        final fitsLat = partLoLat >= (tireLoLat - inboardTolRatio * carWidth) &&
-            partHiLat <= (tireHiLat + inboardTolRatio * carWidth);
-        final isCircular = part.circularity >= 0.75 || part.named;
+        // 1. Fits Radially Inside Outer Tire Cylinder (no circularity check!)
+        final fitsRadially = (
+          partLongLo >= hubFLong - outerRadius * 1.04 &&
+          partLongHi <= hubFLong + outerRadius * 1.04 &&
+          part.bbox.lo.y >= hubY - outerRadius * 1.04 &&
+          part.bbox.hi.y <= hubY + outerRadius * 1.04
+        );
 
-        if (isCoaxial && fitsRadially && fitsLat && isCircular) {
-          mergedNodeIndices.add(part.nodeIndex);
-          mergedPartIds.add(part.partId);
-          subMeshCount++;
+        // 2. Fits Inside Tire+Rim Lateral Width (blocks inboard suspension knuckles)
+        final fitsLat = (
+          partLatLo >= minLat - inboardTolRatio * carWidth &&
+          partLatHi <= maxLat + inboardTolRatio * carWidth
+        );
+
+        if (fitsRadially && fitsLat) {
+          cornerParts.add(part);
+          cornerPartIds.add(part.partId);
+        }
+      }
+
+      // Step 4: Compute Final R and W from the Combined Wheel Union Box
+      final finalWheelBox = BBox.union(cornerParts.map((p) => p.bbox).toList());
+      final radius = max(
+        (fAxisIsZ ? finalWheelBox.size.z : finalWheelBox.size.x).abs(),
+        finalWheelBox.size.y.abs(),
+      ) * 0.5;
+      final width = (fAxisIsZ ? finalWheelBox.size.x : finalWheelBox.size.z).abs();
+      final hubCenter = finalWheelBox.center;
+
+      // Primary part for naming: ring in cluster with largest diameter
+      var primaryPart = cluster.rings.first;
+      var maxPartDiam = -1.0;
+      for (final r in cluster.rings) {
+        if (r.diameter > maxPartDiam) {
+          maxPartDiam = r.diameter;
+          primaryPart = r;
         }
       }
 
@@ -316,19 +476,19 @@ class AutoDetector {
       final side = slot.endsWith('L') ? 'left' : 'right';
 
       detectedWheels.add(DetectedWheel(
-        nodeIndex: tire.nodeIndex,
-        nodeName: tire.nodeName,
-        worldPosition: tire.center,
-        confidence: tire.score,
-        meshIndex: tire.meshIndex,
-        partNodeIndices: mergedNodeIndices.toList(),
-        partIds: mergedPartIds.toList(),
+        nodeIndex: primaryPart.nodeIndex,
+        nodeName: primaryPart.nodeName,
+        worldPosition: hubCenter,
+        confidence: cluster.score,
+        meshIndex: primaryPart.meshIndex,
+        partNodeIndices: cornerParts.map((p) => p.nodeIndex).toSet().toList(),
+        partIds: cornerParts.map((p) => p.partId).toSet().toList(),
         axle: axle,
         side: side,
-        radius: tireRadius,
-        width: tire.width,
-        circularity: tire.circularity,
-        subMeshCount: subMeshCount,
+        radius: radius,
+        width: width,
+        circularity: cluster.circularity,
+        subMeshCount: cornerParts.length,
       ));
     }
 
@@ -426,14 +586,12 @@ class AutoDetector {
         final outerScore = min(1.0, outerLatDist / max(1e-4, 0.48 * carWidth));
         final sizeScore = min(1.0, diameter / max(1e-4, 0.22 * carLength));
 
-        final minCirc = named ? 0.60 : 0.80;
-        final minGround = named ? 0.20 : 0.35;
-        final isEligible = (
+        final minCirc = named ? 0.60 : 0.75;
+        final isAnchorRing = (
+          diameter >= 0.08 * carLength && diameter <= 0.38 * carLength &&
           circularity >= minCirc &&
-          groundScore >= minGround &&
-          diameter >= 0.10 * carLength && diameter <= 0.36 * carLength &&
-          dLat >= 0.12 * diameter && dLat <= 0.95 * diameter &&
-          (fAxisIsZ ? (bbox.center.x - carCenter.x).abs() : (bbox.center.z - carCenter.z).abs()) > 0.22 * carWidth
+          (bbox.center.y < groundY + 0.35 * carHeight) &&
+          (fAxisIsZ ? (bbox.center.x - carCenter.x).abs() : (bbox.center.z - carCenter.z).abs()) > 0.25 * carWidth
         );
 
         final shapeScore = _wheelShapeScore(model, bbox);
@@ -459,7 +617,7 @@ class AutoDetector {
           groundScore: groundScore,
           outerScore: outerScore,
           sizeScore: sizeScore,
-          isEligible: isEligible || named,
+          isEligible: isAnchorRing || named,
           diameter: diameter,
           width: dLat,
         ));

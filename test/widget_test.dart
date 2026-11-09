@@ -459,6 +459,192 @@ void main() {
       expect(result.inboardSuspensionExcluded, isTrue);
     });
 
+    test('Coaxial Hub Clustering & 3D Cylinder Containment solves rim face competition and captures full wheel union box', () {
+      final bodyMesh = MeshData(
+        index: 0,
+        name: 'Chassis',
+        vertices: const [Vec3(-0.7, 0.3, -1.8), Vec3(0.7, 1.1, 1.8)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.7, 0.3, -1.8), Vec3(0.7, 1.1, 1.8)),
+      );
+
+      // Rubber Tire: R=0.34m, W=0.25m, touches ground y=0.0
+      final tireMesh = MeshData(
+        index: 1,
+        name: 'TireMesh',
+        vertices: const [Vec3(-0.125, -0.34, -0.34), Vec3(0.125, 0.34, 0.34)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.125, -0.34, -0.34), Vec3(0.125, 0.34, 0.34)),
+      );
+
+      // Thin Outer Rim Face: R=0.32m, W=0.01m (previously competed with and rejected tire)
+      final rimFaceMesh = MeshData(
+        index: 2,
+        name: 'RimFaceMesh',
+        vertices: const [Vec3(-0.005, -0.32, -0.32), Vec3(0.005, 0.32, 0.32)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.005, -0.32, -0.32), Vec3(0.005, 0.32, 0.32)),
+      );
+
+      // Inner Spokes (non-circular component inside cylinder)
+      final spokesMesh = MeshData(
+        index: 3,
+        name: 'SpokesMesh',
+        vertices: const [Vec3(-0.05, -0.25, -0.15), Vec3(0.05, 0.25, 0.15)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.05, -0.25, -0.15), Vec3(0.05, 0.25, 0.15)),
+      );
+
+      // Center Cap: Tiny 0.03m sub-part (previously reported as entire wheel R=0.03m)
+      final centerCapMesh = MeshData(
+        index: 4,
+        name: 'CenterCapMesh',
+        vertices: const [Vec3(-0.015, -0.015, -0.015), Vec3(0.015, 0.015, 0.015)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.015, -0.015, -0.015), Vec3(0.015, 0.015, 0.015)),
+      );
+
+      // Inboard Knuckle: Sits inboard of tire lateral width
+      final knuckleMesh = MeshData(
+        index: 5,
+        name: 'SuspensionKnuckle',
+        vertices: const [Vec3(-0.06, -0.10, -0.10), Vec3(0.06, 0.10, 0.10)],
+        edges: [Edge(0, 1)],
+        bbox: const BBox(Vec3(-0.06, -0.10, -0.10), Vec3(0.06, 0.10, 0.10)),
+      );
+
+      final nodes = <SceneNode>[
+        SceneNode(
+          index: 0,
+          name: 'Root',
+          parentIndex: null,
+          meshIndex: null,
+          childIndices: List.generate(21, (i) => i + 1),
+          localTransform: Mat4.identity(),
+        ),
+        SceneNode(
+          index: 1,
+          name: 'CarBody',
+          parentIndex: 0,
+          meshIndex: 0,
+          childIndices: [],
+          localTransform: Mat4.identity(),
+        ),
+      ];
+
+      // 4 corners: FL, FR, RL, RR
+      final cornerCenters = [
+        const Vec3(-0.85, 0.34, 1.4),   // FL
+        const Vec3(0.85, 0.34, 1.4),    // FR
+        const Vec3(-0.85, 0.34, -1.4),  // RL
+        const Vec3(0.85, 0.34, -1.4),   // RR
+      ];
+
+      var nodeIdx = 2;
+      for (var c = 0; c < 4; c++) {
+        final pos = cornerCenters[c];
+        final sideSign = pos.x < 0 ? -1.0 : 1.0;
+
+        // Tire
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Tire_$c',
+          parentIndex: 0,
+          meshIndex: 1,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(pos, Quat.identity, Vec3.one),
+        ));
+        // Rim face (at outer edge)
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'RimFace_$c',
+          parentIndex: 0,
+          meshIndex: 2,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x + sideSign * 0.12, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Spokes
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Spokes_$c',
+          parentIndex: 0,
+          meshIndex: 3,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Center cap
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'CenterCap_$c',
+          parentIndex: 0,
+          meshIndex: 4,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x + sideSign * 0.12, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+        // Knuckle (inboard)
+        nodes.add(SceneNode(
+          index: nodeIdx++,
+          name: 'Knuckle_$c',
+          parentIndex: 0,
+          meshIndex: 5,
+          childIndices: [],
+          localTransform: Mat4.fromTRS(Vec3(pos.x - sideSign * 0.22, pos.y, pos.z), Quat.identity, Vec3.one),
+        ));
+      }
+
+      for (final n in nodes) {
+        n.worldTransform = n.localTransform;
+      }
+
+      final allMeshes = [bodyMesh, tireMesh, rimFaceMesh, spokesMesh, centerCapMesh, knuckleMesh];
+      final instances = <MeshInstance>[];
+      instances.add(MeshInstance(
+        nodeIndex: 1,
+        meshIndex: 0,
+        worldVertices: bodyMesh.vertices,
+        edges: bodyMesh.edges,
+        worldBBox: bodyMesh.bbox,
+      ));
+
+      for (var i = 2; i < nodes.length; i++) {
+        final node = nodes[i];
+        final mesh = allMeshes[node.meshIndex!];
+        final wVerts = mesh.vertices.map(node.localTransform.transformPoint).toList();
+        instances.add(MeshInstance(
+          nodeIndex: i,
+          meshIndex: node.meshIndex!,
+          worldVertices: wVerts,
+          edges: mesh.edges,
+          worldBBox: BBox.fromPoints(wVerts),
+        ));
+      }
+
+      final model = ParsedModel(
+        fileName: '2010_lamborghini_sesto_elemento_-_scpd_police.glb',
+        nodes: nodes,
+        meshes: allMeshes,
+        instances: instances,
+        rootNodeIndices: [0],
+        worldBBox: const BBox(Vec3(-1.0, 0.0, -2.1), Vec3(1.0, 1.2, 2.1)),
+      );
+
+      final result = AutoDetector.detect(model);
+
+      expect(result.wheels.length, 4);
+
+      // Verify Bug 1 & 2 fixes across all 4 wheels:
+      for (final wheel in result.wheels) {
+        // Radius is computed from the full union box (>= 0.33m), NOT the 0.03m center cap!
+        expect(wheel.radius >= 0.33, isTrue, reason: 'Wheel ${wheel.label} radius should be ~0.34m, was ${wheel.radius}');
+        // Width is computed from full assembly (>= 0.24m), NOT the 0.01m rim face!
+        expect(wheel.width >= 0.24, isTrue, reason: 'Wheel ${wheel.label} width should be ~0.25m, was ${wheel.width}');
+        // Captured multiple sub-parts (tire, rim, spokes, cap)
+        expect(wheel.subMeshCount >= 3, isTrue, reason: 'Wheel ${wheel.label} should merge at least 3 sub-meshes');
+        // Excluded inboard suspension knuckles
+        expect(wheel.partIds.any((p) => p.contains('Knuckle')), isFalse);
+      }
+    });
+
     test('RigConfig exports real wheel coordinates', () {
       const config = RigConfig(
         modelName: 'race_car.glb',

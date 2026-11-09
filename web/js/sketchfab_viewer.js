@@ -1190,9 +1190,9 @@
     currentModel.updateMatrixWorld(true);
 
     const groundTol = (options && options.groundTolerance != null) ? options.groundTolerance : 0.08;
-    const inbTol = (options && options.inboardCaptureWidth != null) ? options.inboardCaptureWidth : 0.015;
+    const inbTol = (options && options.inboardCaptureWidth != null) ? options.inboardCaptureWidth : 0.02;
 
-    // Step A: Bounding Box & Axis Normalization
+    // Step 1: World-Space Bounds & Axis Setup
     const carBox = new THREE.Box3().setFromObject(currentModel);
     const carSize = carBox.getSize(new THREE.Vector3());
     const carCenter = carBox.getCenter(new THREE.Vector3());
@@ -1204,11 +1204,11 @@
     const carHeight = Math.max(0.001, carSize.y);
     const groundY = carBox.min.y;
 
-    // Step B: Per-Part Geometric Scoring
+    // Collect all loose parts with accurate world-space bounding boxes
     const allParts = [];
     currentModel.traverse(function(child) {
       if (child.isMesh) {
-        child.updateMatrixWorld(true);
+        child.updateWorldMatrix(true, false);
         const box = new THREE.Box3().setFromObject(child);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -1225,17 +1225,16 @@
         const sizeScore = Math.min(1.0, diameter / Math.max(1e-4, 0.22 * carLength));
 
         const cName = (child.name || '').toLowerCase();
-        const namedWheel = cName.includes('wheel') || cName.includes('tire') || cName.includes('tyre');
+        const namedWheel = cName.includes('wheel') || cName.includes('tire') || cName.includes('tyre') || cName.includes('rim');
 
-        const isEligible = (
-          (circularity >= (namedWheel ? 0.60 : 0.80)) &&
-          (groundScore >= (namedWheel ? 0.20 : 0.35)) &&
-          (diameter >= 0.10 * carLength && diameter <= 0.36 * carLength) &&
-          (dLat >= 0.12 * diameter && dLat <= 0.95 * diameter) &&
-          (Math.abs(center[lAxis] - carCenter[lAxis]) > 0.22 * carWidth)
+        // Step 2 Anchor Ring Candidates:
+        // Circular parts in the outer lateral track near the ground
+        const isAnchorRing = (
+          (diameter >= 0.08 * carLength && diameter <= 0.38 * carLength) &&
+          (circularity >= (namedWheel ? 0.60 : 0.75)) &&
+          (center.y < groundY + 0.35 * carHeight) &&
+          (Math.abs(center[lAxis] - carCenter[lAxis]) > 0.25 * carWidth)
         );
-
-        const score = 0.35 * groundScore + 0.25 * circularity + 0.25 * outerScore + 0.15 * sizeScore;
 
         allParts.push({
           mesh: child,
@@ -1251,40 +1250,137 @@
           groundScore: groundScore,
           outerScore: outerScore,
           sizeScore: sizeScore,
-          isEligible: isEligible,
-          score: score
+          named: namedWheel,
+          isAnchorRing: isAnchorRing
         });
       }
     });
 
-    // Step C: 4-Quadrant Bucketing & 2+2 Axle Symmetry
-    const quadrantMap = { FL: [], FR: [], RL: [], RR: [] };
-    const eligibleParts = allParts.filter(p => p.isEligible);
-
-    eligibleParts.forEach(part => {
+    // Step 2: Group Coaxial Circular Parts into Hub Clusters in 4 Quadrants
+    const quadrantRings = { FL: [], FR: [], RL: [], RR: [] };
+    allParts.filter(p => p.isAnchorRing).forEach(part => {
       const isFront = part.center[fAxis] <= carCenter[fAxis];
       const isLeft = part.center[lAxis] <= carCenter[lAxis];
       const corner = (isFront ? 'F' : 'R') + (isLeft ? 'L' : 'R');
-      quadrantMap[corner].push(part);
+      quadrantRings[corner].push(part);
     });
 
-    Object.keys(quadrantMap).forEach(k => {
-      quadrantMap[k].sort((a, b) => b.score - a.score);
-    });
+    const maxSpinAxisDist = 0.05 * carLength;
 
-    function matchAxlePair(leftList, rightList) {
-      if (!leftList.length && !rightList.length) return [null, null];
-      if (!leftList.length) return [null, rightList[0]];
-      if (!rightList.length) return [leftList[0], null];
+    function buildHubClusters(ringParts) {
+      if (!ringParts.length) return [];
+      const n = ringParts.length;
+      const parent = ringParts.map((_, i) => i);
+      function findRoot(i) {
+        let root = i;
+        while (parent[root] !== root) root = parent[root];
+        let curr = i;
+        while (parent[curr] !== root) {
+          const next = parent[curr];
+          parent[curr] = root;
+          curr = next;
+        }
+        return root;
+      }
+      function unionRoots(i, j) {
+        const rootI = findRoot(i);
+        const rootJ = findRoot(j);
+        if (rootI !== rootJ) parent[rootJ] = rootI;
+      }
 
-      let bestL = leftList[0], bestR = rightList[0], bestScore = -Infinity;
-      for (const l of leftList) {
-        for (const r of rightList) {
-          const maxD = Math.max(l.diameter, r.diameter);
-          const diffD = maxD > 1e-4 ? Math.abs(l.diameter - r.diameter) / maxD : 0;
-          const maxW = Math.max(l.dLat, r.dLat);
-          const diffW = maxW > 1e-4 ? Math.abs(l.dLat - r.dLat) / maxW : 0;
-          const diffPos = Math.abs(l.center[fAxis] - r.center[fAxis]);
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const dist2D = Math.hypot(
+            ringParts[i].center[fAxis] - ringParts[j].center[fAxis],
+            ringParts[i].center.y - ringParts[j].center.y
+          );
+          if (dist2D <= maxSpinAxisDist) {
+            unionRoots(i, j);
+          }
+        }
+      }
+
+      const clusterMap = new Map();
+      for (let i = 0; i < n; i++) {
+        const root = findRoot(i);
+        if (!clusterMap.has(root)) clusterMap.set(root, []);
+        clusterMap.get(root).push(ringParts[i]);
+      }
+
+      const clusters = [];
+      for (const rings of clusterMap.values()) {
+        const clusterBox = new THREE.Box3();
+        rings.forEach(r => clusterBox.union(r.box));
+
+        const cSize = clusterBox.getSize(new THREE.Vector3());
+        const cCenter = clusterBox.getCenter(new THREE.Vector3());
+        const outerDiameter = Math.max(cSize[fAxis], cSize.y);
+        const clusterWidth = cSize[lAxis];
+        const heightAboveGround = Math.max(0, clusterBox.min.y - groundY);
+        const groundScore = Math.max(0, 1.0 - heightAboveGround / Math.max(1e-4, 0.08 * carHeight));
+        const circularity = outerDiameter > 1e-5 ? Math.min(cSize[fAxis], cSize.y) / outerDiameter : 0.0;
+        const outerLatDist = Math.max(
+          Math.abs(clusterBox.min[lAxis] - carCenter[lAxis]),
+          Math.abs(clusterBox.max[lAxis] - carCenter[lAxis])
+        );
+        const outerScore = Math.min(1.0, outerLatDist / Math.max(1e-4, 0.48 * carWidth));
+        const sizeScore = Math.min(1.0, outerDiameter / Math.max(1e-4, 0.22 * carLength));
+        const hasNamed = rings.some(r => r.named);
+
+        const touchesGround = heightAboveGround <= (groundTol * carHeight + 1e-4);
+        const validDiameter = outerDiameter >= 0.10 * carLength && outerDiameter <= 0.38 * carLength;
+
+        const score = 0.35 * groundScore + 0.25 * circularity + 0.25 * outerScore + 0.15 * sizeScore + (hasNamed ? 0.3 : 0.0);
+
+        clusters.push({
+          rings: rings,
+          clusterBox: clusterBox,
+          outerDiameter: outerDiameter,
+          clusterWidth: clusterWidth,
+          clusterCenter: cCenter,
+          groundScore: groundScore,
+          circularity: circularity,
+          outerScore: outerScore,
+          sizeScore: sizeScore,
+          score: score,
+          touchesGround: touchesGround,
+          validDiameter: validDiameter,
+          hasNamed: hasNamed
+        });
+      }
+
+      // Prefer clusters that touch ground and have valid diameter
+      clusters.sort((a, b) => {
+        const aValid = a.touchesGround && a.validDiameter;
+        const bValid = b.touchesGround && b.validDiameter;
+        if (aValid && !bValid) return -1;
+        if (!aValid && bValid) return 1;
+        return b.score - a.score;
+      });
+
+      return clusters;
+    }
+
+    const quadrantClusters = {
+      FL: buildHubClusters(quadrantRings.FL),
+      FR: buildHubClusters(quadrantRings.FR),
+      RL: buildHubClusters(quadrantRings.RL),
+      RR: buildHubClusters(quadrantRings.RR)
+    };
+
+    function matchClusterAxlePair(leftClusters, rightClusters) {
+      if (!leftClusters.length && !rightClusters.length) return [null, null];
+      if (!leftClusters.length) return [null, rightClusters[0]];
+      if (!rightClusters.length) return [leftClusters[0], null];
+
+      let bestL = leftClusters[0], bestR = rightClusters[0], bestScore = -Infinity;
+      for (const l of leftClusters) {
+        for (const r of rightClusters) {
+          const maxD = Math.max(l.outerDiameter, r.outerDiameter);
+          const diffD = maxD > 1e-4 ? Math.abs(l.outerDiameter - r.outerDiameter) / maxD : 0;
+          const maxW = Math.max(l.clusterWidth, r.clusterWidth);
+          const diffW = maxW > 1e-4 ? Math.abs(l.clusterWidth - r.clusterWidth) / maxW : 0;
+          const diffPos = Math.abs(l.clusterCenter[fAxis] - r.clusterCenter[fAxis]);
 
           let bonus = 0;
           if (diffD <= 0.06) bonus += 0.5;
@@ -1302,76 +1398,107 @@
       return [bestL, bestR];
     }
 
-    const [flTire, frTire] = matchAxlePair(quadrantMap.FL, quadrantMap.FR);
-    const [rlTire, rrTire] = matchAxlePair(quadrantMap.RL, quadrantMap.RR);
+    const [flCluster, frCluster] = matchClusterAxlePair(quadrantClusters.FL, quadrantClusters.FR);
+    const [rlCluster, rrCluster] = matchClusterAxlePair(quadrantClusters.RL, quadrantClusters.RR);
 
-    const lockedTires = { FL: flTire, FR: frTire, RL: rlTire, RR: rrTire };
+    const winningClusters = { FL: flCluster, FR: frCluster, RL: rlCluster, RR: rrCluster };
 
-    // Staggered check (2+2 vs 4x)
-    let isStaggered = false;
-    if (flTire && rlTire) {
-      const diffDiam = Math.abs(flTire.diameter - rlTire.diameter) / Math.max(flTire.diameter, rlTire.diameter);
-      const diffW = Math.abs(flTire.dLat - rlTire.dLat) / Math.max(flTire.dLat, rlTire.dLat);
-      if (diffDiam > 0.06 || diffW > 0.06) {
-        isStaggered = true;
-      }
-    }
-
-    // Step D: Coaxial Inner-Rim & Spoke Merging
+    // Step 3 & Step 4: 3D Cylinder Volume Capture & Final Wheel Union Box
     const allWheelMeshes = new Set();
     const wheelsResult = {};
     const brakeDiscsParts = [];
     const suspensionKnuckleParts = [];
 
-    Object.entries(lockedTires).forEach(([corner, tire]) => {
-      if (!tire) return;
-      const tireRadius = tire.diameter * 0.5;
-      const merged = [tire.mesh];
-      allWheelMeshes.add(tire.mesh);
+    Object.entries(winningClusters).forEach(([corner, cluster]) => {
+      if (!cluster) return;
+      const clusterBox = cluster.clusterBox;
+      const hubF = (clusterBox.min[fAxis] + clusterBox.max[fAxis]) / 2;
+      const hubY = (clusterBox.min.y + clusterBox.max.y) / 2;
+      const outerRadius = Math.max(clusterBox.max[fAxis] - clusterBox.min[fAxis], clusterBox.max.y - clusterBox.min.y) / 2;
+      const minLat = clusterBox.min[lAxis];
+      const maxLat = clusterBox.max[lAxis];
 
-      const tireLoLat = tire.box.min[lAxis];
-      const tireHiLat = tire.box.max[lAxis];
+      const cornerMeshes = new Set();
+      // Always include winning cluster rings
+      cluster.rings.forEach(r => cornerMeshes.add(r.mesh));
 
+      // 3D Cylinder Volume Capture across all loose parts
       allParts.forEach(part => {
-        if (part.mesh === tire.mesh) return;
+        // 1. Fits Radially Inside Outer Tire Cylinder (no circularity check!)
+        const fitsRadially = (
+          part.box.min[fAxis] >= hubF - outerRadius * 1.04 &&
+          part.box.max[fAxis] <= hubF + outerRadius * 1.04 &&
+          part.box.min.y >= hubY - outerRadius * 1.04 &&
+          part.box.max.y <= hubY + outerRadius * 1.04
+        );
 
-        // 1. Coaxial Spin Center
-        const isCoaxial = Math.abs(part.center.y - tire.center.y) < (0.08 * tireRadius) &&
-                          Math.abs(part.center[fAxis] - tire.center[fAxis]) < (0.08 * tireRadius);
-        // 2. Fits Radially Inside Tire
-        const fitsRadially = part.diameter <= tire.diameter * 1.02;
-        // 3. Fits Strictly Inside Tire Lateral Width (blocks inboard knuckles!)
-        const fitsLat = part.box.min[lAxis] >= (tireLoLat - inbTol * carWidth) &&
-                        part.box.max[lAxis] <= (tireHiLat + inbTol * carWidth);
-        // 4. Circular Symmetry
-        const isCircular = part.circularity >= 0.75;
+        // 2. Fits Inside Tire+Rim Lateral Width (blocks inboard suspension knuckles)
+        const fitsLat = (
+          part.box.min[lAxis] >= minLat - inbTol * carWidth &&
+          part.box.max[lAxis] <= maxLat + inbTol * carWidth
+        );
 
-        if (isCoaxial && fitsRadially && fitsLat && isCircular) {
-          merged.push(part.mesh);
-          allWheelMeshes.add(part.mesh);
-        } else if (isCoaxial && fitsRadially && (!isCircular || part.groundScore < 0.35)) {
-          brakeDiscsParts.push(part.mesh);
-        } else if (Math.abs(part.center.y - tire.center.y) < 0.25 * carHeight &&
-                   Math.abs(part.center[fAxis] - tire.center[fAxis]) < 0.15 * carLength &&
-                   !fitsLat) {
-          // Part pokes inboard past inner tire sidewall -> suspension knuckle!
-          suspensionKnuckleParts.push(part.mesh);
+        if (fitsRadially && fitsLat) {
+          cornerMeshes.add(part.mesh);
+        } else if (fitsRadially && !fitsLat) {
+          if (Math.abs(part.center.y - hubY) < 0.25 * carHeight &&
+              Math.abs(part.center[fAxis] - hubF) < 0.15 * carLength) {
+            suspensionKnuckleParts.push(part.mesh);
+          } else {
+            brakeDiscsParts.push(part.mesh);
+          }
         }
       });
 
+      // Step 4: Compute Final R and W from the Combined Wheel Union Box
+      const cornerMeshList = Array.from(cornerMeshes);
+      const finalWheelBox = new THREE.Box3();
+      cornerMeshList.forEach(m => {
+        m.updateWorldMatrix(true, false);
+        finalWheelBox.union(new THREE.Box3().setFromObject(m));
+      });
+
+      const finalSize = finalWheelBox.getSize(new THREE.Vector3());
+      const finalCenter = finalWheelBox.getCenter(new THREE.Vector3());
+      const radius = Math.max(finalSize[fAxis], finalSize.y) / 2;
+      const width = finalSize[lAxis];
+      const hubCenter = finalCenter;
+
+      // Primary mesh for naming: ring with largest diameter in this cluster
+      let primaryPart = cluster.rings[0];
+      let maxPartDiam = -1;
+      cluster.rings.forEach(r => {
+        if (r.diameter > maxPartDiam) {
+          maxPartDiam = r.diameter;
+          primaryPart = r;
+        }
+      });
+
+      cornerMeshList.forEach(m => allWheelMeshes.add(m));
+
       wheelsResult[corner] = {
-        name: tire.name,
-        mesh: tire.mesh,
-        x: tire.center.x,
-        y: tire.center.y,
-        z: tire.center.z,
-        radius: tireRadius,
-        width: tire.dLat,
-        circularity: tire.circularity,
-        subMeshCount: merged.length,
-        meshes: merged
+        name: primaryPart ? primaryPart.name : ('Wheel_' + corner),
+        mesh: primaryPart ? primaryPart.mesh : cornerMeshList[0],
+        x: hubCenter.x,
+        y: hubCenter.y,
+        z: hubCenter.z,
+        radius: radius,
+        width: width,
+        circularity: cluster.circularity,
+        subMeshCount: cornerMeshList.length,
+        meshes: cornerMeshList
       };
     });
+
+    // Staggered check (2+2 vs 4x)
+    let isStaggered = false;
+    if (wheelsResult.FL && wheelsResult.RL) {
+      const diffDiam = Math.abs(wheelsResult.FL.radius - wheelsResult.RL.radius) / Math.max(wheelsResult.FL.radius, wheelsResult.RL.radius);
+      const diffW = Math.abs(wheelsResult.FL.width - wheelsResult.RL.width) / Math.max(wheelsResult.FL.width, wheelsResult.RL.width);
+      if (diffDiam > 0.06 || diffW > 0.06) {
+        isStaggered = true;
+      }
+    }
 
     detectedWheelData = {
       wheels: wheelsResult,
