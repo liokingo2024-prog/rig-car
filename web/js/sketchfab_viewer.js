@@ -80,7 +80,7 @@
 
     // 1. Scene
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x090D0B);
+    scene.background = new THREE.Color(0x0c1318);
 
     // 2. Camera
     camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 2000);
@@ -995,7 +995,7 @@
         break;
       case 'studio':
       default:
-        scene.background.set(0x090D0B);
+        scene.background.set(0x0c1318);
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x18241d);
         hemiLight.intensity = 1.0;
