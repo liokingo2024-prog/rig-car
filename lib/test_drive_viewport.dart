@@ -1537,7 +1537,12 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
     if (result.length < 4 && model != null) {
-      final autoResult = AutoDetector.detect(model!);
+      final autoResult = AutoDetector.detect(
+        model!,
+        pruneUnderWheelObjects: false,
+        autoAlignForward: false,
+        snapToLand: false,
+      );
       for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
         if (!result.containsKey(corner)) {
           for (final w in autoResult.wheels) {
@@ -2492,7 +2497,21 @@ class _TestDriveScenePainter extends CustomPainter {
       );
     }
 
-    // 6. Center dashed line: within visible range
+    // 6. Transverse road surface seams every 6.0m for realistic ground roll optical flow
+    const jointCycle = 6.0;
+    final minJointZ = (zStart / jointCycle).floor() * jointCycle;
+    final maxJointZ = (zEnd / jointCycle).ceil() * jointCycle;
+    final jointPaint = Paint()
+      ..color = isDay ? const Color(0x35000000) : const Color(0x28FFFFFF)
+      ..strokeWidth = 1.6;
+    for (var jz = minJointZ; jz <= maxJointZ; jz += jointCycle) {
+      if ((jz - centerZ).abs() < 55.0) {
+        _drawClippedLine(canvas, viewProj, size, Vec3(-trackWidth, groundY, jz),
+            Vec3(trackWidth, groundY, jz), jointPaint);
+      }
+    }
+
+    // 7. Center dashed line: within visible range
     final dashZStart = (centerZ - 54.0).clamp(zStart, zEnd);
     final dashZEnd = (centerZ + 36.0).clamp(zStart, zEnd);
     const dashLen = 4.5;
@@ -3300,7 +3319,10 @@ class _TestDriveScenePainter extends CustomPainter {
     if (triCount == 0) return;
 
     final mbb = model!.worldBBox;
-    final alignOffset = Vec3(-mbb.center.x, -mbb.lo.y, -mbb.center.z);
+    final lowestTireY = wheels.isNotEmpty
+        ? wheels.values.map((w) => w.worldPosition.y - w.radius).reduce(min)
+        : mbb.lo.y;
+    final alignOffset = Vec3(-mbb.center.x, -lowestTireY, -mbb.center.z);
     final alignMatrix = Mat4([
       1, 0, 0, 0,
       0, 1, 0, 0,
@@ -3400,6 +3422,13 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
 
+    for (final w in wheels.values) {
+      nonWheelNodes.removeAll(w.partNodeIndices);
+      nonWheelNodes.removeAll(w.spinNodeIndices);
+      nonWheelNodes.removeAll(w.caliperHubNodeIndices);
+      nonWheelNodes.remove(w.nodeIndex);
+    }
+
     final nodeToTransform = <int, int>{};
     void assignSolidTransform(int nodeIdx, int transformIdx) {
       if (nonWheelNodes.contains(nodeIdx)) return;
@@ -3474,9 +3503,6 @@ class _TestDriveScenePainter extends CustomPainter {
     }
 
     final triTransform = Uint8List(triCount);
-    final vertexTransform = Uint8List(mesh.vertexCount);
-    vertexTransform.fillRange(0, mesh.vertexCount, 8);
-
     final indices = mesh.indices;
     final triNode = mesh.triNode;
     final triKind = mesh.triKind;
@@ -3515,42 +3541,20 @@ class _TestDriveScenePainter extends CustomPainter {
         }
       }
       triTransform[t] = k;
-      if (k != 8) {
-        final t3 = t * 3;
-        vertexTransform[indices[t3]] = k;
-        vertexTransform[indices[t3 + 1]] = k;
-        vertexTransform[indices[t3 + 2]] = k;
-      }
     }
 
-    // 1. Project all vertices with respective transform matrices
+    // 1. Cull, shade, project and record visible triangles with per-triangle transformation
     final width = size.width;
     final height = size.height;
     const near = 0.05;
 
     final pos = mesh.positions;
-    final sx = mesh.screenX, sy = mesh.screenY, sw = mesh.screenW;
-    for (var v = 0, p = 0; v < mesh.vertexCount; v++, p += 3) {
-      final k = vertexTransform[v];
-      final m = wvpMatrices[k].m;
-      final x = pos[p], y = pos[p + 1], z = pos[p + 2];
-      final w = m[3] * x + m[7] * y + m[11] * z + m[15];
-      sw[v] = w;
-      if (w > near) {
-        final invW = 1.0 / w;
-        final cx = m[0] * x + m[4] * y + m[8] * z + m[12];
-        final cy = m[1] * x + m[5] * y + m[9] * z + m[13];
-        sx[v] = (cx * invW * 0.5 + 0.5) * width;
-        sy[v] = (1.0 - (cy * invW * 0.5 + 0.5)) * height;
-      }
-    }
-
-    // 2. Cull, shade, and record visible triangles
     final normals = mesh.normals;
     final triColor = mesh.triColor;
     final visTri = mesh.visTri;
     final visColor = mesh.visColor;
     final visDepth = mesh.visDepth;
+    final triCoords = Float32List(triCount * 6);
 
     final bodyPaintRgb = accentColor.toARGB32();
     final kindColors = <int>[
@@ -3571,7 +3575,44 @@ class _TestDriveScenePainter extends CustomPainter {
 
     for (var t = 0; t < triCount; t++) {
       final k = triTransform[t];
+      final m = wvpMatrices[k].m;
       final t3 = t * 3;
+      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
+
+      final pa = ia * 3;
+      final xa = pos[pa], ya = pos[pa + 1], za = pos[pa + 2];
+      final wa = m[3] * xa + m[7] * ya + m[11] * za + m[15];
+      if (wa <= near) continue;
+
+      final pb = ib * 3;
+      final xb = pos[pb], yb = pos[pb + 1], zb = pos[pb + 2];
+      final wb = m[3] * xb + m[7] * yb + m[11] * zb + m[15];
+      if (wb <= near) continue;
+
+      final pc = ic * 3;
+      final xc = pos[pc], yc = pos[pc + 1], zc = pos[pc + 2];
+      final wc = m[3] * xc + m[7] * yc + m[11] * zc + m[15];
+      if (wc <= near) continue;
+
+      final invWa = 1.0 / wa;
+      final x0 = ((m[0] * xa + m[4] * ya + m[8] * za + m[12]) * invWa * 0.5 + 0.5) * width;
+      final y0 = (1.0 - ((m[1] * xa + m[5] * ya + m[9] * za + m[13]) * invWa * 0.5 + 0.5)) * height;
+
+      final invWb = 1.0 / wb;
+      final x1 = ((m[0] * xb + m[4] * yb + m[8] * zb + m[12]) * invWb * 0.5 + 0.5) * width;
+      final y1 = (1.0 - ((m[1] * xb + m[5] * yb + m[9] * zb + m[13]) * invWb * 0.5 + 0.5)) * height;
+
+      final invWc = 1.0 / wc;
+      final x2 = ((m[0] * xc + m[4] * yc + m[8] * zc + m[12]) * invWc * 0.5 + 0.5) * width;
+      final y2 = (1.0 - ((m[1] * xc + m[5] * yc + m[9] * zc + m[13]) * invWc * 0.5 + 0.5)) * height;
+
+      // Off-screen culling
+      if (max(x0, max(x1, x2)) < 0 || min(x0, min(x1, x2)) > width) continue;
+      if (max(y0, max(y1, y2)) < 0 || min(y0, min(y1, y2)) > height) continue;
+
+      final area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+      if (area.abs() < 1e-6) continue;
+
       final nx = normals[t3], ny = normals[t3 + 1], nz = normals[t3 + 2];
       final cx = centroids[t3], cy = centroids[t3 + 1], cz = centroids[t3 + 2];
 
@@ -3593,20 +3634,6 @@ class _TestDriveScenePainter extends CustomPainter {
       final effNx = dotEye < 0.0 ? -nx : nx;
       final effNy = dotEye < 0.0 ? -ny : ny;
       final effNz = dotEye < 0.0 ? -nz : nz;
-
-      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
-      if (sw[ia] <= near || sw[ib] <= near || sw[ic] <= near) continue;
-
-      final x0 = sx[ia], y0 = sy[ia];
-      final x1 = sx[ib], y1 = sy[ib];
-      final x2 = sx[ic], y2 = sy[ic];
-
-      // Off-screen culling
-      if (max(x0, max(x1, x2)) < 0 || min(x0, min(x1, x2)) > width) continue;
-      if (max(y0, max(y1, y2)) < 0 || min(y0, min(y1, y2)) > height) continue;
-
-      final area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
-      if (area.abs() < 1e-6) continue;
 
       final eyeDistSq = toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ;
       if (eyeDistSq < 1e-12) continue;
@@ -3688,6 +3715,13 @@ class _TestDriveScenePainter extends CustomPainter {
       visTri[visCount] = t;
       visColor[visCount] = argb;
       visDepth[visCount] = depth;
+      final p6 = visCount * 6;
+      triCoords[p6] = x0;
+      triCoords[p6 + 1] = y0;
+      triCoords[p6 + 2] = x1;
+      triCoords[p6 + 3] = y1;
+      triCoords[p6 + 4] = x2;
+      triCoords[p6 + 5] = y2;
       if (depth < minDepth) minDepth = depth;
       if (depth > maxDepth) maxDepth = depth;
       visCount++;
@@ -3721,15 +3755,14 @@ class _TestDriveScenePainter extends CustomPainter {
     final drawCol = mesh.drawColors;
     for (var k = 0; k < visCount; k++) {
       final i = order[k];
-      final t3 = visTri[i] * 3;
-      final ia = indices[t3], ib = indices[t3 + 1], ic = indices[t3 + 2];
-      final p = k * 6;
-      drawPos[p] = sx[ia];
-      drawPos[p + 1] = sy[ia];
-      drawPos[p + 2] = sx[ib];
-      drawPos[p + 3] = sy[ib];
-      drawPos[p + 4] = sx[ic];
-      drawPos[p + 5] = sy[ic];
+      final src = i * 6;
+      final dst = k * 6;
+      drawPos[dst] = triCoords[src];
+      drawPos[dst + 1] = triCoords[src + 1];
+      drawPos[dst + 2] = triCoords[src + 2];
+      drawPos[dst + 3] = triCoords[src + 3];
+      drawPos[dst + 4] = triCoords[src + 4];
+      drawPos[dst + 5] = triCoords[src + 5];
       final c = k * 3;
       final argb = visColor[i];
       drawCol[c] = argb;
@@ -4229,8 +4262,10 @@ class _TestDriveScenePainter extends CustomPainter {
     Map<String, DetectedWheel> wheels,
   ) {
     final modelCenter = model!.worldBBox.center;
-    final modelBottom = model!.worldBBox.lo.y;
-    final alignOffset = Vec3(-modelCenter.x, -modelBottom, -modelCenter.z);
+    final lowestTireY = wheels.isNotEmpty
+        ? wheels.values.map((w) => w.worldPosition.y - w.radius).reduce(min)
+        : model!.worldBBox.lo.y;
+    final alignOffset = Vec3(-modelCenter.x, -lowestTireY, -modelCenter.z);
 
     final alignMatrix = Mat4([
       1, 0, 0, 0,
@@ -4241,8 +4276,6 @@ class _TestDriveScenePainter extends CustomPainter {
     final carModelMatrix = vehicleMatrix * alignMatrix;
 
     final worldMatrices = List<Mat4>.filled(9, carModelMatrix);
-    final nodeToTransform = <int, int>{};
-    const corners = ['FL', 'FR', 'RL', 'RR'];
 
     final nonWheelNodes = <int>{};
     if (detection?.body != null) {
@@ -4262,6 +4295,15 @@ class _TestDriveScenePainter extends CustomPainter {
         nonWheelNodes.add(inst.nodeIndex);
       }
     }
+    for (final w in wheels.values) {
+      nonWheelNodes.removeAll(w.partNodeIndices);
+      nonWheelNodes.removeAll(w.spinNodeIndices);
+      nonWheelNodes.removeAll(w.caliperHubNodeIndices);
+      nonWheelNodes.remove(w.nodeIndex);
+    }
+
+    final nodeToTransform = <int, int>{};
+    const corners = ['FL', 'FR', 'RL', 'RR'];
 
     void assignWireTransform(int nodeIdx, int transformIdx) {
       if (nonWheelNodes.contains(nodeIdx)) return;

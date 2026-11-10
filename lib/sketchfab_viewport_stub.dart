@@ -42,6 +42,7 @@ class SketchfabViewport extends StatelessWidget {
 void rotateSketchfabModel(double yawAngle) {}
 void flipSketchfabModel() {}
 void snapSketchfabModelToGround() {}
+void purgeSketchfabUnderWheelObjects() {}
 void scaleSketchfabModel(double targetLength) {}
 void updateSketchfabWheelMarkers(List<dynamic> wheels) {}
 void highlightSketchfabWheels(List<String> wheelNodeNames) {}

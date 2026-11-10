@@ -845,17 +845,99 @@
     rotateModel(Math.PI);
   }
 
-  function snapToGround() {
-    if (!modelPivotGroup || !currentModel) return;
-    modelPivotGroup.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(modelPivotGroup);
-    const minY = box.min.y;
-    currentModel.position.y -= minY;
-    modelPivotGroup.updateMatrixWorld(true);
+  function purgeUnderWheelMeshesAndSnapToGround(detectedWheels) {
+    if (!currentModel) return 0;
+    currentModel.updateMatrixWorld(true);
+
+    // 1. Calculate lowest tire contact level across detected wheels
+    let minTireY = Infinity;
+    const wheelMeshesSet = new Set();
+
+    const wheelsObj = detectedWheels || (detectedWheelData ? detectedWheelData.wheels : null);
+    if (wheelsObj) {
+      Object.values(wheelsObj).forEach(w => {
+        if (w && w.y != null && w.radius != null) {
+          minTireY = Math.min(minTireY, w.y - w.radius);
+        }
+        if (w && w.meshes) {
+          w.meshes.forEach(m => wheelMeshesSet.add(m));
+        }
+      });
+    }
+
+    if (detectedWheelData && detectedWheelData.allWheelMeshes) {
+      detectedWheelData.allWheelMeshes.forEach(m => wheelMeshesSet.add(m));
+    }
+
+    if (!isFinite(minTireY)) {
+      const carBox = new THREE.Box3().setFromObject(currentModel);
+      minTireY = carBox.min.y;
+    }
+
+    const underWheelPattern = /(shadow|ground|floor|plane|turntable|pedestal|stage|platform|base|backdrop|grid|plinth|stand)/i;
+    const toRemove = [];
+
+    currentModel.traverse(function(child) {
+      if (!child.isMesh) return;
+      if (wheelMeshesSet.has(child)) return;
+
+      const mName = (child.name || '').toLowerCase();
+      const namedShadowOrFloor = underWheelPattern.test(mName);
+
+      child.updateWorldMatrix(true, false);
+      const b = new THREE.Box3().setFromObject(child);
+      const h = b.max.y - b.min.y;
+
+      // Sits under or flush with wheel contact level + 0.045m tolerance
+      const sitsUnderWheel = b.max.y <= minTireY + 0.045;
+      const isFlatThin = h <= 0.08;
+
+      if ((sitsUnderWheel && isFlatThin) || (namedShadowOrFloor && sitsUnderWheel)) {
+        toRemove.push(child);
+      }
+    });
+
+    toRemove.forEach(mesh => {
+      if (mesh.parent) {
+        mesh.parent.remove(mesh);
+      }
+      disposeObject(mesh);
+    });
+
+    console.log('SketchfabViewer: Purged', toRemove.length, 'under-wheel shadow/floor meshes');
+
+    // 2. Snap model so lowest tire vertex sits EXACTLY at Y = 0.0m (Zero ground clearance!)
+    currentModel.updateMatrixWorld(true);
+    let trueLowestTireY = Infinity;
+
+    wheelMeshesSet.forEach(m => {
+      m.updateWorldMatrix(true, false);
+      const b = new THREE.Box3().setFromObject(m);
+      if (isFinite(b.min.y)) {
+        trueLowestTireY = Math.min(trueLowestTireY, b.min.y);
+      }
+    });
+
+    if (isFinite(trueLowestTireY)) {
+      currentModel.position.y -= trueLowestTireY;
+    } else {
+      const box = new THREE.Box3().setFromObject(modelPivotGroup || currentModel);
+      currentModel.position.y -= box.min.y;
+    }
+
+    if (modelPivotGroup) modelPivotGroup.updateMatrixWorld(true);
+    currentModel.updateMatrixWorld(true);
+
     if (wireframeOverlayGroup) {
       applyRenderMode(currentRenderMode);
     }
-    console.log('SketchfabViewer: Snapped model to ground Y = 0.0m (adjusted by', -minY, ')');
+    console.log('SketchfabViewer: Snapped lowest tire contact to ground Y = 0.00m (adjusted by', -trueLowestTireY, ')');
+
+    return toRemove.length;
+  }
+
+  function snapToGround() {
+    return purgeUnderWheelMeshesAndSnapToGround(detectedWheelData ? detectedWheelData.wheels : null);
   }
 
   function applyScale(targetLength) {
@@ -1925,6 +2007,22 @@
       };
     });
 
+    // Auto-delete any under-wheel shadow planes/floors and snap tire contact to Y = 0.0m
+    purgeUnderWheelMeshesAndSnapToGround(wheelsResult);
+
+    // Re-synchronize wheel hub coordinates after ground snap
+    Object.keys(wheelsResult).forEach(corner => {
+      const w = wheelsResult[corner];
+      if (w.mesh) {
+        w.mesh.updateWorldMatrix(true, false);
+        const b = new THREE.Box3().setFromObject(w.mesh);
+        const c = b.getCenter(new THREE.Vector3());
+        w.x = c.x;
+        w.y = c.y;
+        w.z = c.z;
+      }
+    });
+
     // Staggered check (2+2 vs 4x)
     let isStaggered = false;
     if (wheelsResult.FL && wheelsResult.RL) {
@@ -2134,6 +2232,7 @@
     rotateModel: rotateModel,
     flipModel: flipModel,
     snapToGround: snapToGround,
+    purgeUnderWheelMeshes: purgeUnderWheelMeshesAndSnapToGround,
     applyScale: applyScale,
     loadDemoCar: loadDemoCar,
     playAudioPreview: playAudioPreview,

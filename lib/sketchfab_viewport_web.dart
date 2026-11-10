@@ -260,6 +260,17 @@ void snapSketchfabModelToGround() {
   }
 }
 
+void purgeSketchfabUnderWheelObjects() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('purgeUnderWheelMeshes');
+    }
+  } catch (e) {
+    debugPrint('purgeSketchfabUnderWheelObjects error: $e');
+  }
+}
+
 void scaleSketchfabModel(double targetLength) {
   try {
     final viewer = js.context['SketchfabViewer'];

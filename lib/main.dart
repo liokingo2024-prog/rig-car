@@ -963,9 +963,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
       rotateSketchfabModel(detection.autoAxisResult!.yawRotatedRadians);
     }
-    if (detection.wheelGroundOffset.abs() > 0.001) {
-      snapSketchfabModelToGround();
-    }
+    purgeSketchfabUnderWheelObjects();
+    snapSketchfabModelToGround();
 
     await Future.delayed(const Duration(milliseconds: 30));
     if (!mounted) return;
@@ -1148,9 +1147,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
         rotateSketchfabModel(detection.autoAxisResult!.yawRotatedRadians);
       }
-      if (detection.wheelGroundOffset.abs() > 0.001) {
-        snapSketchfabModelToGround();
-      }
+      purgeSketchfabUnderWheelObjects();
+      snapSketchfabModelToGround();
 
       // 2. Run detectSketchfabWheels on rotated/snapped Three.js model
       final jsResult = detectSketchfabWheels(groundTol: groundTol, inboardTol: inboardTol);
