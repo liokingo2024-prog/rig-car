@@ -127,12 +127,31 @@ class AutoDetector {
     ParsedModel model, {
     double groundTolRatio = 0.08,
     double inboardTolRatio = 0.015,
+    bool pruneUnderWheelObjects = true,
+    bool autoAlignForward = true,
+    bool snapToLand = true,
   }) {
     final wheels = _detectWheels(
       model,
       groundTolRatio: groundTolRatio,
       inboardTolRatio: inboardTolRatio,
     );
+
+    int underWheelObjectsDeleted = 0;
+    if (pruneUnderWheelObjects && wheels.isNotEmpty) {
+      underWheelObjectsDeleted = model.deleteUnderWheelObjects(wheels);
+    }
+
+    AutoAxisResult? autoAxisResult;
+    if (autoAlignForward && wheels.isNotEmpty) {
+      autoAxisResult = model.autoAlignForwardAxis(wheels);
+    }
+
+    double groundOffset = 0.0;
+    if (snapToLand && wheels.isNotEmpty) {
+      groundOffset = model.snapWheelsToLand(wheels);
+    }
+
     final body = _detectBody(model, wheels);
     final drive = _suggestDrive(model, wheels);
     final preset = _suggestPreset(model);
@@ -192,6 +211,9 @@ class AutoDetector {
       loosePartsCount: loosePartsCount,
       groundContactVerified: true,
       inboardSuspensionExcluded: true,
+      underWheelObjectsDeleted: underWheelObjectsDeleted,
+      autoAxisResult: autoAxisResult,
+      wheelGroundOffset: groundOffset,
     );
   }
 

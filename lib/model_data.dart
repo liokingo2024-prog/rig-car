@@ -283,7 +283,7 @@ class SceneNode {
   final int index;
   final String name;
   final Mat4 localTransform;
-  final int? meshIndex;
+  int? meshIndex;
   final List<int> childIndices;
   final int? parentIndex;
   Mat4 worldTransform;
@@ -321,7 +321,7 @@ class MeshData {
 class MeshInstance {
   final int nodeIndex;
   final int meshIndex;
-  final List<Vec3> worldVertices;
+  List<Vec3> worldVertices;
   final List<Edge> edges;
   final List<Triangle> triangles;
   BBox worldBBox;
@@ -340,7 +340,7 @@ class ParsedModel {
   final String fileName;
   final List<SceneNode> nodes;
   final List<MeshData> meshes;
-  final List<MeshInstance> instances;
+  List<MeshInstance> instances;
   final List<int> rootNodeIndices;
   BBox worldBBox;
 
@@ -443,11 +443,10 @@ class ParsedModel {
       node.worldTransform = normalization * node.worldTransform;
     }
     for (final instance in instances) {
-      for (var i = 0; i < instance.worldVertices.length; i++) {
-        instance.worldVertices[i] = normalization.transformPoint(
-          instance.worldVertices[i],
-        );
-      }
+      instance.worldVertices = List<Vec3>.generate(
+        instance.worldVertices.length,
+        (i) => normalization.transformPoint(instance.worldVertices[i]),
+      );
       instance.worldBBox = instance.worldVertices.isEmpty
           ? _normalizeBounds(instance.worldBBox, normalization.transformPoint)
           : BBox.fromPoints(instance.worldVertices);
@@ -472,14 +471,17 @@ class ParsedModel {
       node.worldTransform = rot * node.worldTransform;
     }
     for (final instance in instances) {
-      for (var i = 0; i < instance.worldVertices.length; i++) {
-        final p = instance.worldVertices[i];
-        instance.worldVertices[i] = Vec3(
-          p.x * cosA + p.z * sinA,
-          p.y,
-          -p.x * sinA + p.z * cosA,
-        );
-      }
+      instance.worldVertices = List<Vec3>.generate(
+        instance.worldVertices.length,
+        (i) {
+          final p = instance.worldVertices[i];
+          return Vec3(
+            p.x * cosA + p.z * sinA,
+            p.y,
+            -p.x * sinA + p.z * cosA,
+          );
+        },
+      );
       instance.worldBBox = instance.worldVertices.isEmpty
           ? _normalizeBounds(instance.worldBBox, rot.transformPoint)
           : BBox.fromPoints(instance.worldVertices);
@@ -494,6 +496,318 @@ class ParsedModel {
     rotateYaw(pi);
   }
 
+  /// Detects and removes any under-wheel object meshes (e.g. shadow planes,
+  /// showroom ground quads, turntables, pedestals) located beneath or flush
+  /// with tire contact ($Y \le Y_{wheelMin} + 0.045$).
+  /// Never deletes wheel meshes or significant body structures.
+  int deleteUnderWheelObjects(List<DetectedWheel> wheels) {
+    if (instances.isEmpty) return 0;
+
+    // 1. Calculate lowest tire contact level
+    var minTireY = double.infinity;
+    for (final w in wheels) {
+      minTireY = min(minTireY, w.worldPosition.y - w.radius);
+    }
+
+    final wheelNodeIndices = wheels
+        .expand((w) => w.partNodeIndices.isEmpty ? [w.nodeIndex] : w.partNodeIndices)
+        .toSet();
+    for (final inst in instances) {
+      if (wheelNodeIndices.contains(inst.nodeIndex) && inst.worldVertices.isNotEmpty) {
+        minTireY = min(minTireY, inst.worldBBox.lo.y);
+      }
+    }
+
+    if (minTireY.isInfinite) {
+      minTireY = worldBBox.lo.y;
+    }
+
+    final carH = max(0.2, worldBBox.size.y.abs());
+    final underWheelPattern = RegExp(
+      r'(shadow|ground|floor|plane|turntable|pedestal|stage|platform|base|backdrop|grid|plinth|stand)',
+      caseSensitive: false,
+    );
+
+    final nodesToRemove = <int>{};
+    final remainingInstances = <MeshInstance>[];
+
+    for (final inst in instances) {
+      final isWheelNode = wheelNodeIndices.contains(inst.nodeIndex);
+      if (isWheelNode) {
+        remainingInstances.add(inst);
+        continue;
+      }
+
+      final nodeName = inst.nodeIndex >= 0 && inst.nodeIndex < nodes.length
+          ? nodes[inst.nodeIndex].name
+          : '';
+      final b = inst.worldBBox;
+      final h = b.size.y.abs();
+      final namedFloorOrShadow = underWheelPattern.hasMatch(nodeName);
+
+      // Criteria for under-wheel object:
+      // A: Sits at or below the wheel contact level + 0.045m tolerance
+      final sitsUnderWheel = b.hi.y <= minTireY + 0.045;
+      final isFlatThin = h <= max(0.08, 0.07 * carH);
+      final isPlatform = namedFloorOrShadow &&
+          b.hi.y <= minTireY + 0.08 * carH &&
+          h <= 0.25 * carH;
+
+      if ((sitsUnderWheel && isFlatThin) || isPlatform || (namedFloorOrShadow && sitsUnderWheel)) {
+        nodesToRemove.add(inst.nodeIndex);
+      } else {
+        remainingInstances.add(inst);
+      }
+    }
+
+    final removedCount = instances.length - remainingInstances.length;
+    if (removedCount > 0) {
+      instances.clear();
+      instances.addAll(remainingInstances);
+      for (final nodeIdx in nodesToRemove) {
+        if (nodeIdx >= 0 && nodeIdx < nodes.length) {
+          nodes[nodeIdx].meshIndex = null;
+        }
+      }
+      worldBBox = instances.isEmpty
+          ? BBox.empty
+          : BBox.union(instances.map((i) => i.worldBBox).toList());
+    }
+
+    return removedCount;
+  }
+
+  /// Guesses the vehicle's forward direction and aligns it strictly to -Z (Godot 4 standard).
+  ///
+  /// 1. If length is along X instead of Z (wheelbase spread along X > Z), rotates 90° yaw.
+  /// 2. If front features, front wheel labels, or hood slope indicate forward is +Z, rotates 180° yaw.
+  /// 3. Re-maps the 4 wheels' axle ('front'|'rear') and side ('left'|'right') based on final coordinates.
+  AutoAxisResult autoAlignForwardAxis(List<DetectedWheel> wheels) {
+    if (instances.isEmpty && wheels.isEmpty) {
+      return const AutoAxisResult();
+    }
+
+    double totalYaw = 0.0;
+    bool axisSwapped = false;
+
+    // Step A: Check if longitudinal axis is currently along X instead of Z
+    final spreadZ = wheels.length >= 2
+        ? (wheels.map((w) => w.worldPosition.z).reduce(max) -
+           wheels.map((w) => w.worldPosition.z).reduce(min))
+        : worldBBox.size.z.abs();
+    final spreadX = wheels.length >= 2
+        ? (wheels.map((w) => w.worldPosition.x).reduce(max) -
+           wheels.map((w) => w.worldPosition.x).reduce(min))
+        : worldBBox.size.x.abs();
+
+    if (spreadX > spreadZ * 1.15 ||
+        (spreadZ < 0.2 && spreadX > 0.8) ||
+        (worldBBox.size.x.abs() > worldBBox.size.z.abs() * 1.25)) {
+      // Vehicle length is along X! Rotate 90° yaw (+pi/2) so length is along Z.
+      rotateYaw(pi / 2);
+      totalYaw += pi / 2;
+      axisSwapped = true;
+
+      // Rotate wheel positions by +pi/2 yaw: (x, y, z) -> (z, y, -x)
+      for (final w in wheels) {
+        w.worldPosition = Vec3(w.worldPosition.z, w.worldPosition.y, -w.worldPosition.x);
+      }
+    }
+
+    // Step B: Guess Forward Direction (-Z vs +Z)
+    var frontAtNegZScore = 0.0;
+    var frontAtPosZScore = 0.0;
+
+    final midZ = wheels.isNotEmpty
+        ? (wheels.map((w) => w.worldPosition.z).reduce((a, b) => a + b) / wheels.length)
+        : worldBBox.center.z;
+
+    // 1. Wheel and part names
+    final frontPattern = RegExp(
+      r'(front|^fl$|^fr$|_f_|_fl|_fr|f_wheel|wheel_f|avant|vorne|delantero|steer)',
+      caseSensitive: false,
+    );
+    final rearPattern = RegExp(
+      r'(rear|back|^rl$|^rr$|_r_|_rl|_rr|r_wheel|wheel_r|arriere|hinten|trasero)',
+      caseSensitive: false,
+    );
+
+    for (final w in wheels) {
+      final isAtNegZ = w.worldPosition.z < midZ;
+      final name = w.nodeName.toLowerCase();
+      if (frontPattern.hasMatch(name)) {
+        if (isAtNegZ) {
+          frontAtNegZScore += 3.0;
+        } else {
+          frontAtPosZScore += 3.0;
+        }
+      } else if (rearPattern.hasMatch(name)) {
+        if (isAtNegZ) {
+          frontAtPosZScore += 3.0;
+        } else {
+          frontAtNegZScore += 3.0;
+        }
+      }
+    }
+
+    // 2. Scene nodes front vs rear features
+    final frontFeaturePattern = RegExp(
+      r'(headlight|head_light|headlamp|grille|radiator|hood|bonnet|bumper_f|front_bumper|windshield|windscreen|steering_wheel|dashboard|intercooler)',
+      caseSensitive: false,
+    );
+    final rearFeaturePattern = RegExp(
+      r'(taillight|tail_light|taillamp|exhaust|muffler|trunk|boot|bumper_r|rear_bumper|diffuser|spoiler|plate_r|rear_plate)',
+      caseSensitive: false,
+    );
+
+    for (final node in nodes) {
+      if (frontFeaturePattern.hasMatch(node.name)) {
+        final z = node.worldTransform.translation.z;
+        if (z < midZ) {
+          frontAtNegZScore += 2.0;
+        } else {
+          frontAtPosZScore += 2.0;
+        }
+      }
+      if (rearFeaturePattern.hasMatch(node.name)) {
+        final z = node.worldTransform.translation.z;
+        if (z > midZ) {
+          frontAtNegZScore += 2.0;
+        } else {
+          frontAtPosZScore += 2.0;
+        }
+      }
+    }
+
+    // 3. Aerodynamic silhouette / hood slope (Y front < Y rear)
+    final box = worldBBox;
+    final zSpan = box.size.z.abs();
+    if (zSpan > 0.5) {
+      final negZThreshold = box.lo.z + zSpan * 0.22;
+      final posZThreshold = box.hi.z - zSpan * 0.22;
+      var maxTopNegZ = double.negativeInfinity;
+      var maxTopPosZ = double.negativeInfinity;
+      for (final inst in instances) {
+        for (final v in inst.worldVertices) {
+          if (v.z <= negZThreshold && v.y > maxTopNegZ) {
+            maxTopNegZ = v.y;
+          }
+          if (v.z >= posZThreshold && v.y > maxTopPosZ) {
+            maxTopPosZ = v.y;
+          }
+        }
+      }
+      if (maxTopNegZ.isFinite && maxTopPosZ.isFinite) {
+        if (maxTopNegZ < maxTopPosZ - 0.08 * box.size.y.abs()) {
+          // NegZ is lower hood -> front is at -Z (correct)
+          frontAtNegZScore += 1.5;
+        } else if (maxTopPosZ < maxTopNegZ - 0.08 * box.size.y.abs()) {
+          // PosZ is lower hood -> front is at +Z (reversed)
+          frontAtPosZScore += 1.5;
+        }
+      }
+    }
+
+    // 4. Staggered setup (wider rear tires)
+    if (wheels.length == 4) {
+      final negZWheels = wheels.where((w) => w.worldPosition.z < midZ).toList();
+      final posZWheels = wheels.where((w) => w.worldPosition.z >= midZ).toList();
+      if (negZWheels.length == 2 && posZWheels.length == 2) {
+        final avgWNeg = (negZWheels[0].width + negZWheels[1].width) / 2;
+        final avgWPos = (posZWheels[0].width + posZWheels[1].width) / 2;
+        if (avgWPos > avgWNeg * 1.05) {
+          // Wider at +Z means rear is +Z, front is -Z
+          frontAtNegZScore += 1.0;
+        } else if (avgWNeg > avgWPos * 1.05) {
+          frontAtPosZScore += 1.0;
+        }
+      }
+    }
+
+    bool frontFlipped = false;
+    if (frontAtPosZScore > frontAtNegZScore) {
+      // Vehicle is pointing towards +Z (backwards). Flip 180° yaw so forward is -Z.
+      rotateYaw(pi);
+      totalYaw += pi;
+      frontFlipped = true;
+
+      // Rotate wheel positions by 180° yaw: (x, y, z) -> (-x, y, -z)
+      for (final w in wheels) {
+        w.worldPosition = Vec3(-w.worldPosition.x, w.worldPosition.y, -w.worldPosition.z);
+      }
+    }
+
+    // Step C: Re-assign axle ('front'|'rear') and side ('left'|'right') for all wheels
+    final finalMidZ = wheels.isNotEmpty
+        ? (wheels.map((w) => w.worldPosition.z).reduce((a, b) => a + b) / wheels.length)
+        : worldBBox.center.z;
+    final finalMidX = wheels.isNotEmpty
+        ? (wheels.map((w) => w.worldPosition.x).reduce((a, b) => a + b) / wheels.length)
+        : worldBBox.center.x;
+
+    for (final w in wheels) {
+      w.axle = w.worldPosition.z <= finalMidZ ? 'front' : 'rear';
+      w.side = w.worldPosition.x <= finalMidX ? 'left' : 'right';
+    }
+
+    return AutoAxisResult(
+      yawRotatedRadians: totalYaw,
+      axisSwapped: axisSwapped,
+      frontFlipped: frontFlipped,
+      forwardDirection: '-Z',
+    );
+  }
+
+  /// Translates vehicle vertices, node transforms, and wheel positions vertically
+  /// so that the lowest tire vertex touches ground level Y = 0.000000 exactly
+  /// (zero height clearance between land and wheel).
+  double snapWheelsToLand(List<DetectedWheel> wheels) {
+    if (instances.isEmpty && wheels.isEmpty) return 0.0;
+
+    var lowestTireY = double.infinity;
+    for (final w in wheels) {
+      lowestTireY = min(lowestTireY, w.worldPosition.y - w.radius);
+    }
+
+    final wheelNodeIndices = wheels
+        .expand((w) => w.partNodeIndices.isEmpty ? [w.nodeIndex] : w.partNodeIndices)
+        .toSet();
+    for (final inst in instances) {
+      if (wheelNodeIndices.contains(inst.nodeIndex) && inst.worldVertices.isNotEmpty) {
+        lowestTireY = min(lowestTireY, inst.worldBBox.lo.y);
+      }
+    }
+
+    if (lowestTireY.isInfinite) {
+      lowestTireY = worldBBox.lo.y;
+    }
+
+    if (lowestTireY.abs() < 1e-6) return 0.0;
+
+    final trans = Mat4.uniformScaleTranslate(1.0, Vec3(0, -lowestTireY, 0));
+    for (final node in nodes) {
+      node.worldTransform = trans * node.worldTransform;
+    }
+    for (final instance in instances) {
+      instance.worldVertices = List<Vec3>.generate(
+        instance.worldVertices.length,
+        (i) => Vec3(instance.worldVertices[i].x, instance.worldVertices[i].y - lowestTireY, instance.worldVertices[i].z),
+      );
+      instance.worldBBox = instance.worldVertices.isEmpty
+          ? _normalizeBounds(instance.worldBBox, trans.transformPoint)
+          : BBox.fromPoints(instance.worldVertices);
+    }
+    worldBBox = BBox.union(
+      instances.map((instance) => instance.worldBBox).toList(),
+    );
+
+    for (final w in wheels) {
+      w.worldPosition = Vec3(w.worldPosition.x, w.worldPosition.y - lowestTireY, w.worldPosition.z);
+    }
+
+    return lowestTireY;
+  }
+
   /// Snaps vehicle geometry so lowest tire vertices touch Y=0.0m.
   void snapToGround() {
     if (instances.isEmpty) return;
@@ -504,10 +818,10 @@ class ParsedModel {
       node.worldTransform = trans * node.worldTransform;
     }
     for (final instance in instances) {
-      for (var i = 0; i < instance.worldVertices.length; i++) {
-        final p = instance.worldVertices[i];
-        instance.worldVertices[i] = Vec3(p.x, p.y - minY, p.z);
-      }
+      instance.worldVertices = List<Vec3>.generate(
+        instance.worldVertices.length,
+        (i) => Vec3(instance.worldVertices[i].x, instance.worldVertices[i].y - minY, instance.worldVertices[i].z),
+      );
       instance.worldBBox = instance.worldVertices.isEmpty
           ? _normalizeBounds(instance.worldBBox, trans.transformPoint)
           : BBox.fromPoints(instance.worldVertices);
@@ -744,7 +1058,7 @@ class ParsedModel {
 class DetectedWheel {
   final int nodeIndex;
   final String nodeName;
-  final Vec3 worldPosition;
+  Vec3 worldPosition;
   final double confidence;
   final int? meshIndex;
 
@@ -779,6 +1093,42 @@ class DetectedWheel {
     this.subMeshCount = 1,
   });
 
+  DetectedWheel copyWith({
+    int? nodeIndex,
+    String? nodeName,
+    Vec3? worldPosition,
+    double? confidence,
+    int? meshIndex,
+    List<int>? partNodeIndices,
+    List<String>? partIds,
+    List<int>? spinNodeIndices,
+    List<int>? caliperHubNodeIndices,
+    String? axle,
+    String? side,
+    double? radius,
+    double? width,
+    double? circularity,
+    int? subMeshCount,
+  }) {
+    return DetectedWheel(
+      nodeIndex: nodeIndex ?? this.nodeIndex,
+      nodeName: nodeName ?? this.nodeName,
+      worldPosition: worldPosition ?? this.worldPosition,
+      confidence: confidence ?? this.confidence,
+      meshIndex: meshIndex ?? this.meshIndex,
+      partNodeIndices: partNodeIndices ?? this.partNodeIndices,
+      partIds: partIds ?? this.partIds,
+      spinNodeIndices: spinNodeIndices ?? this.spinNodeIndices,
+      caliperHubNodeIndices: caliperHubNodeIndices ?? this.caliperHubNodeIndices,
+      axle: axle ?? this.axle,
+      side: side ?? this.side,
+      radius: radius ?? this.radius,
+      width: width ?? this.width,
+      circularity: circularity ?? this.circularity,
+      subMeshCount: subMeshCount ?? this.subMeshCount,
+    );
+  }
+
   int get partCount => partIds.isNotEmpty
       ? partIds.length
       : (partNodeIndices.isEmpty ? 1 : partNodeIndices.length);
@@ -786,6 +1136,20 @@ class DetectedWheel {
   String get label =>
       '${axle.isNotEmpty ? axle[0].toUpperCase() + axle.substring(1) : '?'} '
       '${side.isNotEmpty ? side[0].toUpperCase() + side.substring(1) : '?'}';
+}
+
+class AutoAxisResult {
+  final double yawRotatedRadians;
+  final bool axisSwapped;
+  final bool frontFlipped;
+  final String forwardDirection;
+
+  const AutoAxisResult({
+    this.yawRotatedRadians = 0.0,
+    this.axisSwapped = false,
+    this.frontFlipped = false,
+    this.forwardDirection = '-Z',
+  });
 }
 
 class DetectedBody {
@@ -813,6 +1177,9 @@ class DetectionResult {
   final int loosePartsCount;
   final bool groundContactVerified;
   final bool inboardSuspensionExcluded;
+  final int underWheelObjectsDeleted;
+  final AutoAxisResult? autoAxisResult;
+  final double wheelGroundOffset;
 
   const DetectionResult({
     required this.wheels,
@@ -825,6 +1192,9 @@ class DetectionResult {
     this.loosePartsCount = 112,
     this.groundContactVerified = true,
     this.inboardSuspensionExcluded = true,
+    this.underWheelObjectsDeleted = 0,
+    this.autoAxisResult,
+    this.wheelGroundOffset = 0.0,
   });
 }
 

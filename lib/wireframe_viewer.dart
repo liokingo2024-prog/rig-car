@@ -1346,7 +1346,9 @@ class _WireframeScenePainter extends CustomPainter {
     Mat4 viewProj,
     Offset? Function(Vec3) project,
   ) {
-    final groundY = model?.worldBBox.lo.y ?? 0.0;
+    final groundY = (model != null && model!.worldBBox.lo.y.abs() < 0.08)
+        ? 0.0
+        : (model?.worldBBox.lo.y ?? 0.0);
 
     if (gridStyle != GroundGridStyle.off) {
       switch (gridStyle) {

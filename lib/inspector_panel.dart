@@ -986,7 +986,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
                       stageTag: '[S3]',
                       title: '3. Ground Contact & Outer-Track Filter',
                       detail: isDone
-                          ? 'Road locked (Y_min ≈ 0m) · Inboard stripped'
+                          ? 'Road locked (Y_contact = 0.00m) · Forward -Z'
                           : (isScanning && stage >= 3 ? 'Filtering 4 symmetric outer corners...' : 'Pending ground & outer-track filter'),
                       statusTag: isDone ? '[RESOLVED]' : (isScanning && stage == 3 ? '[CALC...]' : (isScanning && stage > 3 ? '[RESOLVED]' : '[QUEUED]')),
                       statusColor: isDone || (isScanning && stage > 3) ? const Color(0xFF4ADE80) : (isScanning && stage == 3 ? const Color(0xFFFBBF24) : const Color(0xFF6B7280)),
@@ -1143,6 +1143,20 @@ class _InspectorPanelState extends State<InspectorPanel> {
     final lines = <String>[];
     if (isDone) {
       lines.add('\$ rig_core --solve -> 4/4 coaxial wheels locked');
+      final axis = widget.detection?.autoAxisResult;
+      if (axis != null) {
+        if (axis.axisSwapped || axis.frontFlipped) {
+          final deg = (axis.yawRotatedRadians * 180 / pi).round();
+          lines.add('[AI_AXIS] Forward auto-aligned to -Z (yaw: $deg°)');
+        } else {
+          lines.add('[AI_AXIS] Forward verified along -Z (Godot standard)');
+        }
+      }
+      final purged = widget.detection?.underWheelObjectsDeleted ?? 0;
+      if (purged > 0) {
+        lines.add('[AI_CLEAN] Purged $purged under-wheel shadow/floor mesh');
+      }
+      lines.add('[AI_LAND] Zero height locked (wheel contact Y=0.000m)');
       lines.add('[SOLVED] FL(${_formatWheelR(fl)}) FR(${_formatWheelR(fr)}) RL(${_formatWheelR(rl)}) RR(${_formatWheelR(rr)})');
       lines.add('[READY] Godot 4 VehicleBody3D calibrated.');
     } else if (isScanning) {

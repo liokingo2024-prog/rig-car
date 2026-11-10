@@ -859,6 +859,15 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     final detection = AutoDetector.detect(_parsedModel!);
     _syncJsAndAutoWheels(jsResult, detection);
 
+    SolidScene.invalidate(_parsedModel!);
+    if (detection.autoAxisResult != null &&
+        detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
+      rotateSketchfabModel(detection.autoAxisResult!.yawRotatedRadians);
+    }
+    if (detection.wheelGroundOffset.abs() > 0.001) {
+      snapSketchfabModelToGround();
+    }
+
     setState(() {
       _detection = detection;
       _selectedBodyNodeIndex = detection.body?.nodeIndex;
@@ -876,7 +885,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     final wheelNames = detection.wheels.map((w) => w.nodeName).toList();
     highlightSketchfabWheels(wheelNames);
 
-    _showMessage('Wheel filtering complete: ${detection.wheels.length}/4 wheels detected & highlighted in viewport!');
+    final axis = detection.autoAxisResult;
+    final axisNote = (axis != null && (axis.axisSwapped || axis.frontFlipped))
+        ? ' · Forward aligned (-Z)'
+        : '';
+    final cleanNote = detection.underWheelObjectsDeleted > 0
+        ? ' · Purged ${detection.underWheelObjectsDeleted} under-wheel mesh'
+        : '';
+    _showMessage('Auto rig: ${detection.wheels.length}/4 wheels detected$axisNote$cleanNote · 0.00m land contact');
   }
 
   void _onGroupRoleChange(int groupId, String role) {
@@ -946,6 +962,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         inboardTolRatio: 0.02,
       );
       _syncJsAndAutoWheels(jsResult, detection);
+      SolidScene.invalidate(_parsedModel!);
+      if (detection.autoAxisResult != null &&
+          detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
+        rotateSketchfabModel(detection.autoAxisResult!.yawRotatedRadians);
+      }
+      if (detection.wheelGroundOffset.abs() > 0.001) {
+        snapSketchfabModelToGround();
+      }
       setState(() {
         _detection = detection;
         _scanCompleted = true;
@@ -956,7 +980,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       updateSketchfabWheelMarkers(effectiveWheels);
       final wheelNames = detection.wheels.map((w) => w.nodeName).toList();
       highlightSketchfabWheels(wheelNames);
-      _showMessage('Re-run detection with ${threshold.round()}% ground tolerance cutoff');
+      final axis = detection.autoAxisResult;
+      final axisNote = (axis != null && (axis.axisSwapped || axis.frontFlipped))
+          ? ' · Forward aligned (-Z)'
+          : '';
+      final cleanNote = detection.underWheelObjectsDeleted > 0
+          ? ' · Purged ${detection.underWheelObjectsDeleted} under-wheel mesh'
+          : '';
+      _showMessage('Re-run detection (${threshold.round()}% tol)$axisNote$cleanNote · 0.00m land contact');
     } else {
       _showMessage('Import a model first to run wheel detection');
     }

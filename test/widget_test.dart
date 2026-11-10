@@ -2760,5 +2760,144 @@ endsolid sports_car''';
       }
       expect(sim.isDrifting, isTrue, reason: 'Handbrake pull must engage dynamic drift');
     });
+
+    test('Auto Axis Correction, Under-Wheel Object Deletion & Zero Land Clearance Verification', () {
+      // ── 1. Under-Wheel Object Detection & Automatic Deletion ──
+      final model = ParsedModel.createProceduralDefault();
+      final initialInstCount = model.instances.length;
+
+      // Add a shadow plane mesh underneath the wheels (Y in [-0.04, 0.00])
+      final shadowMesh = MeshData(
+        index: model.meshes.length,
+        name: 'Car_Shadow_Plane',
+        vertices: [
+          const Vec3(-1.2, -0.02, -2.2),
+          const Vec3(1.2, -0.02, -2.2),
+          const Vec3(1.2, -0.02, 2.2),
+          const Vec3(-1.2, -0.02, 2.2),
+        ],
+        edges: [Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0)],
+        bbox: const BBox(Vec3(-1.2, -0.02, -2.2), Vec3(1.2, 0.00, 2.2)),
+      );
+      final shadowNode = SceneNode(
+        index: model.nodes.length,
+        name: 'Shadow_Plane_Mesh',
+        localTransform: Mat4.identity(),
+        meshIndex: shadowMesh.index,
+        childIndices: const [],
+        parentIndex: null,
+      );
+      final shadowInstance = MeshInstance(
+        nodeIndex: shadowNode.index,
+        meshIndex: shadowMesh.index,
+        worldVertices: List.from(shadowMesh.vertices),
+        edges: shadowMesh.edges,
+        worldBBox: shadowMesh.bbox,
+      );
+
+      model.nodes.add(shadowNode);
+      model.meshes.add(shadowMesh);
+      model.instances.add(shadowInstance);
+      model.worldBBox = BBox.union(model.instances.map((i) => i.worldBBox).toList());
+
+      expect(model.instances.length, equals(initialInstCount + 1));
+
+      // Wheels on procedural car are at Y=0.34, radius=0.34 (tire bottom Y=0.00)
+      final dummyWheels = [
+        DetectedWheel(nodeIndex: 1, nodeName: 'Wheel_FL', worldPosition: const Vec3(-0.85, 0.34, -1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 2, nodeName: 'Wheel_FR', worldPosition: const Vec3(0.85, 0.34, -1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 3, nodeName: 'Wheel_RL', worldPosition: const Vec3(-0.85, 0.34, 1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 4, nodeName: 'Wheel_RR', worldPosition: const Vec3(0.85, 0.34, 1.35), confidence: 1.0, radius: 0.34),
+      ];
+
+      final deletedCount = model.deleteUnderWheelObjects(dummyWheels);
+      expect(deletedCount, equals(1), reason: 'Must delete under-wheel shadow plane mesh');
+      expect(model.instances.length, equals(initialInstCount), reason: 'Shadow plane instance must be removed');
+      expect(model.nodes[shadowNode.index].meshIndex, isNull, reason: 'Shadow node mesh reference must be cleared');
+
+      // ── 2. Automatic Forward & Axis Guessing/Correction ──
+      // Subtest 2A: Laterally oriented model (length along X instead of Z)
+      final lateralModel = ParsedModel.createProceduralDefault();
+      lateralModel.rotateYaw(pi / 2); // Rotated 90° so length is along X
+      final lateralWheels = [
+        DetectedWheel(nodeIndex: 1, nodeName: 'Wheel_FL', worldPosition: const Vec3(-1.35, 0.34, 0.85), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 2, nodeName: 'Wheel_FR', worldPosition: const Vec3(-1.35, 0.34, -0.85), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 3, nodeName: 'Wheel_RL', worldPosition: const Vec3(1.35, 0.34, 0.85), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 4, nodeName: 'Wheel_RR', worldPosition: const Vec3(1.35, 0.34, -0.85), confidence: 1.0, radius: 0.34),
+      ];
+      final lateralAxisResult = lateralModel.autoAlignForwardAxis(lateralWheels);
+      expect(lateralAxisResult.axisSwapped, isTrue, reason: 'Must detect vehicle length along X and swap to Z');
+      // After alignment, spread along Z must be greater than spread along X
+      final spreadZ = (lateralWheels.map((w) => w.worldPosition.z).reduce(max) - lateralWheels.map((w) => w.worldPosition.z).reduce(min));
+      final spreadX = (lateralWheels.map((w) => w.worldPosition.x).reduce(max) - lateralWheels.map((w) => w.worldPosition.x).reduce(min));
+      expect(spreadZ > spreadX, isTrue, reason: 'Wheelbase length must be along Z axis');
+
+      // Subtest 2B: Reversed model (pointing +Z instead of -Z)
+      final reversedModel = ParsedModel.createProceduralDefault();
+      reversedModel.rotateYaw(pi); // 180° reversed (front is +Z, rear is -Z)
+      final reversedWheels = [
+        DetectedWheel(nodeIndex: 1, nodeName: 'Wheel_Front_Left', worldPosition: const Vec3(0.85, 0.34, 1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 2, nodeName: 'Wheel_Front_Right', worldPosition: const Vec3(-0.85, 0.34, 1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 3, nodeName: 'Wheel_Rear_Left', worldPosition: const Vec3(0.85, 0.34, -1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 4, nodeName: 'Wheel_Rear_Right', worldPosition: const Vec3(-0.85, 0.34, -1.35), confidence: 1.0, radius: 0.34),
+      ];
+      final reversedAxisResult = reversedModel.autoAlignForwardAxis(reversedWheels);
+      expect(reversedAxisResult.frontFlipped, isTrue, reason: 'Must detect reversed model and flip 180° yaw to -Z forward');
+
+      // Verify wheels mapped correctly to 4 quadrants
+      final fl = reversedWheels.firstWhere((w) => w.axle == 'front' && w.side == 'left');
+      final fr = reversedWheels.firstWhere((w) => w.axle == 'front' && w.side == 'right');
+      final rl = reversedWheels.firstWhere((w) => w.axle == 'rear' && w.side == 'left');
+      final rr = reversedWheels.firstWhere((w) => w.axle == 'rear' && w.side == 'right');
+      expect(fl.worldPosition.x < 0 && fl.worldPosition.z < 0, isTrue, reason: 'FL must be -X, -Z');
+      expect(fr.worldPosition.x > 0 && fr.worldPosition.z < 0, isTrue, reason: 'FR must be +X, -Z');
+      expect(rl.worldPosition.x < 0 && rl.worldPosition.z > 0, isTrue, reason: 'RL must be -X, +Z');
+      expect(rr.worldPosition.x > 0 && rr.worldPosition.z > 0, isTrue, reason: 'RR must be +X, +Z');
+
+      // ── 3. Zero Height from Land to Wheel ──
+      final floatingModel = ParsedModel.createProceduralDefault();
+      // Shift car vertically so wheels hover at Y = 0.54 (0.20m above land)
+      const hoverOffset = 0.20;
+      for (final inst in floatingModel.instances) {
+        for (var i = 0; i < inst.worldVertices.length; i++) {
+          inst.worldVertices[i] = Vec3(inst.worldVertices[i].x, inst.worldVertices[i].y + hoverOffset, inst.worldVertices[i].z);
+        }
+        inst.worldBBox = BBox.fromPoints(inst.worldVertices);
+      }
+      floatingModel.worldBBox = BBox.union(floatingModel.instances.map((i) => i.worldBBox).toList());
+
+      final floatingWheels = [
+        DetectedWheel(nodeIndex: 1, nodeName: 'Wheel_FL', worldPosition: const Vec3(-0.85, 0.34 + hoverOffset, -1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 2, nodeName: 'Wheel_FR', worldPosition: const Vec3(0.85, 0.34 + hoverOffset, -1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 3, nodeName: 'Wheel_RL', worldPosition: const Vec3(-0.85, 0.34 + hoverOffset, 1.35), confidence: 1.0, radius: 0.34),
+        DetectedWheel(nodeIndex: 4, nodeName: 'Wheel_RR', worldPosition: const Vec3(0.85, 0.34 + hoverOffset, 1.35), confidence: 1.0, radius: 0.34),
+      ];
+
+      final snappedOffset = floatingModel.snapWheelsToLand(floatingWheels);
+      expect((snappedOffset - hoverOffset).abs() < 1e-4, isTrue);
+
+      for (final w in floatingWheels) {
+        final tireBottom = w.worldPosition.y - w.radius;
+        expect(tireBottom.abs() < 1e-6, isTrue,
+            reason: 'Tire bottom must touch land Y = 0.000000 exactly with 0 gap, was $tireBottom');
+      }
+
+      // ── 4. End-to-End Pipeline in AutoDetector.detect ──
+      final testCar = ParsedModel.createProceduralDefault();
+      // Add shadow mesh to testCar
+      testCar.instances.add(shadowInstance);
+      testCar.worldBBox = BBox.union(testCar.instances.map((i) => i.worldBBox).toList());
+
+      final detection = AutoDetector.detect(testCar);
+      expect(detection.wheels.length, equals(4));
+      expect(detection.underWheelObjectsDeleted, equals(1), reason: 'AutoDetector must purge under-wheel shadow');
+      expect(detection.autoAxisResult != null, isTrue);
+      expect(detection.autoAxisResult!.forwardDirection, equals('-Z'));
+      for (final w in detection.wheels) {
+        final tireBottom = w.worldPosition.y - w.radius;
+        expect(tireBottom.abs() < 1e-4, isTrue,
+            reason: 'AutoDetector must guarantee 0.00m clearance from land to wheel');
+      }
+    });
   });
 }
