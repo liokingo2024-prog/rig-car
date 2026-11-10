@@ -32,7 +32,7 @@ jobs:
             --window-size=1280,900 \
             --screenshot=/tmp/rig-car-live.png \
             --dump-dom \
-            "https://liokingo2024-prog.github.io/rig-car/?page=workbench" \
+            "https://liokingo2024-prog.github.io/rig-car/?page=test-drive" \
             > /tmp/rig-car-dom.html
 
           grep -q '<flt-glass-pane' /tmp/rig-car-dom.html

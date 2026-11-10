@@ -88,8 +88,12 @@ class RigCarApp extends StatelessWidget {
       home: Builder(
         builder: (context) {
           final uri = Uri.base;
+          final isTestDrive = uri.queryParameters['page'] == 'test-drive' ||
+              uri.queryParameters['drive'] == 'true' ||
+              uri.queryParameters['test_drive'] == 'true';
           final openWorkbench = uri.queryParameters['page'] == 'workbench' ||
-              uri.queryParameters['workbench'] == 'true';
+              uri.queryParameters['workbench'] == 'true' ||
+              isTestDrive;
           if (openWorkbench) {
             final carId = uri.queryParameters['car'];
             PreRiggedCar? car;
@@ -98,7 +102,7 @@ class RigCarApp extends StatelessWidget {
                 car = preRiggedCars.firstWhere((c) => c.id == carId);
               } catch (_) {}
             }
-            return RigWorkbenchPage(initialCar: car);
+            return RigWorkbenchPage(initialCar: car, startInTestDrive: isTestDrive);
           }
           return const RigHomeScreen();
         },
