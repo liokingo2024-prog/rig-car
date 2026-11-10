@@ -3964,10 +3964,10 @@ class _TestDriveScenePainter extends CustomPainter {
       final a0 = rollAngle + (i * 2 * pi / segments);
       final a1 = rollAngle + ((i + 1) * 2 * pi / segments);
 
-      final y0 = radius * sin(a0);
-      final z0 = radius * cos(a0);
-      final y1 = radius * sin(a1);
-      final z1 = radius * cos(a1);
+      final y0 = radius * cos(a0);
+      final z0 = radius * sin(a0);
+      final y1 = radius * cos(a1);
+      final z1 = radius * sin(a1);
 
       // Tread quad
       final p0 = vehicleMatrix.transformPoint(toVehicleSpace(innerX, y0, z0));
@@ -3977,10 +3977,10 @@ class _TestDriveScenePainter extends CustomPainter {
       _drawQuad(canvas, viewProj, size, p0, p1, p2, p3, tirePaint);
 
       // Sidewall rim quad
-      final ry0 = rimRadius * sin(a0);
-      final rz0 = rimRadius * cos(a0);
-      final ry1 = rimRadius * sin(a1);
-      final rz1 = rimRadius * cos(a1);
+      final ry0 = rimRadius * cos(a0);
+      final rz0 = rimRadius * sin(a0);
+      final ry1 = rimRadius * cos(a1);
+      final rz1 = rimRadius * sin(a1);
 
       final s0 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, ry0, rz0));
       final s1 = vehicleMatrix.transformPoint(toVehicleSpace(outerX, y0, z0));
@@ -3989,10 +3989,10 @@ class _TestDriveScenePainter extends CustomPainter {
       _drawQuad(canvas, viewProj, size, s0, s1, s2, s3, tirePaint);
 
       // Rim Face sector
-      final hubY0 = radius * 0.18 * sin(a0);
-      final hubZ0 = radius * 0.18 * cos(a0);
-      final hubY1 = radius * 0.18 * sin(a1);
-      final hubZ1 = radius * 0.18 * cos(a1);
+      final hubY0 = radius * 0.18 * cos(a0);
+      final hubZ0 = radius * 0.18 * sin(a0);
+      final hubY1 = radius * 0.18 * cos(a1);
+      final hubZ1 = radius * 0.18 * sin(a1);
 
       final isSpoke = (i % 2 == 0);
       final r0 = vehicleMatrix.transformPoint(toVehicleSpace(outerX + (isLeft ? -0.01 : 0.01), hubY0, hubZ0));
@@ -4403,10 +4403,10 @@ class _TestDriveScenePainter extends CustomPainter {
       final a1 = rollAngle + ((i + 1) * 2 * pi / segments);
 
       // Unsteered rim point in wheel local space
-      final ry0 = radius * sin(a0);
-      final rz0 = radius * cos(a0);
-      final ry1 = radius * sin(a1);
-      final rz1 = radius * cos(a1);
+      final ry0 = radius * cos(a0);
+      final rz0 = radius * sin(a0);
+      final ry1 = radius * cos(a1);
+      final rz1 = radius * sin(a1);
 
       // Rotate rim points by steerAngle around Y
       final sx0 = rz0 * ss;

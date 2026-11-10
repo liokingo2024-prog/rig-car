@@ -90,6 +90,10 @@ class VehiclePhysicsSimulation {
   final List<SkidPoint> rightSkidMarks = [];
   static const int _maxSkidMarks = 180;
 
+  /// Godot convention direction vectors (-Z forward, +X right)
+  Vec3 get forwardVector => Vec3(-sin(yaw), 0, -cos(yaw));
+  Vec3 get rightVector => Vec3(cos(yaw), 0, -sin(yaw));
+
   void reset() {
     position = const Vec3(0, 0, 24); // Start at beginning of test strip
     velocity = Vec3.zero;
@@ -215,12 +219,12 @@ class VehiclePhysicsSimulation {
 
     // Ackermann yaw velocity target
     final targetYawRate = (longSpeed / wheelbase) * tan(steerAngle);
-    final maxCorneringG = (grip * 1.1).clamp(0.4, 2.5);
+    final maxCorneringG = (grip * 1.25).clamp(0.6, 2.8);
     final maxLateralAccel = maxCorneringG * 9.81;
 
-    // Check drift condition (handbrake or exceeding grip threshold)
+    // Check drift condition: handbrake or extreme overspeed slip
     final isHandbrakeActive = handbrake;
-    final gripFactor = isHandbrakeActive ? 0.30 : grip;
+    final gripFactor = isHandbrakeActive ? 0.28 : grip;
 
     // Lateral slip calculation
     final theoreticalLatAccel = longSpeed * yawRate;
@@ -228,28 +232,22 @@ class VehiclePhysicsSimulation {
     longitudinalG = (totalForwardThrust / mass) / 9.81;
 
     // Relative lateral slip ratio against tire adhesion limit
-    final gripLimit = maxLateralAccel.clamp(4.0, 25.0);
-    final slipRatio = (latSpeed.abs() + (isHandbrakeActive ? 3.5 : 0.0)) / gripLimit;
-    final lateralSlipMagnitude = slipRatio.clamp(0.0, 1.0);
+    final gripLimit = maxLateralAccel.clamp(6.0, 28.0);
+    final slipRatio = (latSpeed.abs() + (isHandbrakeActive ? 4.0 : 0.0)) / gripLimit;
 
-    // Realistic drift trigger: handbrake pull or hard powerslide exceeding tire traction limit
-    isDrifting = (isHandbrakeActive && speedKmh > 8) ||
-        (slipRatio > 0.90 && speedKmh > 30);
+    // Realistic drift trigger: handbrake pull at speed, or extreme high-speed powerslide
+    isDrifting = (isHandbrakeActive && speedKmh > 8.0) ||
+        (slipRatio > 1.35 && speedKmh > 75.0);
 
     // Update individual wheel slip telemetry
+    final isHardBrakingLockup = (brakeForce > 9000.0 && speedKmh > 35.0);
     for (var i = 0; i < 4; i++) {
       final isRear = i >= 2;
-      var slip = isDrifting ? 0.80 : (lateralSlipMagnitude * 0.40);
+      var slip = isDrifting ? 0.85 : 0.0;
       if (isRear && isHandbrakeActive) slip = 1.0;
-      if (brakeForce > 200 && speedKmh > 10) slip += 0.25;
+      if (isHardBrakingLockup) slip += 0.35;
       wheelSlips[i] = slip.clamp(0.0, 1.0);
     }
-
-    // Yaw dynamics with tight sports car steering authority
-    final yawDamping = isDrifting ? 3.5 : 8.0;
-    final yawTorque = (targetYawRate - yawRate) * (yawDamping * (gripFactor / 1.0));
-    yawRate += yawTorque * dt;
-    yaw += yawRate * dt;
 
     // 7. Resistance Forces (Aerodynamic Drag + Rolling Friction)
     const airDragCoeff = 0.38;
@@ -262,19 +260,36 @@ class VehiclePhysicsSimulation {
 
     final longAccel = totalNetLongForce / mass;
 
-    // Lateral tire grip force opposing slide (22.0 = solid sports-car road holding; 7.0 = controlled drift)
-    final lateralDamping = isDrifting ? 7.0 : 22.0;
-    final lateralResistanceForce =
-        -latSpeed * mass * (gripFactor * lateralDamping);
-    final latAccel = lateralResistanceForce / mass;
+    // 8. Integrate Linear Velocity, Yaw & Position (Anti-Slide Zero-Slip System)
+    if (!isDrifting) {
+      // ── 100% Locked Lateral Grip: Tires track strictly along vehicle heading ──
+      // In normal driving on asphalt, lateral sliding is 0.0 (pure rolling constraint).
+      final newLongSpeed = longSpeed + longAccel * dt;
+      yawRate = targetYawRate;
+      yaw += yawRate * dt;
+      final newFwd = Vec3(-sin(yaw), 0, -cos(yaw));
+      velocity = newFwd * newLongSpeed;
+    } else {
+      // ── Controlled Drift Mode: Handbrake engaged -> rear wheels break loose ──
+      final driftYawTarget = targetYawRate * 1.6;
+      yawRate += (driftYawTarget - yawRate) * (dt * 7.0);
+      yaw += yawRate * dt;
 
-    // 8. Integrate Linear Velocity & Position
-    final accelWorld = (fwd * longAccel) + (right * latAccel);
-    velocity = velocity + (accelWorld * dt);
+      final newFwd = Vec3(-sin(yaw), 0, -cos(yaw));
+      final newRight = Vec3(cos(yaw), 0, -sin(yaw));
+      final driftLatAccel = -steerInput * 6.5;
+      final latDamping = 8.5 * gripFactor;
+      final newLatSpeed = latSpeed + (driftLatAccel - latSpeed * latDamping) * dt;
+      final newLongSpeed = (longSpeed + longAccel * dt) * 0.96;
+
+      velocity = (newFwd * newLongSpeed) + (newRight * newLatSpeed);
+    }
 
     // Stop complete jitter when stationary
-    if (throttleInput.abs() < 0.05 && speedKmh < 0.8 && brakeForce > 10) {
+    if (throttleInput.abs() < 0.05 && speedKmh < 0.6) {
       velocity = Vec3.zero;
+      speedKmh = 0.0;
+      yawRate = 0.0;
     }
 
     position = position + (velocity * dt);
@@ -299,10 +314,9 @@ class VehiclePhysicsSimulation {
 
     // 10. Record Skid Marks when slipping
     if (isDrifting ||
-        (brakeForce > 300 && speedKmh > 15) ||
+        isHardBrakingLockup ||
         (isHandbrakeActive && speedKmh > 5)) {
-      final slipAlpha = (lateralSlipMagnitude * 0.7 +
-              (isHandbrakeActive ? 0.35 : 0.0))
+      final slipAlpha = (isDrifting ? 0.75 : 0.40)
           .clamp(0.25, 0.85);
 
       // Use actual rear wheel positions if available

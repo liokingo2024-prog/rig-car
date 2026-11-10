@@ -2899,5 +2899,76 @@ endsolid sports_car''';
             reason: 'AutoDetector must guarantee 0.00m clearance from land to wheel');
       }
     });
+
+    test('Zero-Slip Lateral Tire Grip Constraint, Forward Wheel Roll Trigonometry & High-Speed Drift Mechanics', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 600,
+        grip: 1.0,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+      sim.reset();
+
+      // 1. Straight acceleration: wheels roll forward, lateral velocity is strictly 0
+      for (var i = 0; i < 60; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      }
+      expect(sim.speedKmh > 10.0, isTrue);
+      expect(sim.isDrifting, isFalse);
+      expect(sim.leftSkidMarks.isEmpty, isTrue, reason: 'Normal straight driving must produce no skid marks');
+      expect(sim.wheelRoll.abs() > 0.1, isTrue, reason: 'Wheel roll distance must accumulate during travel');
+
+      // 2. Normal cornering with steer input: strictly zero lateral sliding (locked grip constraint)
+      for (var i = 0; i < 40; i++) {
+        sim.step(0.02, throttleInput: 0.6, steerInput: 0.4, handbrake: false);
+      }
+      expect(sim.speedKmh > 10.0, isTrue);
+      expect(sim.isDrifting, isFalse, reason: 'Normal cornering must not trigger drifting');
+      expect(sim.leftSkidMarks.isEmpty, isTrue, reason: 'Normal cornering must produce no tire skid marks');
+
+      // Verify lateral velocity is 0: velocity vector is perfectly aligned with forward heading
+      final right = sim.rightVector;
+      final lateralVelocity = sim.velocity.x * right.x + sim.velocity.z * right.z;
+      expect(lateralVelocity.abs() < 1e-4, isTrue,
+          reason: 'In normal driving without handbrake, lateral velocity must be 0 (zero-slip tracking)');
+
+      // 3. Handbrake engagement at speed: triggers controlled drift, breaks lateral lock, records skid marks
+      for (var i = 0; i < 25; i++) {
+        sim.step(0.02, throttleInput: 0.2, steerInput: 1.0, handbrake: true);
+      }
+      expect(sim.isDrifting, isTrue, reason: 'Engaging handbrake at speed must initiate drift mode');
+      expect(sim.leftSkidMarks.isNotEmpty, isTrue, reason: 'Drifting must deposit tire skid marks');
+
+      // 4. Recovery: release handbrake and steer straight restores zero-slip constraint
+      for (var i = 0; i < 40; i++) {
+        sim.step(0.02, throttleInput: 0.5, steerInput: 0.0, handbrake: false);
+      }
+      expect(sim.isDrifting, isFalse, reason: 'Straightening out after drift must immediately restore road grip');
+      final postDriftLatVel = sim.velocity.x * sim.rightVector.x + sim.velocity.z * sim.rightVector.z;
+      expect(postDriftLatVel.abs() < 1e-4, isTrue,
+          reason: 'Lateral slip must be eliminated once drift terminates');
+
+      // 5. Test Wheel Matrix forward roll rotation:
+      // In Godot 4 coordinates (-Z forward, +Y up), forward motion requires roll around X axis
+      final wheelMatrix = TestDriveViewport.buildWheelLocalMatrix(
+        const Vec3(0.85, 0.34, -1.35),
+        Vec3.zero,
+        0.25,
+        1.57, // rolled forward
+      );
+      expect(wheelMatrix.m.every((v) => !v.isNaN && !v.isInfinite), isTrue);
+    });
   });
 }
