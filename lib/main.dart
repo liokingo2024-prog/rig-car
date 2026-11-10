@@ -455,10 +455,46 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
               final axle = corner.startsWith('F') ? 'front' : 'rear';
               final side = corner.endsWith('L') ? 'left' : 'right';
 
+              var authoritativeHub = hubPos;
+              var authoritativeRadius = r;
+              var authoritativeWidth = w;
+              if (model != null) {
+                final cand = <int>{};
+                if (resolvedSpinNodes.isNotEmpty) {
+                  cand.addAll(resolvedSpinNodes.where((n) => !nonWheelNodes.contains(n)));
+                }
+                if (cand.isEmpty && resolvedPartNodes.isNotEmpty) {
+                  cand.addAll(resolvedPartNodes.where((n) => !nonWheelNodes.contains(n) && !resolvedCaliperNodes.contains(n)));
+                }
+                if (cand.isEmpty && !nonWheelNodes.contains(primaryNodeIdx)) {
+                  cand.add(primaryNodeIdx);
+                }
+
+                BBox? meshBox;
+                for (final inst in model.instances) {
+                  if (cand.contains(inst.nodeIndex)) {
+                    meshBox = meshBox == null
+                        ? inst.worldBBox
+                        : BBox.union([meshBox, inst.worldBBox]);
+                  }
+                }
+                if (meshBox != null && meshBox.size.y > 0.05) {
+                  authoritativeHub = meshBox.center;
+                  final carBox = model.worldBBox;
+                  final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
+                  final dLong = (fAxisIsZ ? meshBox.size.z : meshBox.size.x).abs();
+                  final dUp = meshBox.size.y.abs();
+                  final meshR = max(dLong, dUp) * 0.5;
+                  if (meshR >= 0.15 && meshR <= 0.85) authoritativeRadius = meshR;
+                  final meshW = (fAxisIsZ ? meshBox.size.x : meshBox.size.z).abs();
+                  if (meshW >= 0.08 && meshW <= 0.65) authoritativeWidth = meshW;
+                }
+              }
+
               _assignedWheels[corner] = DetectedWheel(
                 nodeIndex: primaryNodeIdx,
                 nodeName: cName,
-                worldPosition: hubPos,
+                worldPosition: authoritativeHub,
                 confidence: existing?.confidence ?? 0.95,
                 meshIndex: existing?.meshIndex,
                 partNodeIndices: resolvedPartNodes.toList(),
@@ -467,8 +503,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                 caliperHubNodeIndices: resolvedCaliperNodes.toList(),
                 axle: axle,
                 side: side,
-                radius: r,
-                width: w,
+                radius: authoritativeRadius,
+                width: authoritativeWidth,
                 circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
                 subMeshCount: smc,
               );

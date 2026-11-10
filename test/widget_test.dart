@@ -2634,5 +2634,51 @@ endsolid sports_car''';
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowUp);
       await tester.pump(const Duration(milliseconds: 100));
     });
+
+    test('Wheel Hub True-Center Rotation & Concentric Steering Matrix Verification', () {
+      final hub = const Vec3(-0.85, 0.34, -1.35);
+      final alignOffset = const Vec3(0.0, 0.05, 0.0);
+      final expectedHub = hub + alignOffset;
+      const radius = 0.34;
+
+      // 1. Hub Pivot Invariance: hub itself must transform strictly to hub + alignOffset
+      for (final steer in [-0.5, -0.2, 0.0, 0.2, 0.5]) {
+        for (final roll in [-3.14, -1.57, 0.0, 1.57, 3.14]) {
+          final mat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, steer, roll);
+          final transformedHub = mat.transformPoint(hub);
+          expect((transformedHub.x - expectedHub.x).abs() < 1e-5, isTrue,
+              reason: 'Hub X should be ${expectedHub.x}, was ${transformedHub.x}');
+          expect((transformedHub.y - expectedHub.y).abs() < 1e-5, isTrue,
+              reason: 'Hub Y should be ${expectedHub.y}, was ${transformedHub.y}');
+          expect((transformedHub.z - expectedHub.z).abs() < 1e-5, isTrue,
+              reason: 'Hub Z should be ${expectedHub.z}, was ${transformedHub.z}');
+        }
+      }
+
+      // 2. Radial Concentricity: Every rim vertex at radius R remains at distance R from the hub
+      // across all roll angles (eliminating eccentric cam wobble!)
+      for (var a = 0; a < 8; a++) {
+        final angle = a * (pi / 4);
+        final rimVertex = Vec3(hub.x, hub.y + radius * cos(angle), hub.z + radius * sin(angle));
+
+        for (final roll in [-2.0, -1.0, 0.0, 1.0, 2.0]) {
+          for (final steer in [-0.4, 0.0, 0.4]) {
+            final mat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, steer, roll);
+            final transformedVertex = mat.transformPoint(rimVertex);
+            final distToHub = (transformedVertex - expectedHub).length;
+            expect((distToHub - radius).abs() < 1e-5, isTrue,
+                reason: 'Rim point distance to hub must remain exactly $radius, was $distToHub (eccentricity error!)');
+          }
+        }
+      }
+
+      // 3. Steer Direction Sign: Steer > 0 (turning right) must rotate the front of the wheel (+Z forward / -Z forward)
+      // toward +X (Right) to match vehicle yaw
+      final frontRimVertex = Vec3(hub.x, hub.y, hub.z - radius);
+      final rightSteerMat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, 0.5, 0.0);
+      final steeredFront = rightSteerMat.transformPoint(frontRimVertex);
+      expect(steeredFront.x > expectedHub.x, isTrue,
+          reason: 'Turning right (steer > 0) must move front of wheel to positive X (right), was ${steeredFront.x}');
+    });
   });
 }

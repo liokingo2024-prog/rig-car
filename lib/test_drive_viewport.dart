@@ -123,6 +123,80 @@ class TestDriveViewport extends StatefulWidget {
   final bool sirenEnabled;
   final bool tireSkidAudioEnabled;
 
+  /// Builds the local transform matrix that rotates a wheel about its true hub center [hub],
+  /// applying [roll] along the lateral axle and [steer] around the vertical spindle axis,
+  /// and translates to [hub] + [alignOffset].
+  static Mat4 buildWheelLocalMatrix(
+    Vec3 hub,
+    Vec3 alignOffset,
+    double steer,
+    double roll,
+  ) {
+    final cs = cos(steer);
+    final ss = sin(steer);
+    final cr = cos(roll);
+    final sr = sin(roll);
+
+    // R = R_steer * R_roll
+    // R_steer (about +Y): [cs, 0, -ss; 0, 1, 0; ss, 0, cs]
+    // R_roll (about +X):  [1, 0, 0; 0, cr, -sr; 0, sr, cr]
+    // Product R = R_steer * R_roll:
+    final r00 = cs;
+    final r10 = 0.0;
+    final r20 = ss;
+
+    final r01 = -ss * sr;
+    final r11 = cr;
+    final r21 = cs * sr;
+
+    final r02 = -ss * cr;
+    final r12 = -sr;
+    final r22 = cs * cr;
+
+    // R * hub
+    final rhX = r00 * hub.x + r01 * hub.y + r02 * hub.z;
+    final rhY = r10 * hub.x + r11 * hub.y + r12 * hub.z;
+    final rhZ = r20 * hub.x + r21 * hub.y + r22 * hub.z;
+
+    // T = (hub + alignOffset) - R * hub
+    final tx = (hub.x + alignOffset.x) - rhX;
+    final ty = (hub.y + alignOffset.y) - rhY;
+    final tz = (hub.z + alignOffset.z) - rhZ;
+
+    return Mat4([
+      r00, r10, r20, 0.0,
+      r01, r11, r21, 0.0,
+      r02, r12, r22, 0.0,
+      tx, ty, tz, 1.0,
+    ]);
+  }
+
+  /// Multiplies a vector by R^T (the transpose/inverse of R_steer * R_roll)
+  /// for lighting and normal transformation.
+  static Vec3 applyWheelRotTranspose(Vec3 v, double steer, double roll) {
+    final cs = cos(steer);
+    final ss = sin(steer);
+    final cr = cos(roll);
+    final sr = sin(roll);
+
+    final r00 = cs;
+    final r20 = ss;
+
+    final r01 = -ss * sr;
+    final r11 = cr;
+    final r21 = cs * sr;
+
+    final r02 = -ss * cr;
+    final r12 = -sr;
+    final r22 = cs * cr;
+
+    return Vec3(
+      r00 * v.x + r20 * v.z,
+      r01 * v.x + r11 * v.y + r21 * v.z,
+      r02 * v.x + r12 * v.y + r22 * v.z,
+    );
+  }
+
   @override
   State<TestDriveViewport> createState() => _TestDriveViewportState();
 }
@@ -1500,7 +1574,13 @@ class _TestDriveScenePainter extends CustomPainter {
         final hasNonWheelPart = w.partNodeIndices.any(nonWheel.contains);
         final isBodyNode = nonWheel.contains(w.nodeIndex);
 
-        if (w.partNodeIndices.isEmpty || hasNonWheelPart || isBodyNode) {
+        var safeParts = w.partNodeIndices.where((n) => !nonWheel.contains(n)).toList();
+        var safeSpin = w.spinNodeIndices.where((n) => !nonWheel.contains(n)).toList();
+        final safeCaliper = w.caliperHubNodeIndices
+            .where((n) => !nonWheel.contains(n))
+            .toList();
+
+        if (safeParts.isEmpty || hasNonWheelPart || isBodyNode) {
           final hub = w.worldPosition;
           final r = w.radius > 0.05 ? w.radius : 0.34;
           final matchedParts = <int>{};
@@ -1514,44 +1594,73 @@ class _TestDriveScenePainter extends CustomPainter {
             }
           }
 
-          final safeParts = (matchedParts.isNotEmpty
-                  ? matchedParts
-                  : w.partNodeIndices.where((n) => !nonWheel.contains(n)).toSet())
-              .toList();
-
-          final safeSpin = (w.spinNodeIndices.isNotEmpty
-                  ? w.spinNodeIndices.where((n) => !nonWheel.contains(n)).toSet()
-                  : safeParts.toSet())
-              .toList();
-
-          final safeCaliper = w.caliperHubNodeIndices
-              .where((n) => !nonWheel.contains(n))
-              .toList();
-
-          final safePrimary = safeSpin.isNotEmpty
-              ? safeSpin.first
-              : (safeParts.isNotEmpty
-                  ? safeParts.first
-                  : (!isBodyNode ? w.nodeIndex : 1));
-
-          result[entry.key] = DetectedWheel(
-            nodeIndex: safePrimary,
-            nodeName: w.nodeName,
-            worldPosition: w.worldPosition,
-            confidence: w.confidence,
-            meshIndex: w.meshIndex,
-            partNodeIndices: safeParts,
-            partIds: w.partIds,
-            spinNodeIndices: safeSpin,
-            caliperHubNodeIndices: safeCaliper,
-            axle: w.axle,
-            side: w.side,
-            radius: w.radius,
-            width: w.width,
-            circularity: w.circularity,
-            subMeshCount: max(w.subMeshCount, safeParts.length),
-          );
+          if (matchedParts.isNotEmpty) {
+            safeParts = matchedParts.toList();
+            safeSpin = matchedParts.toList();
+          }
         }
+
+        if (safeSpin.isEmpty && safeParts.isNotEmpty) {
+          final caliperSet = safeCaliper.toSet();
+          safeSpin = safeParts.where((n) => !caliperSet.contains(n)).toList();
+        }
+
+        final safePrimary = safeSpin.isNotEmpty
+            ? safeSpin.first
+            : (safeParts.isNotEmpty
+                ? safeParts.first
+                : (!isBodyNode ? w.nodeIndex : 1));
+
+        // Authoritative Wheel Center & Dimensions directly from mesh geometry
+        final candidateNodes = <int>{};
+        if (safeSpin.isNotEmpty) {
+          candidateNodes.addAll(safeSpin);
+        } else if (safeParts.isNotEmpty) {
+          candidateNodes.addAll(safeParts);
+        } else if (!nonWheel.contains(safePrimary)) {
+          candidateNodes.add(safePrimary);
+        }
+
+        BBox? wheelMeshBox;
+        for (final inst in model!.instances) {
+          if (candidateNodes.contains(inst.nodeIndex)) {
+            wheelMeshBox = wheelMeshBox == null
+                ? inst.worldBBox
+                : BBox.union([wheelMeshBox, inst.worldBBox]);
+          }
+        }
+
+        var authoritativeHub = w.worldPosition;
+        var authoritativeRadius = w.radius;
+        var authoritativeWidth = w.width;
+
+        if (wheelMeshBox != null && wheelMeshBox.size.y > 0.05) {
+          authoritativeHub = wheelMeshBox.center;
+          final dLong = (fAxisIsZ ? wheelMeshBox.size.z : wheelMeshBox.size.x).abs();
+          final dUp = wheelMeshBox.size.y.abs();
+          final meshR = max(dLong, dUp) * 0.5;
+          if (meshR >= 0.15 && meshR <= 0.85) authoritativeRadius = meshR;
+          final meshW = (fAxisIsZ ? wheelMeshBox.size.x : wheelMeshBox.size.z).abs();
+          if (meshW >= 0.08 && meshW <= 0.65) authoritativeWidth = meshW;
+        }
+
+        result[entry.key] = DetectedWheel(
+          nodeIndex: safePrimary,
+          nodeName: w.nodeName,
+          worldPosition: authoritativeHub,
+          confidence: w.confidence,
+          meshIndex: w.meshIndex,
+          partNodeIndices: safeParts,
+          partIds: w.partIds,
+          spinNodeIndices: safeSpin,
+          caliperHubNodeIndices: safeCaliper,
+          axle: w.axle,
+          side: w.side,
+          radius: authoritativeRadius,
+          width: authoritativeWidth,
+          circularity: w.circularity,
+          subMeshCount: max(w.subMeshCount, safeParts.length),
+        );
       }
     }
     return result;
@@ -1562,66 +1671,11 @@ class _TestDriveScenePainter extends CustomPainter {
     Vec3 alignOffset,
     double steer,
     double roll,
-  ) {
-    final cs = cos(steer);
-    final ss = sin(steer);
-    final cr = cos(roll);
-    final sr = sin(roll);
+  ) =>
+      TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, steer, roll);
 
-    // R = R_steer * R_roll
-    final r00 = cs;
-    final r10 = 0.0;
-    final r20 = -ss;
-
-    final r01 = sr * ss;
-    final r11 = cr;
-    final r21 = sr * cs;
-
-    final r02 = cr * ss;
-    final r12 = -sr;
-    final r22 = cr * cs;
-
-    // R * hub
-    final rhX = r00 * hub.x + r01 * hub.y + r02 * hub.z;
-    final rhY = r10 * hub.x + r11 * hub.y + r12 * hub.z;
-    final rhZ = r20 * hub.x + r21 * hub.y + r22 * hub.z;
-
-    // T = (hub + alignOffset) - R * hub
-    final tx = (hub.x + alignOffset.x) - rhX;
-    final ty = (hub.y + alignOffset.y) - rhY;
-    final tz = (hub.z + alignOffset.z) - rhZ;
-
-    return Mat4([
-      r00, r10, r20, 0.0,
-      r01, r11, r21, 0.0,
-      r02, r12, r22, 0.0,
-      tx, ty, tz, 1.0,
-    ]);
-  }
-
-  static Vec3 _applyWheelRotTranspose(Vec3 v, double steer, double roll) {
-    final cs = cos(steer);
-    final ss = sin(steer);
-    final cr = cos(roll);
-    final sr = sin(roll);
-
-    final r00 = cs;
-    final r20 = -ss;
-
-    final r01 = sr * ss;
-    final r11 = cr;
-    final r21 = sr * cs;
-
-    final r02 = cr * ss;
-    final r12 = -sr;
-    final r22 = cr * cs;
-
-    return Vec3(
-      r00 * v.x + r20 * v.z,
-      r01 * v.x + r11 * v.y + r21 * v.z,
-      r02 * v.x + r12 * v.y + r22 * v.z,
-    );
-  }
+  static Vec3 _applyWheelRotTranspose(Vec3 v, double steer, double roll) =>
+      TestDriveViewport.applyWheelRotTranspose(v, steer, roll);
 
   @override
   void paint(Canvas canvas, Size size) {
