@@ -138,18 +138,18 @@ class TestDriveViewport extends StatefulWidget {
     final sr = sin(roll);
 
     // R = R_steer * R_roll
-    // R_steer (about +Y): [cs, 0, -ss; 0, 1, 0; ss, 0, cs]
+    // R_steer (about +Y): [cs, 0, ss; 0, 1, 0; -ss, 0, cs]
     // R_roll (about +X):  [1, 0, 0; 0, cr, -sr; 0, sr, cr]
     // Product R = R_steer * R_roll:
     final r00 = cs;
     final r10 = 0.0;
-    final r20 = ss;
+    final r20 = -ss;
 
-    final r01 = -ss * sr;
+    final r01 = ss * sr;
     final r11 = cr;
     final r21 = cs * sr;
 
-    final r02 = -ss * cr;
+    final r02 = ss * cr;
     final r12 = -sr;
     final r22 = cs * cr;
 
@@ -180,13 +180,13 @@ class TestDriveViewport extends StatefulWidget {
     final sr = sin(roll);
 
     final r00 = cs;
-    final r20 = ss;
+    final r20 = -ss;
 
-    final r01 = -ss * sr;
+    final r01 = ss * sr;
     final r11 = cr;
     final r21 = cs * sr;
 
-    final r02 = -ss * cr;
+    final r02 = ss * cr;
     final r12 = -sr;
     final r22 = cs * cr;
 

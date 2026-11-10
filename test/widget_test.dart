@@ -2672,13 +2672,18 @@ endsolid sports_car''';
         }
       }
 
-      // 3. Steer Direction Sign: Steer > 0 (turning right) must rotate the front of the wheel (+Z forward / -Z forward)
-      // toward +X (Right) to match vehicle yaw
+      // 3. Steer Direction Sign: In physics_sim, steer > 0 corresponds to turning left (-X)
+      // and steer < 0 corresponds to turning right (+X). The front of the wheel (-Z) must turn left for steer > 0.
       final frontRimVertex = Vec3(hub.x, hub.y, hub.z - radius);
-      final rightSteerMat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, 0.5, 0.0);
-      final steeredFront = rightSteerMat.transformPoint(frontRimVertex);
-      expect(steeredFront.x > expectedHub.x, isTrue,
-          reason: 'Turning right (steer > 0) must move front of wheel to positive X (right), was ${steeredFront.x}');
+      final leftSteerMat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, 0.5, 0.0);
+      final steeredFrontLeft = leftSteerMat.transformPoint(frontRimVertex);
+      expect(steeredFrontLeft.x < expectedHub.x, isTrue,
+          reason: 'Turning left (steer > 0) must move front of wheel to negative X (left), was ${steeredFrontLeft.x}');
+
+      final rightSteerMat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, -0.5, 0.0);
+      final steeredFrontRight = rightSteerMat.transformPoint(frontRimVertex);
+      expect(steeredFrontRight.x > expectedHub.x, isTrue,
+          reason: 'Turning right (steer < 0) must move front of wheel to positive X (right), was ${steeredFrontRight.x}');
     });
   });
 }
