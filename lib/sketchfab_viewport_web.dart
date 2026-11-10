@@ -357,3 +357,36 @@ dynamic detectSketchfabWheels({double groundTol = 0.08, double inboardTol = 0.01
   }
   return null;
 }
+
+void playSketchfabAudioPreview(String slotId, double pitchMultiplier) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('playAudioPreview', [slotId, pitchMultiplier]);
+    }
+  } catch (e) {
+    debugPrint('playSketchfabAudioPreview error: $e');
+  }
+}
+
+void stopSketchfabAudioPreview() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('stopAudioPreview');
+    }
+  } catch (e) {
+    debugPrint('stopSketchfabAudioPreview error: $e');
+  }
+}
+
+void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('updateSkidAudio', [isDrifting, enabled]);
+    }
+  } catch (e) {
+    debugPrint('updateSketchfabSkidAudio error: $e');
+  }
+}

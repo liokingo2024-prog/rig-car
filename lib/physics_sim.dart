@@ -157,7 +157,9 @@ class VehiclePhysicsSimulation {
     // 4. Transmission & Engine RPM model
     final gearRatios = [3.4, 2.1, 1.45, 1.1, 0.88, 0.72];
     if (longSpeed >= 0) {
-      if (speedKmh > 140) {
+      if (speedKmh > 185) {
+        currentGear = 6;
+      } else if (speedKmh > 140) {
         currentGear = 5;
       } else if (speedKmh > 100) {
         currentGear = 4;
@@ -217,8 +219,11 @@ class VehiclePhysicsSimulation {
         ? (wheelPositions[2].z - wheelPositions[0].z).abs().clamp(2.0, 4.0)
         : 2.7;
 
-    // Ackermann yaw velocity target
-    final targetYawRate = (longSpeed / wheelbase) * tan(steerAngle);
+    // Ackermann yaw velocity target factoring front/rear steering flags
+    final effectiveFrontSteer = frontSteering ? steerAngle : 0.0;
+    final effectiveRearSteer = rearSteering ? -steerAngle * 0.5 : 0.0;
+    final netSteer = effectiveFrontSteer - effectiveRearSteer;
+    final targetYawRate = (longSpeed / wheelbase) * tan(netSteer);
     final maxCorneringG = (grip * 1.25).clamp(0.6, 2.8);
     final maxLateralAccel = maxCorneringG * 9.81;
 
@@ -319,14 +324,14 @@ class VehiclePhysicsSimulation {
       final slipAlpha = (isDrifting ? 0.75 : 0.40)
           .clamp(0.25, 0.85);
 
-      // Use actual rear wheel positions if available
-      final rearLeftZ = wheelPositions.length >= 4 ? wheelPositions[2].z : -1.35;
-      final rearRightZ = wheelPositions.length >= 4 ? wheelPositions[3].z : -1.35;
+      // Use actual rear wheel positions if available (in Godot 4 -Z fwd, rear wheels have +Z)
+      final rearLeftZ = wheelPositions.length >= 4 ? wheelPositions[2].z.abs() : 1.35;
+      final rearRightZ = wheelPositions.length >= 4 ? wheelPositions[3].z.abs() : 1.35;
       final rearLeftX = wheelPositions.length >= 4 ? wheelPositions[2].x : -0.85;
       final rearRightX = wheelPositions.length >= 4 ? wheelPositions[3].x : 0.85;
 
-      final rearL = position + (fwd * rearLeftZ) + (right * rearLeftX);
-      final rearR = position + (fwd * rearRightZ) + (right * rearRightX);
+      final rearL = position - (fwd * rearLeftZ) + (right * rearLeftX);
+      final rearR = position - (fwd * rearRightZ) + (right * rearRightX);
 
       leftSkidMarks.add(SkidPoint(rearL, slipAlpha));
       rightSkidMarks.add(SkidPoint(rearR, slipAlpha));

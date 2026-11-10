@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'file_picker.dart';
 import 'model_data.dart';
 import 'pipeline_models.dart';
 
@@ -2516,8 +2517,11 @@ class _AudioSlotCardState extends State<_AudioSlotCard> {
             children: [
               OutlinedButton.icon(
                 onPressed: () {
-                  setState(() => widget.slot.isPlaying = !widget.slot.isPlaying);
-                  widget.onPreview();
+                  final willPlay = !widget.slot.isPlaying;
+                  setState(() => widget.slot.isPlaying = willPlay);
+                  if (willPlay) {
+                    widget.onPreview();
+                  }
                 },
                 icon: Icon(
                   widget.slot.isPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded,
@@ -2541,7 +2545,12 @@ class _AudioSlotCardState extends State<_AudioSlotCard> {
               ),
               const SizedBox(width: 8),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: () async {
+                  final picked = await pickAudioFile();
+                  if (picked != null) {
+                    setState(() => widget.slot.fileName = picked.name);
+                  }
+                },
                 icon: const Icon(Icons.folder_open_rounded, size: 13),
                 label: const Text('Choose File', style: TextStyle(fontSize: 10)),
                 style: OutlinedButton.styleFrom(

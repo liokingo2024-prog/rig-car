@@ -867,6 +867,11 @@
     if (currentLength > 0.01 && targetLength > 0.01) {
       const factor = targetLength / currentLength;
       modelPivotGroup.scale.multiplyScalar(factor);
+      modelPivotGroup.updateMatrixWorld(true);
+      const scaledBox = new THREE.Box3().setFromObject(modelPivotGroup);
+      const center = scaledBox.getCenter(new THREE.Vector3());
+      currentModel.position.x -= center.x;
+      currentModel.position.z -= center.z;
       snapToGround();
       resetCamera();
       if (wireframeOverlayGroup) {
@@ -2048,6 +2053,65 @@
     });
   }
 
+  let audioCtx = null;
+  let currentPreviewOsc = null;
+  let currentSkidOsc = null;
+  let currentSkidGain = null;
+
+  function playAudioPreview(slotId, pitchMultiplier) {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      stopAudioPreview();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const id = String(slotId || '').toLowerCase();
+      const baseFreq = id.includes('rpm') ? 220 : id.includes('idle') ? 110 : id.includes('skid') ? 440 : 150;
+      osc.type = id.includes('skid') ? 'sawtooth' : 'triangle';
+      osc.frequency.setValueAtTime(baseFreq * (pitchMultiplier || 1.0), audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.0);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 1.0);
+      currentPreviewOsc = osc;
+    } catch (e) {
+      console.warn('Audio preview error:', e);
+    }
+  }
+
+  function stopAudioPreview() {
+    if (currentPreviewOsc) {
+      try { currentPreviewOsc.stop(); } catch(e) {}
+      currentPreviewOsc = null;
+    }
+  }
+
+  function updateSkidAudio(isDrifting, enabled) {
+    if (!enabled || !isDrifting) {
+      if (currentSkidGain && audioCtx) {
+        currentSkidGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
+      }
+      return;
+    }
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (!currentSkidOsc) {
+        currentSkidOsc = audioCtx.createOscillator();
+        currentSkidGain = audioCtx.createGain();
+        currentSkidOsc.type = 'sawtooth';
+        currentSkidOsc.frequency.setValueAtTime(360, audioCtx.currentTime);
+        currentSkidGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+        currentSkidOsc.connect(currentSkidGain);
+        currentSkidGain.connect(audioCtx.destination);
+        currentSkidOsc.start();
+      }
+      currentSkidGain.gain.setTargetAtTime(0.10, audioCtx.currentTime, 0.05);
+    } catch (e) {}
+  }
+
   // Global API attached to window
   window.SketchfabViewer = {
     init: init,
@@ -2072,6 +2136,9 @@
     snapToGround: snapToGround,
     applyScale: applyScale,
     loadDemoCar: loadDemoCar,
+    playAudioPreview: playAudioPreview,
+    stopAudioPreview: stopAudioPreview,
+    updateSkidAudio: updateSkidAudio,
     isInitialized: function() { return isInitialized; }
   };
 })();

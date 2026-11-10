@@ -9,6 +9,7 @@ import 'fullscreen.dart';
 import 'auto_detector.dart';
 import 'model_data.dart';
 import 'physics_sim.dart';
+import 'sketchfab_viewport.dart';
 import 'solid_mesh_lod.dart';
 
 // ── Godot 4 Interactive Test Drive Viewport ─────────────────────────────────
@@ -279,6 +280,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   @override
   void dispose() {
+    updateSketchfabSkidAudio(false, false);
     _ticker.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -331,6 +333,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       steerInput: steer,
       handbrake: handbrake,
     );
+
+    updateSketchfabSkidAudio(_sim.isDrifting, widget.tireSkidAudioEnabled);
 
     // Update chase camera
     _updateChaseCamera(dt);
@@ -3412,7 +3416,9 @@ class _TestDriveScenePainter extends CustomPainter {
       final calIdx = c + 4;
 
       final isFront = corner.startsWith('F') || w.axle == 'front';
-      final steer = isFront ? sim.steerAngle : 0.0;
+      final steer = isFront
+          ? (sim.frontSteering ? sim.steerAngle : 0.0)
+          : (sim.rearSteering ? -sim.steerAngle * 0.5 : 0.0);
       final r = w.radius > 0.05 ? w.radius : 0.34;
       final roll = -sim.wheelRoll / r;
       final hub = w.worldPosition;
@@ -3451,6 +3457,22 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
 
+    // Pre-calculate cylinder bounds for wheel corners if single-node or merged
+    final wheelEnvelopes = <int, ({Vec3 hub, double rMaxSq, double halfW})>{};
+    for (var c = 0; c < 4; c++) {
+      final corner = corners[c];
+      final w = wheels[corner];
+      if (w != null) {
+        final r = (w.radius > 0.05 ? w.radius : 0.34) * 1.08;
+        final halfW = (w.width > 0.05 ? w.width : 0.28) * 0.65;
+        wheelEnvelopes[c] = (
+          hub: w.worldPosition,
+          rMaxSq: r * r,
+          halfW: halfW,
+        );
+      }
+    }
+
     final triTransform = Uint8List(triCount);
     final vertexTransform = Uint8List(mesh.vertexCount);
     vertexTransform.fillRange(0, mesh.vertexCount, 8);
@@ -3458,6 +3480,7 @@ class _TestDriveScenePainter extends CustomPainter {
     final indices = mesh.indices;
     final triNode = mesh.triNode;
     final triKind = mesh.triKind;
+    final centroids = mesh.centroids;
     for (var t = 0; t < triCount; t++) {
       final n = triNode[t];
       var k = 8;
@@ -3469,6 +3492,25 @@ class _TestDriveScenePainter extends CustomPainter {
             k = 8;
           } else {
             k = cand;
+          }
+        }
+      }
+      // If node assignment left it as body (e.g. single-node / merged-mesh model),
+      // check if centroid falls inside any wheel cylinder envelope
+      if (k == 8 && wheelEnvelopes.isNotEmpty) {
+        final cx = centroids[t * 3];
+        final cy = centroids[t * 3 + 1];
+        final cz = centroids[t * 3 + 2];
+        for (final entry in wheelEnvelopes.entries) {
+          final env = entry.value;
+          final dx = (cx - env.hub.x).abs();
+          if (dx <= env.halfW) {
+            final dy = cy - env.hub.y;
+            final dz = cz - env.hub.z;
+            if (dy * dy + dz * dz <= env.rMaxSq) {
+              k = entry.key; // spinIdx for wheel c (0..3)
+              break;
+            }
           }
         }
       }
@@ -3505,7 +3547,6 @@ class _TestDriveScenePainter extends CustomPainter {
 
     // 2. Cull, shade, and record visible triangles
     final normals = mesh.normals;
-    final centroids = mesh.centroids;
     final triColor = mesh.triColor;
     final visTri = mesh.visTri;
     final visColor = mesh.visColor;
@@ -3893,7 +3934,9 @@ class _TestDriveScenePainter extends CustomPainter {
       final r = wheelRadii[i].clamp(0.20, 0.55);
       final w = wheelWidths[i].clamp(0.12, 0.40);
       final roll = -sim.wheelRoll / r;
-      final steer = isFront ? sim.steerAngle : 0.0;
+      final steer = isFront
+          ? (sim.frontSteering ? sim.steerAngle : 0.0)
+          : (sim.rearSteering ? -sim.steerAngle * 0.5 : 0.0);
 
       _drawSolidProceduralWheel(
         canvas: canvas,
@@ -4150,7 +4193,9 @@ class _TestDriveScenePainter extends CustomPainter {
         tireW = 0.26;
       }
 
-      final steer = isFront ? sim.steerAngle : 0.0;
+      final steer = isFront
+          ? (sim.frontSteering ? sim.steerAngle : 0.0)
+          : (sim.rearSteering ? -sim.steerAngle * 0.5 : 0.0);
       final wheelYaw = sim.yaw + steer;
       final tireFwd = Vec3(-sin(wheelYaw), 0.0, -cos(wheelYaw));
       final tireRight = Vec3(cos(wheelYaw), 0.0, -sin(wheelYaw));
@@ -4232,7 +4277,9 @@ class _TestDriveScenePainter extends CustomPainter {
       final calIdx = c + 4;
 
       final isFront = corner.startsWith('F') || w.axle == 'front';
-      final steer = isFront ? sim.steerAngle : 0.0;
+      final steer = isFront
+          ? (sim.frontSteering ? sim.steerAngle : 0.0)
+          : (sim.rearSteering ? -sim.steerAngle * 0.5 : 0.0);
       final r = w.radius > 0.05 ? w.radius : 0.34;
       final roll = -sim.wheelRoll / r;
       final hub = w.worldPosition;
@@ -4371,7 +4418,9 @@ class _TestDriveScenePainter extends CustomPainter {
         project: project,
         localCenter: wc,
         radius: r,
-        steerAngle: isFront ? sim.steerAngle : 0.0,
+        steerAngle: isFront
+            ? (sim.frontSteering ? sim.steerAngle : 0.0)
+            : (sim.rearSteering ? -sim.steerAngle * 0.5 : 0.0),
         rollAngle: -sim.wheelRoll / r,
       );
     }

@@ -1275,8 +1275,15 @@ class RigConfig {
     required this.rearSteering,
     required this.frontTraction,
     required this.rearTraction,
+    this.springRestLength = 0.15,
+    this.springStiffness = 35.0,
+    this.dampingCompression = 0.83,
+    this.steerAngle = 26.0,
+    this.wheelRadius = 0.35,
     this.wheelPositions,
     this.bodyNodeName,
+    this.chassisSize,
+    this.godotArchitecture = 'standard',
   });
 
   final String modelName;
@@ -1291,6 +1298,13 @@ class RigConfig {
   final bool rearSteering;
   final bool frontTraction;
   final bool rearTraction;
+  final double springRestLength;
+  final double springStiffness;
+  final double dampingCompression;
+  final double steerAngle;
+  final double wheelRadius;
+  final Vec3? chassisSize;
+  final String godotArchitecture;
 
   /// If set, contains [FL, FR, RL, RR] world positions from auto-detection.
   final List<Vec3>? wheelPositions;
@@ -1307,34 +1321,89 @@ class RigConfig {
     'format': 'rig-car.godot.vehicle-body-3d/v1',
     'model': modelName,
     'preset': presetName,
-    'godot': {'root_node': 'VehicleBody3D', 'wheel_node': 'VehicleWheel3D'},
+    'architecture': godotArchitecture,
+    'godot': {
+      'root_node': godotArchitecture == 'raycast' ? 'RigidBody3D' : 'VehicleBody3D',
+      'wheel_node': godotArchitecture == 'raycast' ? 'RayCast3D' : 'VehicleWheel3D',
+    },
     'vehicle_body': {
       'mass': mass,
       'engine_force': engineForce,
       'center_of_mass_y': centerOfMass,
       'drive': drive,
+      'steer_angle_deg': steerAngle,
+      'spring_rest_length': springRestLength,
+      'spring_stiffness': springStiffness,
+      'damping_compression': dampingCompression,
+      'wheel_radius': wheelRadius,
     },
     if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
     'wheels': {
       'front': {
         'use_as_steering': frontSteering,
         'use_as_traction': frontTraction,
+        'wheel_radius': wheelRadius,
+        'wheel_friction_slip': grip,
+        'suspension_stiffness': springStiffness,
+        'damping_compression': dampingCompression,
+        'spring_rest_length': springRestLength,
       },
       'rear': {
         'use_as_steering': rearSteering,
         'use_as_traction': rearTraction,
+        'wheel_radius': wheelRadius,
         'wheel_friction_slip': grip,
-        'suspension_stiffness': suspension,
+        'suspension_stiffness': springStiffness,
+        'damping_compression': dampingCompression,
+        'spring_rest_length': springRestLength,
       },
     },
   };
 
-  String toGdScript() =>
-      '''extends VehicleBody3D
+  String toGdScript() {
+    final maxSteerRad = (steerAngle * pi / 180.0).toStringAsFixed(3);
+    if (godotArchitecture == 'raycast') {
+      return '''extends RigidBody3D
+
+@export var engine_power: float = ${engineForce.toStringAsFixed(1)}
+@export var max_steering_angle: float = $maxSteerRad
+@export var spring_stiffness: float = ${springStiffness.toStringAsFixed(1)}
+@export var damping_compression: float = ${dampingCompression.toStringAsFixed(2)}
+@export var rest_length: float = ${springRestLength.toStringAsFixed(2)}
+
+@onready var idle_audio: AudioStreamPlayer3D = get_node_or_null("IdleAudio")
+@onready var high_rpm_audio: AudioStreamPlayer3D = get_node_or_null("HighRpmAudio")
+@onready var skid_audio: AudioStreamPlayer3D = get_node_or_null("SkidAudio")
+
+func _physics_process(delta: float) -> void:
+    var throttle := Input.get_axis("brake", "accelerate")
+    var steer := Input.get_axis("steer_right", "steer_left") * max_steering_angle
+    
+    # Raycast suspension & drive integration
+    for child in get_children():
+        if child is RayCast3D and child.is_colliding():
+            var contact_point := child.get_collision_point()
+            var current_dist := (global_position - contact_point).length()
+            var spring_force := (rest_length - current_dist) * spring_stiffness
+            apply_force(child.global_transform.basis.y * spring_force, contact_point - global_position)
+            if throttle != 0:
+                apply_force(-global_transform.basis.z * throttle * (engine_power / 4.0), contact_point - global_position)
+    
+    # Audio RPM tracking
+    if high_rpm_audio:
+        high_rpm_audio.pitch_scale = clampf(0.8 + (linear_velocity.length() / 20.0), 0.7, 2.4)
+''';
+    }
+
+    return '''extends VehicleBody3D
 
 @export var max_engine_force: float = ${engineForce.toStringAsFixed(1)}
 @export var max_brake_force: float = 30.0
-@export var max_steering_angle: float = 0.45
+@export var max_steering_angle: float = $maxSteerRad
+
+@onready var idle_audio: AudioStreamPlayer3D = get_node_or_null("IdleAudio")
+@onready var high_rpm_audio: AudioStreamPlayer3D = get_node_or_null("HighRpmAudio")
+@onready var skid_audio: AudioStreamPlayer3D = get_node_or_null("SkidAudio")
 
 func _physics_process(_delta: float) -> void:
     var throttle := Input.get_axis("brake", "accelerate")
@@ -1342,58 +1411,135 @@ func _physics_process(_delta: float) -> void:
     engine_force = throttle * max_engine_force
     steering = steer * max_steering_angle
     brake = max_brake_force if Input.is_action_pressed("brake") else 0.0
+    
+    # Dynamic audio scaling
+    if high_rpm_audio and engine_force != 0:
+        high_rpm_audio.pitch_scale = clampf(0.8 + (linear_velocity.length() / 22.0), 0.7, 2.2)
 ''';
+  }
 
   String toTscn() {
-    final fl = _wp(0, const Vec3(-0.85, 0, -1.35));
-    final fr = _wp(1, const Vec3(0.85, 0, -1.35));
-    final rl = _wp(2, const Vec3(-0.85, 0, 1.35));
-    final rr = _wp(3, const Vec3(0.85, 0, 1.35));
+    final fl = _wp(0, const Vec3(-0.85, 0.35, -1.35));
+    final fr = _wp(1, const Vec3(0.85, 0.35, -1.35));
+    final rl = _wp(2, const Vec3(-0.85, 0.35, 1.35));
+    final rr = _wp(3, const Vec3(0.85, 0.35, 1.35));
+    final cs = chassisSize ?? const Vec3(1.8, 0.6, 4.2);
+
     String v3(Vec3 v) =>
         'Vector3(${v.x.toStringAsFixed(3)}, ${v.y.toStringAsFixed(3)}, '
         '${v.z.toStringAsFixed(3)})';
-    return '''[gd_scene load_steps=3 format=3]
+
+    final hasCustomModel = modelName.isNotEmpty &&
+        modelName != 'No model loaded' &&
+        !modelName.contains('Template');
+    final extResourceIndex = hasCustomModel ? 3 : 2;
+
+    if (godotArchitecture == 'raycast') {
+      return '''[gd_scene load_steps=$extResourceIndex format=3]
 
 [ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-
+${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelName" id="2_model"]\n' : ''}
 [sub_resource type="BoxShape3D" id="BoxShape3D_body"]
-size = Vector3(1.8, 0.6, 4.2)
+size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
 
-[node name="RigCar" type="VehicleBody3D"]
+[node name="RigCar" type="RigidBody3D"]
 mass = ${mass.toStringAsFixed(1)}
+center_of_mass_mode = 1
+center_of_mass = Vector3(0, ${centerOfMass.toStringAsFixed(3)}, 0)
 script = ExtResource("1_rig")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-position = Vector3(0, 0.35, 0)
+position = Vector3(0, ${(cs.y * 0.5).toStringAsFixed(3)}, 0)
 shape = SubResource("BoxShape3D_body")
 
+${hasCustomModel ? '[node name="VisualModel" parent="." instance=ExtResource("2_model")]\n' : ''}
+[node name="WheelRay_FL" type="RayCast3D" parent="."]
+position = ${v3(fl)}
+target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
+
+[node name="WheelRay_FR" type="RayCast3D" parent="."]
+position = ${v3(fr)}
+target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
+
+[node name="WheelRay_RL" type="RayCast3D" parent="."]
+position = ${v3(rl)}
+target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
+
+[node name="WheelRay_RR" type="RayCast3D" parent="."]
+position = ${v3(rr)}
+target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
+
+[node name="IdleAudio" type="AudioStreamPlayer3D" parent="."]
+[node name="HighRpmAudio" type="AudioStreamPlayer3D" parent="."]
+[node name="SkidAudio" type="AudioStreamPlayer3D" parent="."]
+''';
+    }
+
+    return '''[gd_scene load_steps=$extResourceIndex format=3]
+
+[ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
+${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelName" id="2_model"]\n' : ''}
+[sub_resource type="BoxShape3D" id="BoxShape3D_body"]
+size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
+
+[node name="RigCar" type="VehicleBody3D"]
+mass = ${mass.toStringAsFixed(1)}
+center_of_mass_mode = 1
+center_of_mass = Vector3(0, ${centerOfMass.toStringAsFixed(3)}, 0)
+script = ExtResource("1_rig")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+position = Vector3(0, ${(cs.y * 0.5).toStringAsFixed(3)}, 0)
+shape = SubResource("BoxShape3D_body")
+
+${hasCustomModel ? '[node name="VisualModel" parent="." instance=ExtResource("2_model")]\n' : ''}
 [node name="Wheel_FL" type="VehicleWheel3D" parent="."]
 position = ${v3(fl)}
+wheel_radius = ${wheelRadius.toStringAsFixed(3)}
+wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
+wheel_friction_slip = ${grip.toStringAsFixed(2)}
+suspension_stiffness = ${springStiffness.toStringAsFixed(2)}
+damping_compression = ${dampingCompression.toStringAsFixed(2)}
+suspension_travel = 0.20
 use_as_steering = $frontSteering
 use_as_traction = $frontTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
 
 [node name="Wheel_FR" type="VehicleWheel3D" parent="."]
 position = ${v3(fr)}
+wheel_radius = ${wheelRadius.toStringAsFixed(3)}
+wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
+wheel_friction_slip = ${grip.toStringAsFixed(2)}
+suspension_stiffness = ${springStiffness.toStringAsFixed(2)}
+damping_compression = ${dampingCompression.toStringAsFixed(2)}
+suspension_travel = 0.20
 use_as_steering = $frontSteering
 use_as_traction = $frontTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
 
 [node name="Wheel_RL" type="VehicleWheel3D" parent="."]
 position = ${v3(rl)}
+wheel_radius = ${wheelRadius.toStringAsFixed(3)}
+wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
+wheel_friction_slip = ${grip.toStringAsFixed(2)}
+suspension_stiffness = ${springStiffness.toStringAsFixed(2)}
+damping_compression = ${dampingCompression.toStringAsFixed(2)}
+suspension_travel = 0.20
 use_as_steering = $rearSteering
 use_as_traction = $rearTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
 
 [node name="Wheel_RR" type="VehicleWheel3D" parent="."]
 position = ${v3(rr)}
+wheel_radius = ${wheelRadius.toStringAsFixed(3)}
+wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
+wheel_friction_slip = ${grip.toStringAsFixed(2)}
+suspension_stiffness = ${springStiffness.toStringAsFixed(2)}
+damping_compression = ${dampingCompression.toStringAsFixed(2)}
+suspension_travel = 0.20
 use_as_steering = $rearSteering
 use_as_traction = $rearTraction
-wheel_friction_slip = ${grip.toStringAsFixed(2)}
-suspension_stiffness = ${suspension.toStringAsFixed(2)}
+
+[node name="IdleAudio" type="AudioStreamPlayer3D" parent="."]
+[node name="HighRpmAudio" type="AudioStreamPlayer3D" parent="."]
+[node name="SkidAudio" type="AudioStreamPlayer3D" parent="."]
 ''';
   }
 }

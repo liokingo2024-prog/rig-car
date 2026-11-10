@@ -208,6 +208,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         name: car.name,
         wheelPositions: car.wheelPositions,
       );
+      final detection = AutoDetector.detect(_parsedModel!);
+      _detection = detection;
+      _mapDetectedWheels(detection.wheels);
+      _updateDetectedGroupsFromWheels(detection);
+      _scanCompleted = true;
       if (!_isTestDriveMode) _activeStep = 1;
     } else {
       _modelName = 'Apex GT Coupe (Template)';
@@ -645,13 +650,20 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
     return RigConfig(
       modelName: _modelName,
-      presetName: _preset.name,
+      presetName: _selectedHandlingPreset,
       drive: _drive,
       mass: _mass,
       engineForce: _engineForce,
       grip: _grip,
       suspension: _suspension,
       centerOfMass: _centerOfMass,
+      springRestLength: _springRestLength,
+      springStiffness: _springStiffness,
+      dampingCompression: _dampingCompression,
+      steerAngle: _steerAngle,
+      wheelRadius: _assignedWheels['FL']?.radius ?? 0.35,
+      chassisSize: _parsedModel?.worldBBox.size,
+      godotArchitecture: _godotArchitecture,
       frontSteering: _frontSteering,
       rearSteering: _rearSteering,
       frontTraction: _frontTraction,
@@ -858,11 +870,27 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     );
   }
 
+  void _syncWheelsAfterModelTransform() {
+    if (!_scanCompleted || _parsedModel == null) return;
+    final detection = AutoDetector.detect(
+      _parsedModel!,
+      excludeRoofAntenna: _excludeRoofAntenna,
+    );
+    _detection = detection;
+    _mapDetectedWheels(detection.wheels);
+    _updateDetectedGroupsFromWheels(detection);
+    final effectiveWheels = _getEffectiveWheelPositions();
+    updateSketchfabWheelMarkers(effectiveWheels);
+    final wheelNames = detection.wheels.map((w) => w.nodeName).toList();
+    highlightSketchfabWheels(wheelNames);
+  }
+
   void _onRotateYaw(double angle) {
     setState(() {
       _ensureModel();
       _parsedModel!.rotateYaw(angle);
       SolidScene.invalidate(_parsedModel!);
+      _syncWheelsAfterModelTransform();
       _viewportUpdateEpoch++;
     });
     rotateSketchfabModel(angle);
@@ -874,6 +902,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _ensureModel();
       _parsedModel!.flipFrontBack();
       SolidScene.invalidate(_parsedModel!);
+      _syncWheelsAfterModelTransform();
       _viewportUpdateEpoch++;
     });
     flipSketchfabModel();
@@ -885,6 +914,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _ensureModel();
       _parsedModel!.snapToGround();
       SolidScene.invalidate(_parsedModel!);
+      _syncWheelsAfterModelTransform();
       _viewportUpdateEpoch++;
     });
     snapSketchfabModelToGround();
@@ -896,6 +926,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _ensureModel();
       _parsedModel!.normalizeForRiggingInPlace(targetFootprint: targetLength);
       SolidScene.invalidate(_parsedModel!);
+      _syncWheelsAfterModelTransform();
       _viewportUpdateEpoch++;
     });
     scaleSketchfabModel(targetLength);
@@ -949,6 +980,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _detection = detection;
       _selectedBodyNodeIndex = detection.body?.nodeIndex;
       _drive = detection.suggestedDrive;
+      _frontTraction = _drive == 'AWD' || _drive == 'FWD';
+      _rearTraction = _drive == 'AWD' || _drive == 'RWD';
       _isScanningWheels = false;
       _scanStage = 4;
       _scanCompleted = true;
@@ -1739,6 +1772,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         });
       },
       onPreviewAudioSlot: (slotId) {
+        final slot = _audioSlots.firstWhere(
+          (s) => s.id == slotId,
+          orElse: () => _audioSlots.first,
+        );
+        playSketchfabAudioPreview(slotId, slot.pitchMultiplier);
         _showMessage('Playing acoustic preview for $slotId');
       },
       onGodotArchitectureChanged: (arch) => setState(() => _godotArchitecture = arch),

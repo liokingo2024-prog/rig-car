@@ -75,6 +75,22 @@ class _RigHomeScreenState extends State<RigHomeScreen> {
       );
   }
 
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFleet() {
+    _scrollController.animateTo(
+      380.0,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,6 +110,7 @@ class _RigHomeScreenState extends State<RigHomeScreen> {
               // ── Main Content Area ─────────────────────────────────────────
               Expanded(
                 child: SingleChildScrollView(
+                  controller: _scrollController,
                   padding: EdgeInsets.fromLTRB(
                     isDesktop ? 42 : 18,
                     28,
@@ -107,6 +124,7 @@ class _RigHomeScreenState extends State<RigHomeScreen> {
                       _HeroBanner(
                         isDesktop: isDesktop,
                         onRigYourCar: () => _openWorkbench(),
+                        onBrowseFleet: _scrollToFleet,
                       ),
                       const SizedBox(height: 36),
 
@@ -190,6 +208,37 @@ class _RigHomeScreenState extends State<RigHomeScreen> {
                           ],
                         ],
                       ),
+                      if (!isDesktop) ...[
+                        const SizedBox(height: 14),
+                        TextField(
+                          onChanged: (val) {
+                            setState(() => _searchQuery = val);
+                          },
+                          style: const TextStyle(fontSize: 12),
+                          decoration: InputDecoration(
+                            hintText: 'Search fleet...',
+                            hintStyle: const TextStyle(
+                              color: Color(0xFF6E7681),
+                              fontSize: 12,
+                            ),
+                            prefixIcon: const Icon(
+                              Icons.search_rounded,
+                              size: 16,
+                              color: Color(0xFF86978C),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                color: Color(0xFF223127),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 20),
 
                       // Category Filters Bar
@@ -232,7 +281,7 @@ class _HomeNavbar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24 : 12),
       decoration: const BoxDecoration(
         color: Color(0xFF111714),
         border: Border(bottom: BorderSide(color: Color(0xFF223127))),
@@ -328,9 +377,14 @@ class _HomeNavbar extends StatelessWidget {
 // ── Hero Banner ─────────────────────────────────────────────────────────────
 
 class _HeroBanner extends StatelessWidget {
-  const _HeroBanner({required this.isDesktop, required this.onRigYourCar});
+  const _HeroBanner({
+    required this.isDesktop,
+    required this.onRigYourCar,
+    this.onBrowseFleet,
+  });
   final bool isDesktop;
   final VoidCallback onRigYourCar;
+  final VoidCallback? onBrowseFleet;
 
   @override
   Widget build(BuildContext context) {
@@ -358,13 +412,16 @@ class _HeroBanner extends StatelessWidget {
               children: [
                 Icon(Icons.tune_rounded, size: 12, color: Color(0xFF10B981)),
                 SizedBox(width: 6),
-                Text(
-                  'Godot 4 Vehicle Rigging & Simulation Toolkit',
-                  style: TextStyle(
-                    color: Color(0xFFD1FAE5),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.3,
+                Flexible(
+                  child: Text(
+                    'Godot 4 Vehicle Rigging & Simulation Toolkit',
+                    style: TextStyle(
+                      color: Color(0xFFD1FAE5),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
@@ -447,7 +504,7 @@ class _HeroBanner extends StatelessWidget {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: onBrowseFleet,
                 icon: const Icon(Icons.view_in_ar_rounded, size: 18),
                 label: const Text('Browse 6 Pre-Rigged Rigs ↓'),
                 style: OutlinedButton.styleFrom(

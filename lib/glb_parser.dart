@@ -3,6 +3,8 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:archive/archive.dart';
+
 import 'model_data.dart';
 
 // ── GLB / glTF Binary Parser ────────────────────────────────────────────────
@@ -63,7 +65,8 @@ class GlbParser {
     if (lower.endsWith('.gltf') || _isGltfJson(bytes)) {
       try {
         final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-        return _build(fileName, json, null);
+        final bin = _extractEmbeddedGltfBin(json);
+        return _build(fileName, json, bin);
       } catch (_) {}
     }
 
@@ -97,7 +100,8 @@ class GlbParser {
     if (lower.endsWith('.gltf') || _isGltfJson(bytes)) {
       try {
         final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-        return _build(fileName, json, null);
+        final bin = _extractEmbeddedGltfBin(json);
+        return _build(fileName, json, bin);
       } catch (_) {}
     }
 
@@ -140,11 +144,31 @@ class GlbParser {
     return sample.startsWith('solid');
   }
 
+  static Uint8List? _extractEmbeddedGltfBin(Map<String, dynamic> json) {
+    try {
+      final buffers = json['buffers'];
+      if (buffers is List && buffers.isNotEmpty) {
+        final firstBuf = buffers.first;
+        if (firstBuf is Map) {
+          final uri = firstBuf['uri'] as String?;
+          if (uri != null && uri.startsWith('data:')) {
+            final comma = uri.indexOf(',');
+            if (comma != -1) {
+              final b64 = uri.substring(comma + 1).trim();
+              return base64Decode(b64);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   static void _addEdgeToSet(List<Edge> edges, Set<int> edgeSet, int a, int b) {
     if (a == b) return;
     final minIdx = a < b ? a : b;
     final maxIdx = a > b ? a : b;
-    final key = (minIdx << 16) | maxIdx;
+    final key = minIdx * 10000000 + maxIdx;
     if (edgeSet.add(key)) {
       edges.add(Edge(minIdx, maxIdx));
     }
@@ -391,29 +415,15 @@ class GlbParser {
   }
 
   static ParsedModel _parseZipSync(String fileName, Uint8List bytes) {
-    var offset = 0;
-    String? bestModelName;
-    Uint8List? bestModelBytes;
-    var bestScore = -1;
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      String? bestModelName;
+      Uint8List? bestModelBytes;
+      var bestScore = -1;
 
-    final data = ByteData.sublistView(bytes);
-
-    while (offset + 30 <= bytes.length) {
-      final sig = data.getUint32(offset, Endian.little);
-      if (sig != 0x04034B50) break;
-
-      final method = data.getUint16(offset + 8, Endian.little);
-      final compSize = data.getUint32(offset + 18, Endian.little);
-      final nameLen = data.getUint16(offset + 26, Endian.little);
-      final extraLen = data.getUint16(offset + 28, Endian.little);
-
-      final nameStart = offset + 30;
-      if (nameStart + nameLen > bytes.length) break;
-      final entryName = utf8.decode(bytes.sublist(nameStart, nameStart + nameLen), allowMalformed: true);
-      final dataStart = nameStart + nameLen + extraLen;
-
-      if (dataStart + compSize <= bytes.length && method == 0) {
-        final entryBytes = bytes.sublist(dataStart, dataStart + compSize);
+      for (final file in archive) {
+        if (!file.isFile) continue;
+        final entryName = file.name;
         final low = entryName.toLowerCase();
         var score = 0;
         if (low.endsWith('.glb')) {
@@ -429,18 +439,19 @@ class GlbParser {
         }
 
         if (score > bestScore) {
-          bestScore = score;
-          bestModelName = entryName.split('/').last;
-          bestModelBytes = entryBytes;
+          final Uint8List entryBytes = file.content;
+          if (entryBytes.isNotEmpty) {
+            bestScore = score;
+            bestModelName = entryName.split('/').last;
+            bestModelBytes = entryBytes;
+          }
         }
       }
 
-      offset = dataStart + compSize;
-    }
-
-    if (bestModelBytes != null && bestModelName != null) {
-      return parseSync(bestModelName, bestModelBytes);
-    }
+      if (bestModelBytes != null && bestModelName != null) {
+        return parseSync(bestModelName, bestModelBytes);
+      }
+    } catch (_) {}
 
     return _createFallbackVehicle(fileName, bytes: bytes);
   }

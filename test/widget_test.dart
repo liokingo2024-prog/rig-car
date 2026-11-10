@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/auto_detector.dart';
 import 'package:rig_car/file_picker_stub.dart';
 import 'package:rig_car/glb_parser.dart';
+import 'package:rig_car/home_screen.dart';
 import 'package:rig_car/main.dart';
 import 'package:rig_car/model_data.dart';
 import 'package:rig_car/physics_sim.dart';
@@ -2020,7 +2023,7 @@ endsolid sports_car''';
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(MaterialApp(home: RigWorkbenchPage(initialCar: preRiggedCars.first)));
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
       await tester.pump(const Duration(milliseconds: 100));
 
       // Navigate to Step 2: Scan & Organize
@@ -3044,7 +3047,7 @@ f 4 5 6
       expect(roofAntennaCheckbox, findsOneWidget);
 
       // Tap the checkbox to toggle it
-      await tester.tap(roofAntennaCheckbox);
+      await tester.tap(roofAntennaCheckbox, warnIfMissed: false);
       await tester.pump(const Duration(milliseconds: 100));
 
       // Navigate to Step 2: Scan & Organize via Sidebar
@@ -3073,6 +3076,225 @@ f 4 5 6
 
       // Groups list and toggle buttons (Flaw 6)
       expect(find.text('Outer Tires + Rims (4 corners · Grounded)'), findsWidgets);
+    });
+
+    testWidgets('Part II Flaws 11 & 17C: Pre-rigged cars initialize scanned and Step 1 transforms sync wheels', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(MaterialApp(home: RigWorkbenchPage(initialCar: preRiggedCars.first)));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Flaw 17C: Pre-rigged car immediately unlocks Step 3 without manual re-scan
+      await tester.tap(find.text('Add Physics').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('HANDLING PRESETS'), findsOneWidget);
+
+      // Flaw 11: Step 1 transform tools sync wheels
+      await tester.tap(find.text('Upload Vehicle').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Expand Vehicle Details & Tools'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.ensureVisible(find.text('Rotate +90° Yaw'));
+      await tester.tap(find.text('Rotate +90° Yaw'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('Rotated vehicle model by 90°'), findsOneWidget);
+    });
+
+    test('Part II Flaws 12 & 14: RigConfig exports physics parameters, dynamic collision box, audio and raycast architecture', () {
+      final stdConfig = RigConfig(
+        modelName: 'Apex_GT.glb',
+        presetName: 'sport',
+        drive: 'RWD',
+        mass: 1450,
+        engineForce: 480,
+        grip: 2.2,
+        suspension: 6.2,
+        centerOfMass: 0.32,
+        springRestLength: 0.18,
+        springStiffness: 42.0,
+        dampingCompression: 2.4,
+        steerAngle: 36.0,
+        wheelRadius: 0.34,
+        chassisSize: const Vec3(1.9, 0.7, 4.4),
+        godotArchitecture: 'standard',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: false,
+        rearTraction: true,
+      );
+
+      final stdTscn = stdConfig.toTscn();
+      expect(stdTscn, contains('type="VehicleBody3D"'));
+      expect(stdTscn, contains('center_of_mass_mode = 1'));
+      expect(stdTscn, contains('center_of_mass = Vector3(0, 0.320, 0)'));
+      expect(stdTscn, contains('size = Vector3(1.900, 0.700, 4.400)'));
+      expect(stdTscn, contains('use_as_traction = false'));
+      expect(stdTscn, contains('use_as_traction = true'));
+      expect(stdTscn, contains('type="AudioStreamPlayer3D"'));
+      expect(stdTscn, contains('path="res://Apex_GT.glb"'));
+
+      final stdGd = stdConfig.toGdScript();
+      expect(stdGd, contains('extends VehicleBody3D'));
+      expect(stdGd, contains('max_steering_angle: float = 0.628'));
+
+      final rayConfig = RigConfig(
+        modelName: 'Apex_GT.glb',
+        presetName: 'drift',
+        drive: 'AWD',
+        mass: 1250,
+        engineForce: 550,
+        grip: 1.4,
+        suspension: 5.0,
+        centerOfMass: 0.28,
+        springRestLength: 0.15,
+        springStiffness: 48.0,
+        dampingCompression: 2.0,
+        steerAngle: 44.0,
+        wheelRadius: 0.35,
+        chassisSize: const Vec3(1.8, 0.6, 4.2),
+        godotArchitecture: 'raycast',
+        frontSteering: true,
+        rearSteering: true,
+        frontTraction: true,
+        rearTraction: true,
+      );
+
+      final rayTscn = rayConfig.toTscn();
+      expect(rayTscn, contains('type="RigidBody3D"'));
+      expect(rayTscn, contains('type="RayCast3D"'));
+      expect(rayTscn, contains('type="AudioStreamPlayer3D"'));
+
+      final rayGd = rayConfig.toGdScript();
+      expect(rayGd, contains('extends RigidBody3D'));
+      expect(rayGd, contains('Raycast suspension & drive integration'));
+    });
+
+    test('Part II Flaw 15: Simulator physics skid marks at rear wheels, unreachable 6th gear fixed, and 4WS steering', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1400,
+        engineForce: 600,
+        grip: 1.8,
+        suspension: 6.0,
+        centerOfMass: 0.3,
+        drive: 'RWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: false,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.85, 0.35, -1.35),
+          Vec3(0.85, 0.35, -1.35),
+          Vec3(-0.85, 0.35, 1.35),
+          Vec3(0.85, 0.35, 1.35),
+        ],
+      );
+
+      // Accelerate forward along -Z
+      for (var i = 0; i < 70; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      }
+      expect(sim.speedKmh, greaterThan(18.0));
+
+      // Flaw 15A: Skid marks at rear wheels (Z > position.z in Godot convention where +Z is rear)
+      sim.step(0.02, throttleInput: 0.0, steerInput: 0.0, handbrake: true);
+      expect(sim.leftSkidMarks, isNotEmpty);
+      expect(sim.rightSkidMarks, isNotEmpty);
+      expect(sim.leftSkidMarks.last.pos.z, greaterThan(sim.position.z));
+
+      // Flaw 15C: 6th gear accessible for high speed
+      sim.velocity = sim.forwardVector * (195.0 / 3.6);
+      sim.step(0.05, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      expect(sim.currentGear, 6);
+
+      // Flaw 15B: 4WS steering works when rearSteering is enabled
+      final sim4ws = VehiclePhysicsSimulation(
+        mass: 1400,
+        engineForce: 500,
+        grip: 1.8,
+        suspension: 6.0,
+        centerOfMass: 0.3,
+        drive: 'AWD',
+        frontSteering: false,
+        rearSteering: true,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.85, 0.35, -1.35),
+          Vec3(0.85, 0.35, -1.35),
+          Vec3(-0.85, 0.35, 1.35),
+          Vec3(0.85, 0.35, 1.35),
+        ],
+      );
+      sim4ws.velocity = sim4ws.forwardVector * 10.0;
+      sim4ws.step(0.1, throttleInput: 1.0, steerInput: 1.0, handbrake: false);
+      expect(sim4ws.yawRate.abs(), greaterThan(0.0));
+    });
+
+    test('Part II Flaw 16: GlbParser with DEFLATE zip decompression and glTF embedded buffer', () {
+      // 16A: DEFLATE zip archive
+      final archive = Archive();
+      const objContent = 'o TestCar\nv 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n';
+      final fileData = utf8.encode(objContent);
+      archive.addFile(ArchiveFile('test_car.obj', fileData.length, fileData));
+      final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive));
+
+      final parsedZip = GlbParser.parseSync('archive_model.zip', zipBytes);
+      expect(parsedZip.nodes, isNotEmpty);
+      expect(parsedZip.worldBBox.size.x, greaterThan(0.0));
+
+      // 16C: glTF with embedded base64 data buffer
+      final rawFloats = Float32List.fromList([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+      final b64Buffer = base64Encode(rawFloats.buffer.asUint8List());
+      final gltfJson = {
+        'asset': {'version': '2.0'},
+        'buffers': [
+          {'byteLength': rawFloats.lengthInBytes, 'uri': 'data:application/octet-stream;base64,$b64Buffer'}
+        ],
+        'bufferViews': [
+          {'buffer': 0, 'byteOffset': 0, 'byteLength': rawFloats.lengthInBytes}
+        ],
+        'accessors': [
+          {'bufferView': 0, 'byteOffset': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3', 'max': [1, 1, 0], 'min': [0, 0, 0]}
+        ],
+        'meshes': [
+          {
+            'primitives': [
+              {'attributes': {'POSITION': 0}}
+            ]
+          }
+        ],
+        'nodes': [
+          {'mesh': 0, 'name': 'Embedded_Body'}
+        ],
+        'scenes': [
+          {'nodes': [0]}
+        ]
+      };
+      final parsedGltf = GlbParser.parseSync('embedded.gltf', utf8.encode(jsonEncode(gltfJson)));
+      expect(parsedGltf.nodes, isNotEmpty);
+      expect(parsedGltf.nodes.first.name, 'Embedded_Body');
+    });
+
+    testWidgets('Part II Flaw 17: Home screen search and Browse Pre-Rigged Rigs button', (tester) async {
+      tester.view.physicalSize = const Size(720, 1000); // Tablet / Mobile layout
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: RigHomeScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 17B: Mobile search field visible when !isDesktop
+      expect(find.byType(TextField), findsOneWidget);
+
+      // 17A: Tap "Browse 6 Pre-Rigged Rigs ↓"
+      final browseButton = find.text('Browse 6 Pre-Rigged Rigs ↓');
+      expect(browseButton, findsOneWidget);
+      await tester.tap(browseButton);
+      await tester.pump(const Duration(milliseconds: 600));
     });
   });
 }

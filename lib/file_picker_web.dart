@@ -45,3 +45,18 @@ Future<PickedFile?> pickModelFile() async {
 
   return PickedFile(file.name, bytes);
 }
+
+Future<PickedFile?> pickAudioFile() async {
+  if (mockPickedFileForTest != null) {
+    return mockPickedFileForTest;
+  }
+  final input = html.FileUploadInputElement()
+    ..accept = '.wav,.ogg,.mp3,.flac';
+  input.click();
+  await input.onChange.first;
+  final files = input.files;
+  if (files == null || files.isEmpty) return null;
+
+  final file = files.first;
+  return PickedFile(file.name, Uint8List(0));
+}
