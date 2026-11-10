@@ -598,7 +598,7 @@ class ParsedModel {
 
     final chassisMesh = MeshData(
       index: 0,
-      name: 'Chassis',
+      name: 'Body',
       vertices: bodyPoints,
       edges: bodyEdges,
       triangles: bodyTriangles,
@@ -607,7 +607,7 @@ class ParsedModel {
 
     final chassisNode = SceneNode(
       index: 0,
-      name: 'Chassis',
+      name: 'Body',
       localTransform: Mat4.identity(),
       meshIndex: 0,
       childIndices: const [],

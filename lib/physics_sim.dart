@@ -219,30 +219,34 @@ class VehiclePhysicsSimulation {
     final maxLateralAccel = maxCorneringG * 9.81;
 
     // Check drift condition (handbrake or exceeding grip threshold)
-    final gripFactor = handbrake ? 0.28 : grip;
     final isHandbrakeActive = handbrake;
+    final gripFactor = isHandbrakeActive ? 0.30 : grip;
 
     // Lateral slip calculation
     final theoreticalLatAccel = longSpeed * yawRate;
     lateralG = theoreticalLatAccel / 9.81;
     longitudinalG = (totalForwardThrust / mass) / 9.81;
 
-    final lateralSlipMagnitude =
-        (latSpeed.abs() + (isHandbrakeActive ? 3.0 : 0.0)) /
-            (maxLateralAccel + 0.1);
-    isDrifting = (lateralSlipMagnitude > 0.45 && speedKmh > 12) ||
-        (isHandbrakeActive && speedKmh > 8);
+    // Relative lateral slip ratio against tire adhesion limit
+    final gripLimit = maxLateralAccel.clamp(4.0, 25.0);
+    final slipRatio = (latSpeed.abs() + (isHandbrakeActive ? 3.5 : 0.0)) / gripLimit;
+    final lateralSlipMagnitude = slipRatio.clamp(0.0, 1.0);
+
+    // Realistic drift trigger: handbrake pull or hard powerslide exceeding tire traction limit
+    isDrifting = (isHandbrakeActive && speedKmh > 8) ||
+        (slipRatio > 0.90 && speedKmh > 30);
 
     // Update individual wheel slip telemetry
     for (var i = 0; i < 4; i++) {
       final isRear = i >= 2;
-      var slip = lateralSlipMagnitude * (isRear && isHandbrakeActive ? 2.5 : 1.0);
-      if (brakeForce > 200) slip += 0.3;
+      var slip = isDrifting ? 0.80 : (lateralSlipMagnitude * 0.40);
+      if (isRear && isHandbrakeActive) slip = 1.0;
+      if (brakeForce > 200 && speedKmh > 10) slip += 0.25;
       wheelSlips[i] = slip.clamp(0.0, 1.0);
     }
 
-    // Yaw dynamics with drifting inertia
-    final yawDamping = isDrifting ? 1.8 : 5.5;
+    // Yaw dynamics with tight sports car steering authority
+    final yawDamping = isDrifting ? 3.5 : 8.0;
     final yawTorque = (targetYawRate - yawRate) * (yawDamping * (gripFactor / 1.0));
     yawRate += yawTorque * dt;
     yaw += yawRate * dt;
@@ -258,9 +262,10 @@ class VehiclePhysicsSimulation {
 
     final longAccel = totalNetLongForce / mass;
 
-    // Lateral force opposing slide
+    // Lateral tire grip force opposing slide (22.0 = solid sports-car road holding; 7.0 = controlled drift)
+    final lateralDamping = isDrifting ? 7.0 : 22.0;
     final lateralResistanceForce =
-        -latSpeed * mass * (gripFactor * (isDrifting ? 2.5 : 6.0));
+        -latSpeed * mass * (gripFactor * lateralDamping);
     final latAccel = lateralResistanceForce / mass;
 
     // 8. Integrate Linear Velocity & Position

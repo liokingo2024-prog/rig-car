@@ -215,6 +215,11 @@ class _Source {
               combinedName.contains('wnd') ||
               combinedName.contains('gls'));
 
+      // Ensure that a mesh spanning a large portion of the car's height or length
+      // is recognized as the car body, never underbody chassis
+      final isMainBodyScale = bb.size.y > 0.40 * modelHeight ||
+          bb.size.z > 0.55 * modelLength;
+
       int kind = solidKindBody;
       if (hasWheelName || isGeometricWheel) {
         kind = solidKindWheel;
@@ -228,7 +233,7 @@ class _Source {
         kind = solidKindInterior;
       } else if (hasTrimName) {
         kind = solidKindTrim;
-      } else if (hasChassisName || isGeometricChassis) {
+      } else if ((hasChassisName || isGeometricChassis) && !isMainBodyScale) {
         kind = solidKindChassis;
       }
 

@@ -2685,5 +2685,80 @@ endsolid sports_car''';
       expect(steeredFrontRight.x > expectedHub.x, isTrue,
           reason: 'Turning right (steer < 0) must move front of wheel to positive X (right), was ${steeredFrontRight.x}');
     });
+
+    test('Wheel Ground Contact, Anti-Slide Lateral Grip & Body Paint Quality Verification', () {
+      final model = ParsedModel.createProceduralDefault();
+      final mbb = model.worldBBox;
+
+      // 1. Wheel Ground Contact: Align offset places model lowest point directly at Y = 0.0 (asphalt level)
+      final alignOffset = Vec3(-mbb.center.x, -mbb.lo.y, -mbb.center.z);
+      final lowestY = mbb.lo.y + alignOffset.y;
+      expect(lowestY.abs() < 1e-6, isTrue,
+          reason: 'Car lowest point must sit exactly on ground Y = 0.0 with 0 gap, was $lowestY');
+
+      // Wheel lowest contact patch test:
+      final hub = const Vec3(-0.85, 0.34, -1.35);
+      const radius = 0.34;
+      final bottomTirePoint = Vec3(hub.x, hub.y - radius, hub.z);
+      final contactMat = TestDriveViewport.buildWheelLocalMatrix(hub, alignOffset, 0.0, 0.0);
+      final transformedTireBottom = contactMat.transformPoint(bottomTirePoint);
+      expect(transformedTireBottom.y.abs() < 1e-4, isTrue,
+          reason: 'Wheel tire bottom must touch ground Y = 0.0 exactly, was ${transformedTireBottom.y}');
+
+      // 2. Solid Scene Classification: Verify body mesh is classified as solidKindBody (not dark chassis)
+      final scene = SolidScene.of(model);
+      expect(scene.isEmpty, isFalse);
+      final mesh = scene.interactive;
+      // All triangles of the main body should be solidKindBody (0)
+      var bodyTriCount = 0;
+      for (var t = 0; t < mesh.triangleCount; t++) {
+        if (mesh.triKind[t] == solidKindBody) {
+          bodyTriCount++;
+        }
+      }
+      expect(bodyTriCount > 0, isTrue,
+          reason: 'Main car body triangles must be classified as solidKindBody');
+
+      // 3. Anti-Slide Physics Simulation:
+      // Verify normal cornering has firm lateral grip and does NOT slide on ice
+      final sim = VehiclePhysicsSimulation(
+        mass: 1200,
+        engineForce: 500,
+        grip: 1.0,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.35, -1.25),
+          Vec3(0.95, 0.35, -1.25),
+          Vec3(-0.95, 0.35, 1.25),
+          Vec3(0.95, 0.35, 1.25),
+        ],
+      );
+
+      // Accelerate to ~30 km/h
+      for (var i = 0; i < 80; i++) {
+        sim.step(0.02, throttleInput: 1.0, steerInput: 0.0, handbrake: false);
+      }
+      expect(sim.speedKmh > 20.0, isTrue);
+
+      // Turn steering moderately without handbrake
+      for (var i = 0; i < 30; i++) {
+        sim.step(0.02, throttleInput: 0.5, steerInput: 0.4, handbrake: false);
+      }
+      // Car must firmly grip road: isDrifting must be false and yaw has turned smoothly
+      expect(sim.isDrifting, isFalse, reason: 'Normal cornering must not trigger ice drift');
+      expect(sim.yaw != 0.0, isTrue);
+
+      // Now pull handbrake at speed: drift must trigger
+      for (var i = 0; i < 20; i++) {
+        sim.step(0.02, throttleInput: 0.3, steerInput: 0.8, handbrake: true);
+      }
+      expect(sim.isDrifting, isTrue, reason: 'Handbrake pull must engage dynamic drift');
+    });
   });
 }

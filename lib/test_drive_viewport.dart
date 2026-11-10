@@ -3296,7 +3296,7 @@ class _TestDriveScenePainter extends CustomPainter {
     if (triCount == 0) return;
 
     final mbb = model!.worldBBox;
-    final alignOffset = Vec3(-mbb.center.x, -mbb.lo.y + 0.05, -mbb.center.z);
+    final alignOffset = Vec3(-mbb.center.x, -mbb.lo.y, -mbb.center.z);
     final alignMatrix = Mat4([
       1, 0, 0, 0,
       0, 1, 0, 0,
@@ -3511,16 +3511,17 @@ class _TestDriveScenePainter extends CustomPainter {
     final visColor = mesh.visColor;
     final visDepth = mesh.visDepth;
 
+    final bodyPaintRgb = accentColor.toARGB32();
     final kindColors = <int>[
-      0xFFD6DBDF, // 0: solidKindBody
-      0xCC162832, // 1: solidKindGlass
-      0xFF191C1E, // 2: solidKindWheel
-      0xFFC8D1D7, // 3: solidKindRim
-      0xFF1F2327, // 4: solidKindInterior
-      0xFF202428, // 5: solidKindTrim
-      0xFFE8F4FC, // 6: solidKindHeadlight
-      0xFFDC2626, // 7: solidKindTaillight
-      0xFF181A1C, // 8: solidKindChassis
+      bodyPaintRgb, // 0: solidKindBody
+      0xCC162832,   // 1: solidKindGlass
+      0xFF1E2225,   // 2: solidKindWheel
+      0xFFCBD5E1,   // 3: solidKindRim
+      0xFF1F2327,   // 4: solidKindInterior
+      0xFF202428,   // 5: solidKindTrim
+      0xFFE8F4FC,   // 6: solidKindHeadlight
+      0xFFDC2626,   // 7: solidKindTaillight
+      0xFF181A1C,   // 8: solidKindChassis
     ];
 
     var visCount = 0;
@@ -3574,15 +3575,20 @@ class _TestDriveScenePainter extends CustomPainter {
       final ez = toEyeZ * invEye;
 
       final materialColor = triColor[t];
+      final kind = triKind[t];
+      final nodeIdx = triNode[t];
+      final isBodyNode = nonWheelNodes.contains(nodeIdx);
+
       final int base;
       if (materialColor != 0) {
         base = materialColor;
       } else {
-        final kind = triKind[t];
-        if (kind < kindColors.length) {
+        if (kind == solidKindBody || (isBodyNode && kind == solidKindChassis)) {
+          base = bodyPaintRgb;
+        } else if (kind < kindColors.length) {
           base = kindColors[kind];
         } else {
-          base = 0xFFD6DBDF;
+          base = bodyPaintRgb;
         }
       }
 
@@ -3608,7 +3614,7 @@ class _TestDriveScenePainter extends CustomPainter {
       if (diffuse < 0.25) diffuse = 0.25;
       if (diffuse > 1.05) diffuse = 1.05;
 
-      // Specular highlight
+      // Specular highlight with clearcoat luster on vehicle body
       final hx = keyL.x + ex, hy = keyL.y + ey, hz = keyL.z + ez;
       final hLenSq = hx * hx + hy * hy + hz * hz;
       var specKey = 0.0;
@@ -3621,7 +3627,8 @@ class _TestDriveScenePainter extends CustomPainter {
           final s8 = s4 * s4;
           final s16 = s8 * s8;
           final s32 = s16 * s16;
-          specKey = s32 * 0.35;
+          final isBody = (kind == solidKindBody || (isBodyNode && kind == solidKindChassis));
+          specKey = s32 * (isBody ? 0.45 : 0.30);
         }
       }
 
@@ -4178,7 +4185,7 @@ class _TestDriveScenePainter extends CustomPainter {
   ) {
     final modelCenter = model!.worldBBox.center;
     final modelBottom = model!.worldBBox.lo.y;
-    final alignOffset = Vec3(-modelCenter.x, -modelBottom + 0.05, -modelCenter.z);
+    final alignOffset = Vec3(-modelCenter.x, -modelBottom, -modelCenter.z);
 
     final alignMatrix = Mat4([
       1, 0, 0, 0,
