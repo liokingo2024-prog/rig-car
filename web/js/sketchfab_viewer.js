@@ -1893,7 +1893,10 @@
         subMeshCount: cornerMeshList.length,
         meshes: cornerMeshList,
         spinMeshes: spinMeshes,
-        caliperHubMeshes: caliperHubMeshes
+        caliperHubMeshes: caliperHubMeshes,
+        partNames: cornerMeshList.map(m => m.name || '').filter(Boolean),
+        spinPartNames: spinMeshes.map(m => m.name || '').filter(Boolean),
+        caliperHubPartNames: caliperHubMeshes.map(m => m.name || '').filter(Boolean)
       };
     });
 

@@ -913,7 +913,17 @@ class AutoDetector {
     for (final node in model.nodes) {
       if (existingIndices.contains(node.index)) continue;
       if (node.meshIndex == null) continue;
-      final nodeCenter = _nodeWorldBounds(model, node).center;
+      final bounds = _nodeWorldBounds(model, node);
+      final s = bounds.size;
+      final maxDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+      // Exclude chassis, floor pan, or body nodes from fallback wheel pairs
+      if (s.z.abs() > bbox.size.z.abs() * 0.45 ||
+          s.x.abs() > bbox.size.x.abs() * 0.48 ||
+          s.y.abs() > bbox.size.y.abs() * 0.70 ||
+          maxDim > max(bbox.size.z.abs(), bbox.size.x.abs()) * 0.45) {
+        continue;
+      }
+      final nodeCenter = bounds.center;
       if (nodeCenter.y <= lowY) {
         lows.add(node);
       }

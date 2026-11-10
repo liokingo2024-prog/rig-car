@@ -321,11 +321,164 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         worldPosition: AutoDetector.worldCenterForNode(_parsedModel!, node),
         confidence: 1.0, // Human confirmed
         meshIndex: node.meshIndex,
+        partNodeIndices: [node.index],
+        spinNodeIndices: [node.index],
         axle: axle,
         side: side,
       );
       _selectedNodeIndex = node.index;
     });
+  }
+
+  void _syncJsAndAutoWheels(dynamic jsResult, DetectionResult detection) {
+    _mapDetectedWheels(detection.wheels);
+
+    if (jsResult != null) {
+      try {
+        final jsWheels = jsResult['wheels'];
+        if (jsWheels != null) {
+          final bodyNodeIdx = detection.body?.nodeIndex;
+          final model = _parsedModel;
+          final nonWheelNodes = <int>{};
+          if (bodyNodeIdx != null) nonWheelNodes.add(bodyNodeIdx);
+          if (model != null) {
+            final carBox = model.worldBBox;
+            final carLen = max(carBox.size.z.abs(), carBox.size.x.abs());
+            final carW = min(carBox.size.z.abs(), carBox.size.x.abs());
+            final carH = carBox.size.y.abs();
+            for (final inst in model.instances) {
+              final s = inst.worldBBox.size;
+              final maxDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+              if (s.z.abs() > carLen * 0.45 ||
+                  s.x.abs() > carW * 0.48 ||
+                  s.y.abs() > carH * 0.70 ||
+                  maxDim > carLen * 0.45) {
+                nonWheelNodes.add(inst.nodeIndex);
+              }
+            }
+          }
+
+          for (final corner in ['FL', 'FR', 'RL', 'RR']) {
+            final cornerData = jsWheels[corner];
+            if (cornerData != null) {
+              final existing = _assignedWheels[corner];
+              final r = (cornerData['radius'] as num?)?.toDouble() ?? existing?.radius ?? 0.34;
+              final w = (cornerData['width'] as num?)?.toDouble() ?? existing?.width ?? 0.25;
+              final smc = (cornerData['subMeshCount'] as num?)?.toInt() ?? existing?.subMeshCount ?? 1;
+              final cName = cornerData['name'] as String? ?? existing?.nodeName ?? 'Wheel_$corner';
+              final cx = (cornerData['x'] as num?)?.toDouble();
+              final cy = (cornerData['y'] as num?)?.toDouble();
+              final cz = (cornerData['z'] as num?)?.toDouble();
+              final hubPos = (cx != null && cy != null && cz != null)
+                  ? Vec3(cx, cy, cz)
+                  : (existing?.worldPosition ?? Vec3.zero);
+
+              final jsPartNames = (cornerData['partNames'] as List<dynamic>?)
+                  ?.map((e) => e.toString().toLowerCase())
+                  .toSet() ?? const <String>{};
+              final jsSpinNames = (cornerData['spinPartNames'] as List<dynamic>?)
+                  ?.map((e) => e.toString().toLowerCase())
+                  .toSet() ?? const <String>{};
+              final jsCaliperNames = (cornerData['caliperHubPartNames'] as List<dynamic>?)
+                  ?.map((e) => e.toString().toLowerCase())
+                  .toSet() ?? const <String>{};
+
+              final resolvedPartNodes = <int>{};
+              final resolvedSpinNodes = <int>{};
+              final resolvedCaliperNodes = <int>{};
+
+              if (existing != null) {
+                resolvedPartNodes.addAll(existing.partNodeIndices);
+                resolvedSpinNodes.addAll(existing.spinNodeIndices);
+                resolvedCaliperNodes.addAll(existing.caliperHubNodeIndices);
+              }
+
+              if (model != null) {
+                for (final node in model.nodes) {
+                  if (nonWheelNodes.contains(node.index)) continue;
+                  final nName = node.name.toLowerCase();
+                  if (jsSpinNames.contains(nName)) {
+                    resolvedSpinNodes.add(node.index);
+                    resolvedPartNodes.add(node.index);
+                  } else if (jsCaliperNames.contains(nName)) {
+                    resolvedCaliperNodes.add(node.index);
+                    resolvedPartNodes.add(node.index);
+                  } else if (jsPartNames.contains(nName)) {
+                    resolvedPartNodes.add(node.index);
+                  }
+                }
+
+                if (resolvedPartNodes.isEmpty && hubPos != Vec3.zero) {
+                  final carBox = model.worldBBox;
+                  final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
+                  for (final inst in model.instances) {
+                    if (nonWheelNodes.contains(inst.nodeIndex)) continue;
+                    final b = inst.worldBBox;
+                    final dLong = (fAxisIsZ ? (b.center.z - hubPos.z) : (b.center.x - hubPos.x)).abs();
+                    final dUp = (b.center.y - hubPos.y).abs();
+                    if (dLong <= r * 1.08 && dUp <= r * 1.08) {
+                      resolvedPartNodes.add(inst.nodeIndex);
+                      resolvedSpinNodes.add(inst.nodeIndex);
+                    }
+                  }
+                }
+              }
+
+              resolvedPartNodes.removeAll(nonWheelNodes);
+              resolvedSpinNodes.removeAll(nonWheelNodes);
+              resolvedCaliperNodes.removeAll(nonWheelNodes);
+
+              int primaryNodeIdx;
+              if (resolvedSpinNodes.isNotEmpty) {
+                primaryNodeIdx = resolvedSpinNodes.first;
+              } else if (resolvedPartNodes.isNotEmpty) {
+                primaryNodeIdx = resolvedPartNodes.first;
+              } else if (existing != null && !nonWheelNodes.contains(existing.nodeIndex)) {
+                primaryNodeIdx = existing.nodeIndex;
+              } else {
+                int? fallbackNode;
+                var closestDistSq = double.infinity;
+                if (model != null) {
+                  for (final inst in model.instances) {
+                    if (nonWheelNodes.contains(inst.nodeIndex)) continue;
+                    final d = inst.worldBBox.center - hubPos;
+                    final distSq = d.x * d.x + d.y * d.y + d.z * d.z;
+                    if (distSq < closestDistSq) {
+                      closestDistSq = distSq;
+                      fallbackNode = inst.nodeIndex;
+                    }
+                  }
+                }
+                primaryNodeIdx = fallbackNode ?? (existing?.nodeIndex ?? 1);
+              }
+
+              final axle = corner.startsWith('F') ? 'front' : 'rear';
+              final side = corner.endsWith('L') ? 'left' : 'right';
+
+              _assignedWheels[corner] = DetectedWheel(
+                nodeIndex: primaryNodeIdx,
+                nodeName: cName,
+                worldPosition: hubPos,
+                confidence: existing?.confidence ?? 0.95,
+                meshIndex: existing?.meshIndex,
+                partNodeIndices: resolvedPartNodes.toList(),
+                partIds: existing?.partIds ?? [],
+                spinNodeIndices: resolvedSpinNodes.toList(),
+                caliperHubNodeIndices: resolvedCaliperNodes.toList(),
+                axle: axle,
+                side: side,
+                radius: r,
+                width: w,
+                circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
+                subMeshCount: smc,
+              );
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error syncing jsResult wheels: $e');
+      }
+    }
   }
 
   void _selectBody(int? nodeIndex) {
@@ -664,51 +817,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
     final jsResult = detectSketchfabWheels();
     final detection = AutoDetector.detect(_parsedModel!);
-    _mapDetectedWheels(detection.wheels);
-
-    if (jsResult != null) {
-      try {
-        final jsWheels = jsResult['wheels'];
-        if (jsWheels != null) {
-          for (final corner in ['FL', 'FR', 'RL', 'RR']) {
-            final cornerData = jsWheels[corner];
-            if (cornerData != null) {
-              final existing = _assignedWheels[corner];
-              final r = (cornerData['radius'] as num?)?.toDouble();
-              final w = (cornerData['width'] as num?)?.toDouble();
-              final smc = (cornerData['subMeshCount'] as num?)?.toInt();
-              final cName = cornerData['name'] as String?;
-              final cx = (cornerData['x'] as num?)?.toDouble();
-              final cy = (cornerData['y'] as num?)?.toDouble();
-              final cz = (cornerData['z'] as num?)?.toDouble();
-              if (r != null && w != null) {
-                final axle = corner.startsWith('F') ? 'front' : 'rear';
-                final side = corner.endsWith('L') ? 'left' : 'right';
-                _assignedWheels[corner] = DetectedWheel(
-                  nodeIndex: existing?.nodeIndex ?? 0,
-                  nodeName: cName ?? existing?.nodeName ?? 'Wheel_$corner',
-                  worldPosition: (cx != null && cy != null && cz != null)
-                      ? Vec3(cx, cy, cz)
-                      : (existing?.worldPosition ?? Vec3.zero),
-                  confidence: existing?.confidence ?? 0.95,
-                  meshIndex: existing?.meshIndex,
-                  partNodeIndices: existing?.partNodeIndices ?? [],
-                  partIds: existing?.partIds ?? [],
-                  axle: axle,
-                  side: side,
-                  radius: r,
-                  width: w,
-                  circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
-                  subMeshCount: smc ?? existing?.subMeshCount ?? 1,
-                );
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('Error syncing jsResult wheels: $e');
-      }
-    }
+    _syncJsAndAutoWheels(jsResult, detection);
 
     setState(() {
       _detection = detection;
@@ -796,50 +905,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         groundTolRatio: groundTol,
         inboardTolRatio: 0.02,
       );
-      _mapDetectedWheels(detection.wheels);
-      if (jsResult != null) {
-        try {
-          final jsWheels = jsResult['wheels'];
-          if (jsWheels != null) {
-            for (final corner in ['FL', 'FR', 'RL', 'RR']) {
-              final cornerData = jsWheels[corner];
-              if (cornerData != null) {
-                final existing = _assignedWheels[corner];
-                final r = (cornerData['radius'] as num?)?.toDouble();
-                final w = (cornerData['width'] as num?)?.toDouble();
-                final smc = (cornerData['subMeshCount'] as num?)?.toInt();
-                final cName = cornerData['name'] as String?;
-                final cx = (cornerData['x'] as num?)?.toDouble();
-                final cy = (cornerData['y'] as num?)?.toDouble();
-                final cz = (cornerData['z'] as num?)?.toDouble();
-                if (r != null && w != null) {
-                  final axle = corner.startsWith('F') ? 'front' : 'rear';
-                  final side = corner.endsWith('L') ? 'left' : 'right';
-                  _assignedWheels[corner] = DetectedWheel(
-                    nodeIndex: existing?.nodeIndex ?? 0,
-                    nodeName: cName ?? existing?.nodeName ?? 'Wheel_$corner',
-                    worldPosition: (cx != null && cy != null && cz != null)
-                        ? Vec3(cx, cy, cz)
-                        : (existing?.worldPosition ?? Vec3.zero),
-                    confidence: existing?.confidence ?? 0.95,
-                    meshIndex: existing?.meshIndex,
-                    partNodeIndices: existing?.partNodeIndices ?? [],
-                    partIds: existing?.partIds ?? [],
-                    axle: axle,
-                    side: side,
-                    radius: r,
-                    width: w,
-                    circularity: (cornerData['circularity'] as num?)?.toDouble() ?? existing?.circularity ?? 0.98,
-                    subMeshCount: smc ?? existing?.subMeshCount ?? 1,
-                  );
-                }
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('Error syncing jsResult wheels: $e');
-        }
-      }
+      _syncJsAndAutoWheels(jsResult, detection);
       setState(() {
         _detection = detection;
         _scanCompleted = true;
@@ -866,8 +932,17 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           nodeName: 'Wheel_FR_Mirrored',
           worldPosition: Vec3(-fl.worldPosition.x, fl.worldPosition.y, fl.worldPosition.z),
           confidence: 1.0,
+          meshIndex: fl.meshIndex,
+          partNodeIndices: fl.partNodeIndices,
+          partIds: fl.partIds,
+          spinNodeIndices: fl.spinNodeIndices,
+          caliperHubNodeIndices: fl.caliperHubNodeIndices,
           axle: 'front',
           side: 'right',
+          radius: fl.radius,
+          width: fl.width,
+          circularity: fl.circularity,
+          subMeshCount: fl.subMeshCount,
         );
       }
       if (rl != null) {
@@ -876,8 +951,17 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           nodeName: 'Wheel_RR_Mirrored',
           worldPosition: Vec3(-rl.worldPosition.x, rl.worldPosition.y, rl.worldPosition.z),
           confidence: 1.0,
+          meshIndex: rl.meshIndex,
+          partNodeIndices: rl.partNodeIndices,
+          partIds: rl.partIds,
+          spinNodeIndices: rl.spinNodeIndices,
+          caliperHubNodeIndices: rl.caliperHubNodeIndices,
           axle: 'rear',
           side: 'right',
+          radius: rl.radius,
+          width: rl.width,
+          circularity: rl.circularity,
+          subMeshCount: rl.subMeshCount,
         );
       }
     });
@@ -896,6 +980,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
             worldPosition: AutoDetector.worldCenterForNode(_parsedModel!, node),
             confidence: w.confidence,
             meshIndex: w.meshIndex,
+            partNodeIndices: w.partNodeIndices,
+            partIds: w.partIds,
+            spinNodeIndices: w.spinNodeIndices,
+            caliperHubNodeIndices: w.caliperHubNodeIndices,
+            radius: w.radius,
+            width: w.width,
+            circularity: w.circularity,
+            subMeshCount: w.subMeshCount,
             axle: w.axle,
             side: w.side,
           );

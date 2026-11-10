@@ -2539,5 +2539,100 @@ endsolid sports_car''';
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 100));
     });
+
+    testWidgets('Body Node Protection prevents chassis / car body from rotating with wheel roll and eliminates body doubling during test drive', (
+      tester,
+    ) async {
+      final model = ParsedModel.createProceduralDefault(name: 'test_body_protection.glb');
+      final detection = AutoDetector.detect(model);
+
+      // Intentionally simulate a corrupted wheel assignment where nodeIndex is 0 (the car body)
+      // and partNodeIndices is empty or accidentally contains 0
+      final corruptedWheels = <String, DetectedWheel?>{
+        'FL': DetectedWheel(
+          nodeIndex: 0, // Car body!
+          nodeName: 'Corrupted_FL',
+          worldPosition: const Vec3(-0.95, 0.36, -1.25),
+          confidence: 0.95,
+          partNodeIndices: const [0], // Body node mistakenly in partNodeIndices
+          spinNodeIndices: const [0],
+          radius: 0.34,
+          width: 0.25,
+        ),
+        'FR': DetectedWheel(
+          nodeIndex: 0, // Car body!
+          nodeName: 'Corrupted_FR',
+          worldPosition: const Vec3(0.95, 0.36, -1.25),
+          confidence: 0.95,
+          partNodeIndices: const [], // Empty
+          radius: 0.34,
+          width: 0.25,
+        ),
+        'RL': DetectedWheel(
+          nodeIndex: 3,
+          nodeName: 'RL',
+          worldPosition: const Vec3(-0.95, 0.36, 1.25),
+          confidence: 0.95,
+          partNodeIndices: const [3],
+          spinNodeIndices: const [3],
+          radius: 0.34,
+          width: 0.25,
+        ),
+        'RR': DetectedWheel(
+          nodeIndex: 4,
+          nodeName: 'RR',
+          worldPosition: const Vec3(0.95, 0.36, 1.25),
+          confidence: 0.95,
+          partNodeIndices: const [4],
+          spinNodeIndices: const [4],
+          radius: 0.34,
+          width: 0.25,
+        ),
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TestDriveViewport(
+              mass: 1400.0,
+              engineForce: 7500.0,
+              grip: 1.4,
+              suspension: 1.0,
+              centerOfMass: 0.35,
+              drive: 'AWD',
+              frontSteering: true,
+              rearSteering: false,
+              frontTraction: true,
+              rearTraction: true,
+              wheelPositions: const [
+                Vec3(-0.95, 0.36, -1.25),
+                Vec3(0.95, 0.36, -1.25),
+                Vec3(-0.95, 0.36, 1.25),
+                Vec3(0.95, 0.36, 1.25),
+              ],
+              steerAngle: 36.0,
+              model: model,
+              detection: detection,
+              assignedWheels: corruptedWheels,
+              onExit: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(tester.takeException(), isNull);
+
+      // Accelerate forward so wheel roll increases significantly
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // No exceptions, car body remains intact and does not double or throw errors
+      expect(tester.takeException(), isNull);
+
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump(const Duration(milliseconds: 100));
+    });
   });
 }

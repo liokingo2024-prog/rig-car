@@ -1474,6 +1474,86 @@ class _TestDriveScenePainter extends CustomPainter {
         }
       }
     }
+
+    // Safety Pass: Guard against chassis/body nodes being assigned to wheel transforms
+    if (model != null && model!.instances.isNotEmpty) {
+      final carBox = model!.worldBBox;
+      final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
+      final carLen = max(carBox.size.z.abs(), carBox.size.x.abs());
+      final carW = min(carBox.size.z.abs(), carBox.size.x.abs());
+      final carH = carBox.size.y.abs();
+      final nonWheel = <int>{};
+      if (detection?.body != null) nonWheel.add(detection!.body!.nodeIndex);
+      for (final inst in model!.instances) {
+        final s = inst.worldBBox.size;
+        final maxDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+        if (s.z.abs() > carLen * 0.45 ||
+            s.x.abs() > carW * 0.48 ||
+            s.y.abs() > carH * 0.70 ||
+            maxDim > carLen * 0.45) {
+          nonWheel.add(inst.nodeIndex);
+        }
+      }
+
+      for (final entry in result.entries.toList()) {
+        final w = entry.value;
+        final hasNonWheelPart = w.partNodeIndices.any(nonWheel.contains);
+        final isBodyNode = nonWheel.contains(w.nodeIndex);
+
+        if (w.partNodeIndices.isEmpty || hasNonWheelPart || isBodyNode) {
+          final hub = w.worldPosition;
+          final r = w.radius > 0.05 ? w.radius : 0.34;
+          final matchedParts = <int>{};
+          for (final inst in model!.instances) {
+            if (nonWheel.contains(inst.nodeIndex)) continue;
+            final b = inst.worldBBox;
+            final dLong = (fAxisIsZ ? (b.center.z - hub.z) : (b.center.x - hub.x)).abs();
+            final dUp = (b.center.y - hub.y).abs();
+            if (dLong <= r * 1.10 && dUp <= r * 1.10) {
+              matchedParts.add(inst.nodeIndex);
+            }
+          }
+
+          final safeParts = (matchedParts.isNotEmpty
+                  ? matchedParts
+                  : w.partNodeIndices.where((n) => !nonWheel.contains(n)).toSet())
+              .toList();
+
+          final safeSpin = (w.spinNodeIndices.isNotEmpty
+                  ? w.spinNodeIndices.where((n) => !nonWheel.contains(n)).toSet()
+                  : safeParts.toSet())
+              .toList();
+
+          final safeCaliper = w.caliperHubNodeIndices
+              .where((n) => !nonWheel.contains(n))
+              .toList();
+
+          final safePrimary = safeSpin.isNotEmpty
+              ? safeSpin.first
+              : (safeParts.isNotEmpty
+                  ? safeParts.first
+                  : (!isBodyNode ? w.nodeIndex : 1));
+
+          result[entry.key] = DetectedWheel(
+            nodeIndex: safePrimary,
+            nodeName: w.nodeName,
+            worldPosition: w.worldPosition,
+            confidence: w.confidence,
+            meshIndex: w.meshIndex,
+            partNodeIndices: safeParts,
+            partIds: w.partIds,
+            spinNodeIndices: safeSpin,
+            caliperHubNodeIndices: safeCaliper,
+            axle: w.axle,
+            side: w.side,
+            radius: w.radius,
+            width: w.width,
+            circularity: w.circularity,
+            subMeshCount: max(w.subMeshCount, safeParts.length),
+          );
+        }
+      }
+    }
     return result;
   }
 
@@ -3243,7 +3323,31 @@ class _TestDriveScenePainter extends CustomPainter {
     final rimLights = List<Vec3>.filled(9, rimLight);
     final eyes = List<Vec3>.filled(9, localEye);
 
+    final nonWheelNodes = <int>{};
+    if (detection?.body != null) {
+      nonWheelNodes.add(detection!.body!.nodeIndex);
+    }
+    final carBox = model!.worldBBox;
+    final carLen = max(carBox.size.z.abs(), carBox.size.x.abs());
+    final carW = min(carBox.size.z.abs(), carBox.size.x.abs());
+    final carH = carBox.size.y.abs();
+    for (final inst in model!.instances) {
+      final s = inst.worldBBox.size;
+      final maxDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+      if (s.z.abs() > carLen * 0.45 ||
+          s.x.abs() > carW * 0.48 ||
+          s.y.abs() > carH * 0.70 ||
+          maxDim > carLen * 0.45) {
+        nonWheelNodes.add(inst.nodeIndex);
+      }
+    }
+
     final nodeToTransform = <int, int>{};
+    void assignSolidTransform(int nodeIdx, int transformIdx) {
+      if (nonWheelNodes.contains(nodeIdx)) return;
+      nodeToTransform[nodeIdx] = transformIdx;
+    }
+
     const corners = ['FL', 'FR', 'RL', 'RR'];
     for (var c = 0; c < 4; c++) {
       final corner = corners[c];
@@ -3277,19 +3381,19 @@ class _TestDriveScenePainter extends CustomPainter {
       final dVehHubCal = localEyeUnshifted - (hub + alignOffset);
       eyes[calIdx] = hub + _applyWheelRotTranspose(dVehHubCal, steer, 0.0);
 
-      // Map nodes to transforms
+      // Map nodes to transforms with strict body/chassis guard
       if (w.partNodeIndices.isNotEmpty) {
         for (final n in w.partNodeIndices) {
-          nodeToTransform[n] = spinIdx;
+          assignSolidTransform(n, spinIdx);
         }
-      } else {
-        nodeToTransform[w.nodeIndex] = spinIdx;
+      } else if (!nonWheelNodes.contains(w.nodeIndex)) {
+        assignSolidTransform(w.nodeIndex, spinIdx);
       }
       for (final n in w.spinNodeIndices) {
-        nodeToTransform[n] = spinIdx;
+        assignSolidTransform(n, spinIdx);
       }
       for (final n in w.caliperHubNodeIndices) {
-        nodeToTransform[n] = calIdx;
+        assignSolidTransform(n, calIdx);
       }
     }
 
@@ -3299,8 +3403,21 @@ class _TestDriveScenePainter extends CustomPainter {
 
     final indices = mesh.indices;
     final triNode = mesh.triNode;
+    final triKind = mesh.triKind;
     for (var t = 0; t < triCount; t++) {
-      final k = nodeToTransform[triNode[t]] ?? 8;
+      final n = triNode[t];
+      var k = 8;
+      if (!nonWheelNodes.contains(n)) {
+        final cand = nodeToTransform[n];
+        if (cand != null) {
+          final kind = triKind[t];
+          if (kind == solidKindBody || kind == solidKindGlass || kind == solidKindInterior) {
+            k = 8;
+          } else {
+            k = cand;
+          }
+        }
+      }
       triTransform[t] = k;
       if (k != 8) {
         final t3 = t * 3;
@@ -3335,7 +3452,6 @@ class _TestDriveScenePainter extends CustomPainter {
     // 2. Cull, shade, and record visible triangles
     final normals = mesh.normals;
     final centroids = mesh.centroids;
-    final triKind = mesh.triKind;
     final triColor = mesh.triColor;
     final visTri = mesh.visTri;
     final visColor = mesh.visColor;
@@ -4022,6 +4138,30 @@ class _TestDriveScenePainter extends CustomPainter {
     final nodeToTransform = <int, int>{};
     const corners = ['FL', 'FR', 'RL', 'RR'];
 
+    final nonWheelNodes = <int>{};
+    if (detection?.body != null) {
+      nonWheelNodes.add(detection!.body!.nodeIndex);
+    }
+    final carBox = model!.worldBBox;
+    final carLen = max(carBox.size.z.abs(), carBox.size.x.abs());
+    final carW = min(carBox.size.z.abs(), carBox.size.x.abs());
+    final carH = carBox.size.y.abs();
+    for (final inst in model!.instances) {
+      final s = inst.worldBBox.size;
+      final maxDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+      if (s.z.abs() > carLen * 0.45 ||
+          s.x.abs() > carW * 0.48 ||
+          s.y.abs() > carH * 0.70 ||
+          maxDim > carLen * 0.45) {
+        nonWheelNodes.add(inst.nodeIndex);
+      }
+    }
+
+    void assignWireTransform(int nodeIdx, int transformIdx) {
+      if (nonWheelNodes.contains(nodeIdx)) return;
+      nodeToTransform[nodeIdx] = transformIdx;
+    }
+
     for (var c = 0; c < 4; c++) {
       final corner = corners[c];
       final w = wheels[corner];
@@ -4044,16 +4184,16 @@ class _TestDriveScenePainter extends CustomPainter {
 
       if (w.partNodeIndices.isNotEmpty) {
         for (final n in w.partNodeIndices) {
-          nodeToTransform[n] = spinIdx;
+          assignWireTransform(n, spinIdx);
         }
-      } else {
-        nodeToTransform[w.nodeIndex] = spinIdx;
+      } else if (!nonWheelNodes.contains(w.nodeIndex)) {
+        assignWireTransform(w.nodeIndex, spinIdx);
       }
       for (final n in w.spinNodeIndices) {
-        nodeToTransform[n] = spinIdx;
+        assignWireTransform(n, spinIdx);
       }
       for (final n in w.caliperHubNodeIndices) {
-        nodeToTransform[n] = calIdx;
+        assignWireTransform(n, calIdx);
       }
     }
 
