@@ -15,6 +15,7 @@ class SketchfabViewport extends StatelessWidget {
     this.resetEpoch = 0,
     this.detectedWheels = const [],
     this.onCameraOrbit,
+    this.onMeshSelected,
     this.fallbackWidget,
   });
 
@@ -29,6 +30,7 @@ class SketchfabViewport extends StatelessWidget {
   final int resetEpoch;
   final List<dynamic> detectedWheels;
   final void Function(double azimuth, double elevation, double distance)? onCameraOrbit;
+  final ValueChanged<String>? onMeshSelected;
   final Widget? fallbackWidget;
 
   @override

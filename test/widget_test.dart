@@ -2970,5 +2970,109 @@ endsolid sports_car''';
       );
       expect(wheelMatrix.m.every((v) => !v.isNaN && !v.isInfinite), isTrue);
     });
+
+    testWidgets('Step 2 Scan & Organize 10-Flaw Architectural & UI Verification', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // 1. OBJ Parser per-group bounding boxes and vertex compaction (Flaw 10E)
+      const objData = '''
+# Multi-group OBJ test
+v -1.0 0.3 -1.0
+v -1.0 0.7 -1.0
+v -1.0 0.5 -0.8
+v 1.0 0.3 -1.0
+v 1.0 0.7 -1.0
+v 1.0 0.5 -0.8
+v 0.0 1.0 0.0
+v 0.0 1.5 0.0
+v 0.5 1.2 0.0
+g Wheel_FL
+f 1 2 3
+g Wheel_FR
+f 4 5 6
+g Body
+f 7 8 9
+''';
+      final parsedObj = GlbParser.parseSync('test_car.obj', Uint8List.fromList(utf8.encode(objData)));
+      expect(parsedObj.nodes.length, 3);
+      final flMesh = parsedObj.meshes[parsedObj.nodes[0].meshIndex!];
+      final frMesh = parsedObj.meshes[parsedObj.nodes[1].meshIndex!];
+      final bodyMesh = parsedObj.meshes[parsedObj.nodes[2].meshIndex!];
+      // Vertices are compacted per group (3 vertices each, not all 9)
+      expect(flMesh.vertices.length, 3);
+      expect(frMesh.vertices.length, 3);
+      expect(bodyMesh.vertices.length, 3);
+      // Bounding boxes are localized, not merged
+      expect(flMesh.bbox.hi.x < 0.0, isTrue);
+      expect(frMesh.bbox.lo.x > 0.0, isTrue);
+
+      // 2. Pre-pass under-wheel floor/shadow plane purging (Flaw 3)
+      const floorObjData = '''
+v -2.0 0.0 -3.0
+v 2.0 0.0 -3.0
+v 0.0 0.0 3.0
+g Turntable_Pedestal_Floor
+f 1 2 3
+v -1.0 0.2 -1.5
+v -0.7 0.2 -1.5
+v -0.85 0.8 -1.0
+g Wheel_FL
+f 4 5 6
+''';
+      final modelWithFloor = GlbParser.parseSync('floor_car.obj', Uint8List.fromList(utf8.encode(floorObjData)));
+      final purgedCount = modelWithFloor.purgeGroundFloorPrePass();
+      expect(purgedCount, 1);
+      expect(modelWithFloor.instances.any((i) => modelWithFloor.nodes[i.nodeIndex].name.contains('Turntable')), isFalse);
+      expect(modelWithFloor.nodes.firstWhere((n) => n.name.contains('Turntable')).meshIndex, isNull);
+
+      // 3. UI Step 1: Bounds Filter & Step 2: Inspection controls (Flaws 4, 6, 7, 10B, 10C, 10D)
+      await tester.pumpWidget(const MaterialApp(home: RigWorkbenchPage()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Expand vehicle details in Step 1
+      final expandBtn = find.text('Expand Vehicle Details & Tools');
+      if (expandBtn.evaluate().isNotEmpty) {
+        await tester.tap(expandBtn);
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Step 1: Check for Exclude Roof/Antenna checkbox (Flaw 4)
+      final roofAntennaCheckbox = find.text('Exclude roof/antenna parts from chassis bounds');
+      expect(roofAntennaCheckbox, findsOneWidget);
+
+      // Tap the checkbox to toggle it
+      await tester.tap(roofAntennaCheckbox);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Navigate to Step 2: Scan & Organize via Sidebar
+      await tester.tap(find.text('Scan & Organize').first);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Click "Start" to run detection (Flaw 10C)
+      final startScanButton = find.widgetWithText(FilledButton, 'Start');
+      expect(startScanButton, findsOneWidget);
+      await tester.tap(startScanButton);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      // Button label now changes to "Re-Scan" once scan is completed (Flaw 10C)
+      expect(find.widgetWithText(FilledButton, 'Re-Scan'), findsOneWidget);
+
+      // Topbar displays AUTO-RIGGED status when all 4 wheels are assigned (Flaw 10D)
+      expect(find.text('AUTO-RIGGED'), findsOneWidget);
+
+      // Stage 1 terminal stage shows real loose parts count (Flaw 10B)
+      expect(find.textContaining('islands isolated'), findsOneWidget);
+
+      // Switch to Custom view in Step 2 to inspect detected groups and filters
+      await tester.tap(find.text('🛠 Custom'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Groups list and toggle buttons (Flaw 6)
+      expect(find.text('Outer Tires + Rims (4 corners · Grounded)'), findsWidgets);
+    });
   });
 }

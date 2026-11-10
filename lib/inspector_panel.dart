@@ -84,6 +84,9 @@ class InspectorPanel extends StatefulWidget {
     required this.onExport,
     required this.onTestDrive,
     required this.onHoverPart,
+    this.excludeRoofAntenna = false,
+    this.onExcludeRoofAntennaChanged,
+    this.onGroupToggle,
   });
 
   final int activeStep;
@@ -125,7 +128,7 @@ class InspectorPanel extends StatefulWidget {
   final bool isScanDone;
   final void Function(int groupId, String role) onGroupRoleChange;
   final ValueChanged<String> onPickWheelInViewport;
-  final ValueChanged<double> onRecalculateHeightFilter;
+  final void Function(double groundTolPercent, double inboardTolPercent) onRecalculateHeightFilter;
   final VoidCallback onMirrorLeftToRight;
   final VoidCallback onRecenterPivots;
   final ValueChanged<HandlingPreset> onHandlingPresetSelected;
@@ -146,6 +149,9 @@ class InspectorPanel extends StatefulWidget {
   final VoidCallback onExport;
   final VoidCallback onTestDrive;
   final ValueChanged<String?> onHoverPart;
+  final bool excludeRoofAntenna;
+  final ValueChanged<bool>? onExcludeRoofAntennaChanged;
+  final void Function(int groupId, bool isEnabled)? onGroupToggle;
 
   @override
   State<InspectorPanel> createState() => _InspectorPanelState();
@@ -164,6 +170,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
   @override
   void initState() {
     super.initState();
+    _excludeRoofAntenna = widget.excludeRoofAntenna;
     final len = widget.parsedModel?.worldBBox.size.z.abs() ?? 4.2;
     _targetLengthController = TextEditingController(
       text: len.toStringAsFixed(1),
@@ -176,6 +183,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
     if (oldWidget.parsedModel != widget.parsedModel && widget.parsedModel != null) {
       final len = widget.parsedModel!.worldBBox.size.z.abs();
       _targetLengthController.text = len.toStringAsFixed(1);
+    }
+    if (oldWidget.excludeRoofAntenna != widget.excludeRoofAntenna) {
+      _excludeRoofAntenna = widget.excludeRoofAntenna;
     }
   }
 
@@ -729,7 +739,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
           const _SectionHeader('BOUNDS FILTER'),
           const SizedBox(height: 8),
           InkWell(
-            onTap: () => setState(() => _excludeRoofAntenna = !_excludeRoofAntenna),
+            onTap: () {
+              final nextVal = !_excludeRoofAntenna;
+              setState(() => _excludeRoofAntenna = nextVal);
+              widget.onExcludeRoofAntennaChanged?.call(nextVal);
+            },
             borderRadius: BorderRadius.circular(8),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -747,7 +761,11 @@ class _InspectorPanelState extends State<InspectorPanel> {
                       value: _excludeRoofAntenna,
                       activeColor: _Palette.accentEmerald,
                       checkColor: const Color(0xFF041D14),
-                      onChanged: (val) => setState(() => _excludeRoofAntenna = val ?? false),
+                      onChanged: (val) {
+                        final nextVal = val ?? false;
+                        setState(() => _excludeRoofAntenna = nextVal);
+                        widget.onExcludeRoofAntennaChanged?.call(nextVal);
+                      },
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                     ),
                   ),
@@ -780,9 +798,8 @@ class _InspectorPanelState extends State<InspectorPanel> {
 
   Widget _buildStep2Auto() {
     final model = widget.parsedModel;
-    final loosePartsCount = model != null
-        ? max(48, model.instances.length * 4)
-        : 112;
+    final loosePartsCount = widget.detection?.loosePartsCount ??
+        (model != null ? model.instances.length : 0);
 
     final fl = widget.assignedWheels['FL'];
     final fr = widget.assignedWheels['FR'];
@@ -1094,7 +1111,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
                       )
                     : const Icon(Icons.play_arrow_rounded, size: 16),
                 label: Text(
-                  isScanning ? 'Scanning...' : 'Start',
+                  isScanning ? 'Scanning...' : (isDone ? 'Re-Scan' : 'Start'),
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 style: FilledButton.styleFrom(
@@ -1231,6 +1248,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           _GroupRowCard(
             group: group,
             onRoleChanged: (newRole) => widget.onGroupRoleChange(group.id, newRole),
+            onToggle: (enabled) => widget.onGroupToggle?.call(group.id, enabled),
             onHighlight: () => widget.onHoverPart('group_${group.id}'),
             onHover: (hover) => widget.onHoverPart(hover ? 'group_${group.id}' : null),
           ),
@@ -1278,7 +1296,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
                   min: 2.0,
                   max: 25.0,
                   onChanged: (val) => setState(() => _groundTolerancePercent = val),
-                  onChangeEnd: (val) => widget.onRecalculateHeightFilter(val),
+                  onChangeEnd: (val) => widget.onRecalculateHeightFilter(val, _inboardCapturePercent),
                 ),
               ),
               const SizedBox(height: 4),
@@ -1309,12 +1327,13 @@ class _InspectorPanelState extends State<InspectorPanel> {
                   min: 0.0,
                   max: 10.0,
                   onChanged: (val) => setState(() => _inboardCapturePercent = val),
+                  onChangeEnd: (val) => widget.onRecalculateHeightFilter(_groundTolerancePercent, val),
                 ),
               ),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: () => widget.onRecalculateHeightFilter(_groundTolerancePercent),
+                  onPressed: () => widget.onRecalculateHeightFilter(_groundTolerancePercent, _inboardCapturePercent),
                   icon: const Icon(Icons.refresh_rounded, size: 14, color: _Palette.accentEmerald),
                   label: const Text('Re-run Detection with Overrides', style: TextStyle(color: _Palette.accentEmerald, fontSize: 11)),
                 ),
@@ -1977,12 +1996,14 @@ class _GroupRowCard extends StatefulWidget {
     required this.onRoleChanged,
     required this.onHighlight,
     required this.onHover,
+    this.onToggle,
   });
 
   final DetectedMeshGroup group;
   final ValueChanged<String> onRoleChanged;
   final VoidCallback onHighlight;
   final ValueChanged<bool> onHover;
+  final ValueChanged<bool>? onToggle;
 
   @override
   State<_GroupRowCard> createState() => _GroupRowCardState();
@@ -2021,7 +2042,9 @@ class _GroupRowCardState extends State<_GroupRowCard> {
                 activeColor: _Palette.accentEmerald,
                 checkColor: const Color(0xFF041D14),
                 onChanged: (val) {
-                  setState(() => widget.group.isEnabled = val ?? true);
+                  final nextVal = val ?? true;
+                  setState(() => widget.group.isEnabled = nextVal);
+                  widget.onToggle?.call(nextVal);
                 },
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
               ),

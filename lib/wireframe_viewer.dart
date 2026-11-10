@@ -234,6 +234,69 @@ class _WireframeViewerState extends State<WireframeViewer>
     }
   }
 
+  void _onMeshSelected(String meshName) {
+    final model = widget.model;
+    if (model == null || model.nodes.isEmpty) return;
+    final mLower = meshName.toLowerCase();
+    final matched = model.nodes.firstWhere(
+      (n) => n.name.toLowerCase() == mLower,
+      orElse: () => model.nodes.firstWhere(
+        (n) => n.name.toLowerCase().contains(mLower) || mLower.contains(n.name.toLowerCase()),
+        orElse: () => model.nodes.first,
+      ),
+    );
+    widget.onNodeSelected?.call(matched.index);
+  }
+
+  int? _hitTestNode(Offset tapPos, Size size) {
+    final model = widget.model;
+    if (model == null || model.instances.isEmpty) return null;
+
+    final cosAz = cos(_azimuth);
+    final sinAz = sin(_azimuth);
+    final cosEl = cos(_elevation);
+    final sinEl = sin(_elevation);
+
+    final eye = Vec3(
+      _target.x + _distance * cosEl * sinAz,
+      _target.y + _distance * sinEl,
+      _target.z + _distance * cosEl * cosAz,
+    );
+    final view = Mat4.lookAt(eye, _target, const Vec3(0, 1, 0));
+    final proj = Mat4.perspective(
+      45.0 * pi / 180.0,
+      size.width / max(1.0, size.height),
+      0.1,
+      100.0,
+    );
+    final viewProj = proj * view;
+
+    int? bestNodeIndex;
+    double bestDist = 60.0;
+    double bestZ = double.infinity;
+
+    for (final inst in model.instances) {
+      final center = inst.worldBBox.center;
+      final clip = viewProj.transformClip(center);
+      if (clip[3] <= 0.01) continue;
+      final ndcX = clip[0] / clip[3];
+      final ndcY = clip[1] / clip[3];
+      final ndcZ = clip[2] / clip[3];
+      if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2) continue;
+
+      final screenX = (ndcX * 0.5 + 0.5) * size.width;
+      final screenY = (-ndcY * 0.5 + 0.5) * size.height;
+      final dist = (Offset(screenX, screenY) - tapPos).distance;
+
+      if (dist < bestDist || (dist < bestDist + 20 && ndcZ < bestZ)) {
+        bestDist = dist;
+        bestZ = ndcZ;
+        bestNodeIndex = inst.nodeIndex;
+      }
+    }
+    return bestNodeIndex;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -257,6 +320,7 @@ class _WireframeViewerState extends State<WireframeViewer>
               autoTurntable: _autoTurntable,
               cameraPreset: _preset.name,
               resetEpoch: _cameraResetEpoch,
+              onMeshSelected: _onMeshSelected,
               onCameraOrbit: (azimuth, elevation, distance) {
                 setState(() {
                   _azimuth = azimuth;
@@ -276,6 +340,15 @@ class _WireframeViewerState extends State<WireframeViewer>
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onDoubleTap: () => setState(_resetCameraToModel),
+                  onTapUp: (details) {
+                    final RenderBox? box = context.findRenderObject() as RenderBox?;
+                    if (box != null) {
+                      final hit = _hitTestNode(details.localPosition, box.size);
+                      if (hit != null) {
+                        widget.onNodeSelected?.call(hit);
+                      }
+                    }
+                  },
                   onPanStart: (_) {
                     if (!_isInteracting) {
                       setState(() => _isInteracting = true);

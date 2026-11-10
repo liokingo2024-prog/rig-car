@@ -127,11 +127,31 @@
       notifyCameraChange(false);
     });
 
-    controls.domElement.addEventListener('pointerdown', () => {
+    let pointerDownPos = { x: 0, y: 0 };
+    controls.domElement.addEventListener('pointerdown', (e) => {
+      pointerDownPos = { x: e.clientX, y: e.clientY };
       renderer.domElement.style.cursor = 'grabbing';
     });
-    controls.domElement.addEventListener('pointerup', () => {
+    controls.domElement.addEventListener('pointerup', (e) => {
       renderer.domElement.style.cursor = 'grab';
+      const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+      if (dist < 6 && currentModel && camera) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(currentModel.children, true);
+        if (intersects.length > 0) {
+          const hitMesh = intersects[0].object;
+          const meshName = hitMesh.name || '';
+          window.dispatchEvent(new CustomEvent('sketchfab-node-select', {
+            detail: { meshName: meshName, x: intersects[0].point.x, y: intersects[0].point.y, z: intersects[0].point.z }
+          }));
+        }
+      }
     });
 
     // 5. Lighting Rig (Sketchfab Studio 3-Point PBR Lighting)
@@ -1799,7 +1819,7 @@
       });
 
       // Step 3B: Two-Zone Capture across all loose parts
-      const inboardAllowance = Math.max(0.45 * tireWidth, 0.06 * carWidth);
+      const inboardAllowance = Math.max(0.45 * tireWidth, Math.max(0.02, inbTol) * carWidth);
 
       allParts.forEach(part => {
         if (cluster.rings.some(r => r.mesh === part.mesh)) return;
@@ -1926,8 +1946,6 @@
         { id: 3, name: 'Suspension Uprights / Knuckles (Inboard Chassis)', count: suspensionKnuckleParts.length, role: 'Static (Chassis)', isEnabled: false, meshes: suspensionKnuckleParts }
       ]
     };
-
-    return detectedWheelData;
 
     return detectedWheelData;
   }

@@ -496,6 +496,65 @@ class ParsedModel {
     rotateYaw(pi);
   }
 
+  /// Pre-detection pass to eliminate floor planes, shadow meshes, pedestals, or turntables
+  /// that sit at the bottom of the bounding box and distort car dimensions before wheel detection.
+  int purgeGroundFloorPrePass() {
+    if (instances.length <= 1) return 0;
+    final carH = max(0.2, worldBBox.size.y.abs());
+    final groundY = worldBBox.lo.y;
+    final floorPattern = RegExp(
+      r'(shadow|ground|floor|plane|turntable|pedestal|stage|platform|base|backdrop|grid|plinth|stand)',
+      caseSensitive: false,
+    );
+
+    final nodesToRemove = <int>{};
+    final remainingInstances = <MeshInstance>[];
+    bool removedMassivePlatform = false;
+
+    for (final inst in instances) {
+      final nodeName = inst.nodeIndex >= 0 && inst.nodeIndex < nodes.length
+          ? nodes[inst.nodeIndex].name
+          : '';
+      final b = inst.worldBBox;
+      final h = b.size.y.abs();
+      final namedFloor = floorPattern.hasMatch(nodeName);
+
+      // Thin floor sitting at the very bottom of the model
+      final sitsAtBottom = b.lo.y <= groundY + 0.05;
+      final isFlatThin = h <= max(0.08, 0.06 * carH);
+      final isPlatform = namedFloor && b.hi.y <= groundY + 0.20 * carH && h <= 0.25 * carH;
+
+      // Huge wide thin plane (larger horizontal footprint than typical car part, very flat)
+      final isHugePlane = sitsAtBottom && isFlatThin &&
+          (b.size.x >= 0.80 * worldBBox.size.x || b.size.z >= 0.80 * worldBBox.size.z);
+
+      if ((namedFloor && sitsAtBottom) || isPlatform || (isHugePlane && namedFloor) || (isHugePlane && h <= 0.04)) {
+        nodesToRemove.add(inst.nodeIndex);
+        if (isPlatform || isHugePlane) {
+          removedMassivePlatform = true;
+        }
+      } else {
+        remainingInstances.add(inst);
+      }
+    }
+
+    final removedCount = instances.length - remainingInstances.length;
+    if (removedCount > 0 && remainingInstances.isNotEmpty) {
+      instances.clear();
+      instances.addAll(remainingInstances);
+      for (final nodeIdx in nodesToRemove) {
+        if (nodeIdx >= 0 && nodeIdx < nodes.length) {
+          nodes[nodeIdx].meshIndex = null;
+        }
+      }
+      worldBBox = BBox.union(instances.map((i) => i.worldBBox).toList());
+      if (removedMassivePlatform) {
+        normalizeForRiggingInPlace();
+      }
+    }
+    return removedCount;
+  }
+
   /// Detects and removes any under-wheel object meshes (e.g. shadow planes,
   /// showroom ground quads, turntables, pedestals) located beneath or flush
   /// with tire contact ($Y \le Y_{wheelMin} + 0.045$).
@@ -1180,6 +1239,7 @@ class DetectionResult {
   final int underWheelObjectsDeleted;
   final AutoAxisResult? autoAxisResult;
   final double wheelGroundOffset;
+  final List<int> suspensionNodes;
 
   const DetectionResult({
     required this.wheels,
@@ -1195,6 +1255,7 @@ class DetectionResult {
     this.underWheelObjectsDeleted = 0,
     this.autoAxisResult,
     this.wheelGroundOffset = 0.0,
+    this.suspensionNodes = const [],
   });
 }
 

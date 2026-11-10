@@ -21,6 +21,7 @@ class SketchfabViewport extends StatefulWidget {
     this.resetEpoch = 0,
     this.detectedWheels = const [],
     this.onCameraOrbit,
+    this.onMeshSelected,
     this.fallbackWidget,
   });
 
@@ -35,6 +36,7 @@ class SketchfabViewport extends StatefulWidget {
   final int resetEpoch;
   final List<dynamic> detectedWheels;
   final void Function(double azimuth, double elevation, double distance)? onCameraOrbit;
+  final ValueChanged<String>? onMeshSelected;
   final Widget? fallbackWidget;
 
   @override
@@ -47,6 +49,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   html.DivElement? _container;
   Uint8List? _loadedBytes;
   html.EventListener? _cameraOrbitListener;
+  html.EventListener? _nodeSelectListener;
 
   @override
   void initState() {
@@ -84,6 +87,22 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
     };
     html.window.addEventListener('sketchfab-camera-orbit', _cameraOrbitListener);
 
+    _nodeSelectListener = (html.Event event) {
+      if (event is html.CustomEvent) {
+        try {
+          final jsEvent = js.JsObject.fromBrowserObject(event);
+          final detail = jsEvent['detail'];
+          if (detail != null) {
+            final meshName = detail['meshName']?.toString();
+            if (meshName != null && meshName.isNotEmpty) {
+              widget.onMeshSelected?.call(meshName);
+            }
+          }
+        } catch (_) {}
+      }
+    };
+    html.window.addEventListener('sketchfab-node-select', _nodeSelectListener);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initViewer();
     });
@@ -94,6 +113,10 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
     if (_cameraOrbitListener != null) {
       html.window.removeEventListener('sketchfab-camera-orbit', _cameraOrbitListener);
       _cameraOrbitListener = null;
+    }
+    if (_nodeSelectListener != null) {
+      html.window.removeEventListener('sketchfab-node-select', _nodeSelectListener);
+      _nodeSelectListener = null;
     }
     super.dispose();
   }

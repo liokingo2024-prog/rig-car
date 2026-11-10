@@ -224,18 +224,50 @@ class GlbParser {
     } else {
       for (final entry in groups.entries) {
         final gName = entry.key;
-        final tris = entry.value;
+        final groupTrisRaw = entry.value;
+        if (groupTrisRaw.isEmpty) continue;
+
+        // Compact vertices to only those referenced by this group's triangles
+        final vertMap = <int, int>{};
+        final groupVerts = <Vec3>[];
+        final groupTris = <Triangle>[];
+
+        int getOrAddVert(int globalIdx) {
+          return vertMap.putIfAbsent(globalIdx, () {
+            final localIdx = groupVerts.length;
+            groupVerts.add(globalIdx >= 0 && globalIdx < allVerts.length
+                ? allVerts[globalIdx]
+                : Vec3.zero);
+            return localIdx;
+          });
+        }
+
+        for (final t in groupTrisRaw) {
+          final na = getOrAddVert(t.a);
+          final nb = getOrAddVert(t.b);
+          final nc = getOrAddVert(t.c);
+          groupTris.add(Triangle(na, nb, nc, t.color));
+        }
+
         final edges = <Edge>[];
         final edgeSet = <int>{};
-        for (final t in tris) {
+        for (final t in groupTris) {
           if (edges.length >= _maxEdgesPerPrimitive) break;
           _addEdgeToSet(edges, edgeSet, t.a, t.b);
           _addEdgeToSet(edges, edgeSet, t.b, t.c);
           _addEdgeToSet(edges, edgeSet, t.c, t.a);
         }
-        final bbox = BBox.fromPoints(allVerts);
+
+        final bbox = groupVerts.isNotEmpty ? BBox.fromPoints(groupVerts) : BBox.empty;
         final meshIdx = meshes.length;
-        final mesh = MeshData(index: meshIdx, name: gName, vertices: allVerts, edges: edges, triangles: tris, bbox: bbox);
+        final mesh = MeshData(
+          index: meshIdx,
+          name: gName,
+          vertices: groupVerts,
+          edges: edges,
+          triangles: groupTris,
+          bbox: bbox,
+        );
         meshes.add(mesh);
         nodes.add(SceneNode(
           index: nodeIdx,
@@ -245,7 +277,14 @@ class GlbParser {
           childIndices: const [],
           parentIndex: null,
         ));
-        instances.add(MeshInstance(nodeIndex: nodeIdx, meshIndex: meshIdx, worldVertices: allVerts, edges: edges, triangles: tris, worldBBox: bbox));
+        instances.add(MeshInstance(
+          nodeIndex: nodeIdx,
+          meshIndex: meshIdx,
+          worldVertices: groupVerts,
+          edges: edges,
+          triangles: groupTris,
+          worldBBox: bbox,
+        ));
         nodeIdx++;
       }
     }

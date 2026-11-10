@@ -115,6 +115,13 @@ class _BoundsAccumulator {
       );
 }
 
+class _WheelDetectionOutput {
+  final List<DetectedWheel> wheels;
+  final int totalPartsCount;
+  final List<int> suspensionNodes;
+  const _WheelDetectionOutput(this.wheels, this.totalPartsCount, this.suspensionNodes);
+}
+
 class AutoDetector {
   // ── Public API ──────────────────────────────────────────────────────────
 
@@ -130,16 +137,24 @@ class AutoDetector {
     bool pruneUnderWheelObjects = true,
     bool autoAlignForward = true,
     bool snapToLand = true,
+    bool excludeRoofAntenna = false,
   }) {
-    final wheels = _detectWheels(
+    // Pre-pass: Purge showroom floor / ground planes before computing vehicle footprint
+    int underWheelObjectsDeleted = 0;
+    if (pruneUnderWheelObjects) {
+      underWheelObjectsDeleted += model.purgeGroundFloorPrePass();
+    }
+
+    final output = _detectWheels(
       model,
       groundTolRatio: groundTolRatio,
       inboardTolRatio: inboardTolRatio,
+      excludeRoofAntenna: excludeRoofAntenna,
     );
+    final wheels = output.wheels;
 
-    int underWheelObjectsDeleted = 0;
     if (pruneUnderWheelObjects && wheels.isNotEmpty) {
-      underWheelObjectsDeleted = model.deleteUnderWheelObjects(wheels);
+      underWheelObjectsDeleted += model.deleteUnderWheelObjects(wheels);
     }
 
     AutoAxisResult? autoAxisResult;
@@ -198,7 +213,7 @@ class AutoDetector {
         ? wheels.map((w) => w.circularity).reduce((a, b) => a + b) / wheels.length
         : 0.98;
 
-    final loosePartsCount = max(48, model.nodes.length + model.instances.length * 4);
+    final loosePartsCount = max(output.totalPartsCount, model.instances.length);
 
     return DetectionResult(
       wheels: wheels.take(4).toList(),
@@ -214,6 +229,7 @@ class AutoDetector {
       underWheelObjectsDeleted: underWheelObjectsDeleted,
       autoAxisResult: autoAxisResult,
       wheelGroundOffset: groundOffset,
+      suspensionNodes: output.suspensionNodes,
     );
   }
 
@@ -228,10 +244,11 @@ class AutoDetector {
     caseSensitive: false,
   );
 
-  static List<DetectedWheel> _detectWheels(
+  static _WheelDetectionOutput _detectWheels(
     ParsedModel model, {
     double groundTolRatio = 0.08,
     double inboardTolRatio = 0.015,
+    bool excludeRoofAntenna = false,
   }) {
     // Step A: Bounding Box & Axis Normalization
     final carBox = model.worldBBox;
@@ -241,8 +258,25 @@ class AutoDetector {
     final fAxisIsZ = carSize.z.abs() >= carSize.x.abs();
     final carLength = max(1e-4, (fAxisIsZ ? carSize.z : carSize.x).abs());
     final carWidth = max(1e-4, (fAxisIsZ ? carSize.x : carSize.z).abs());
-    final carHeight = max(1e-4, carSize.y.abs());
     final groundY = carBox.lo.y;
+    double carHeight = max(1e-4, carSize.y.abs());
+
+    if (excludeRoofAntenna) {
+      final allY = <double>[];
+      for (final inst in model.instances) {
+        for (final v in inst.worldVertices) {
+          allY.add(v.y);
+        }
+      }
+      if (allY.isNotEmpty) {
+        allY.sort();
+        final p95 = allY[(allY.length * 0.95).floor().clamp(0, allY.length - 1)];
+        final effectiveH = p95 - groundY;
+        if (effectiveH > 0.4) {
+          carHeight = effectiveH;
+        }
+      }
+    }
 
     // Step B: Per-Part Geometric Scoring
     final allParts = _collectWheelParts(
@@ -455,7 +489,7 @@ class AutoDetector {
       final caliperHubPartNodes = <int>{};
 
       // Step 3B: Two-Zone Capture across all loose parts
-      final inboardAllowance = max(0.45 * tireWidth, 0.06 * carWidth);
+      final inboardAllowance = max(0.45 * tireWidth, max(0.02, inboardTolRatio) * carWidth);
       final carCenterLat = fAxisIsZ ? carCenter.x : carCenter.z;
 
       for (final part in allParts) {
@@ -595,7 +629,25 @@ class AutoDetector {
       return a.label.compareTo(b.label);
     });
 
-    return detectedWheels;
+    final allWheelPartNodeSet = detectedWheels
+        .expand((w) => w.partNodeIndices)
+        .toSet();
+    final suspensionNodes = <int>{};
+    for (final part in allParts) {
+      if (allWheelPartNodeSet.contains(part.nodeIndex)) continue;
+      final partLat = fAxisIsZ ? part.center.x : part.center.z;
+      final centerLat = fAxisIsZ ? carCenter.x : carCenter.z;
+      final latDist = (partLat - centerLat).abs();
+      if (latDist >= 0.18 * carWidth && latDist <= 0.45 * carWidth && part.center.y <= groundY + 0.60 * carHeight) {
+        suspensionNodes.add(part.nodeIndex);
+      }
+    }
+
+    return _WheelDetectionOutput(
+      detectedWheels,
+      allParts.length,
+      suspensionNodes.toList(),
+    );
   }
 
   static List<_WheelPart> _collectWheelParts(

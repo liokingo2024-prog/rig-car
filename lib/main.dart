@@ -166,6 +166,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   bool _sirenAudioEnabled = false;
   bool _tireSkidAudioEnabled = true;
   String _godotArchitecture = 'standard';
+  bool _excludeRoofAntenna = false;
+  String? _activePickingCorner;
   late List<DetectedMeshGroup> _detectedGroups;
   late List<AudioSlotConfig> _audioSlots;
   bool _isScanningWheels = false;
@@ -397,18 +399,43 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                 resolvedCaliperNodes.addAll(existing.caliperHubNodeIndices);
               }
 
+              final expectedPos = existing?.worldPosition ?? (hubPos != Vec3.zero ? hubPos : null);
+
               if (model != null) {
+                final carBox = model.worldBBox;
+                final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
+                final carLength = max(1e-4, (fAxisIsZ ? carBox.size.z : carBox.size.x).abs());
+
                 for (final node in model.nodes) {
                   if (nonWheelNodes.contains(node.index)) continue;
                   final nName = node.name.toLowerCase();
-                  if (jsSpinNames.contains(nName)) {
-                    resolvedSpinNodes.add(node.index);
-                    resolvedPartNodes.add(node.index);
-                  } else if (jsCaliperNames.contains(nName)) {
-                    resolvedCaliperNodes.add(node.index);
-                    resolvedPartNodes.add(node.index);
-                  } else if (jsPartNames.contains(nName)) {
-                    resolvedPartNodes.add(node.index);
+                  final isSpinMatch = jsSpinNames.contains(nName);
+                  final isCaliperMatch = jsCaliperNames.contains(nName);
+                  final isPartMatch = jsPartNames.contains(nName);
+
+                  if (isSpinMatch || isCaliperMatch || isPartMatch) {
+                    bool inQuadrant = true;
+                    if (expectedPos != null) {
+                      final nodeInsts = model.instances.where((i) => i.nodeIndex == node.index);
+                      if (nodeInsts.isNotEmpty) {
+                        final nodeCenter = nodeInsts.first.worldBBox.center;
+                        final dist = (nodeCenter - expectedPos).length;
+                        if (dist > max(0.55 * carLength, 1.2)) {
+                          inQuadrant = false;
+                        }
+                      }
+                    }
+                    if (inQuadrant) {
+                      if (isSpinMatch) {
+                        resolvedSpinNodes.add(node.index);
+                        resolvedPartNodes.add(node.index);
+                      } else if (isCaliperMatch) {
+                        resolvedCaliperNodes.add(node.index);
+                        resolvedPartNodes.add(node.index);
+                      } else {
+                        resolvedPartNodes.add(node.index);
+                      }
+                    }
                   }
                 }
 
@@ -483,15 +510,23 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                   }
                 }
                 if (meshBox != null && meshBox.size.y > 0.05) {
-                  authoritativeHub = meshBox.center;
                   final carBox = model.worldBBox;
                   final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
-                  final dLong = (fAxisIsZ ? meshBox.size.z : meshBox.size.x).abs();
-                  final dUp = meshBox.size.y.abs();
-                  final meshR = max(dLong, dUp) * 0.5;
-                  if (meshR >= 0.15 && meshR <= 0.85) authoritativeRadius = meshR;
-                  final meshW = (fAxisIsZ ? meshBox.size.x : meshBox.size.z).abs();
-                  if (meshW >= 0.08 && meshW <= 0.65) authoritativeWidth = meshW;
+                  final carLength = max(1e-4, (fAxisIsZ ? carBox.size.z : carBox.size.x).abs());
+                  final span = max(meshBox.size.x, meshBox.size.z);
+                  final isSingleWheelMesh = span <= 0.42 * carLength;
+                  final isNearExisting = existing == null ||
+                      (meshBox.center - existing.worldPosition).length <= 0.15 * carLength;
+
+                  if (isSingleWheelMesh && isNearExisting) {
+                    authoritativeHub = meshBox.center;
+                    final dLong = (fAxisIsZ ? meshBox.size.z : meshBox.size.x).abs();
+                    final dUp = meshBox.size.y.abs();
+                    final meshR = max(dLong, dUp) * 0.5;
+                    if (meshR >= 0.15 && meshR <= 0.85) authoritativeRadius = meshR;
+                    final meshW = (fAxisIsZ ? meshBox.size.x : meshBox.size.z).abs();
+                    if (meshW >= 0.08 && meshW <= 0.65) authoritativeWidth = meshW;
+                  }
                 }
               }
 
@@ -715,6 +750,48 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     ];
   }
 
+  void _updateDetectedGroupsFromWheels(DetectionResult detection) {
+    final allSpinNodes = <int>{};
+    final allCaliperNodes = <int>{};
+    for (final w in _assignedWheels.values.whereType<DetectedWheel>()) {
+      allSpinNodes.addAll(w.spinNodeIndices);
+      allCaliperNodes.addAll(w.caliperHubNodeIndices);
+    }
+    final wheelCount = _assignedWheels.values.whereType<DetectedWheel>().length;
+
+    setState(() {
+      _detectedGroups = [
+        DetectedMeshGroup(
+          id: 1,
+          name: 'Outer Tires + Rims (4 corners · Grounded)',
+          count: wheelCount,
+          shapeType: 'Cylindrical',
+          role: 'Spin (Wheel)',
+          isEnabled: true,
+          nodeIndices: allSpinNodes.toList(),
+        ),
+        DetectedMeshGroup(
+          id: 2,
+          name: 'Brake Discs / Calipers (Coaxial & Hub Frames)',
+          count: allCaliperNodes.length,
+          shapeType: 'Box',
+          role: 'Steer Only (Knuckle/Caliper)',
+          isEnabled: allCaliperNodes.isNotEmpty,
+          nodeIndices: allCaliperNodes.toList(),
+        ),
+        DetectedMeshGroup(
+          id: 3,
+          name: 'Suspension Uprights / Knuckles (Inboard Chassis)',
+          count: detection.suspensionNodes.length,
+          shapeType: 'Irregular',
+          role: 'Static (Chassis)',
+          isEnabled: false,
+          nodeIndices: detection.suspensionNodes,
+        ),
+      ];
+    });
+  }
+
   List<AudioSlotConfig> _initAudioSlots() {
     return [
       AudioSlotConfig(
@@ -835,29 +912,20 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       _highlightFoundWheels = false;
       _scanStage = 1;
     });
-    _showMessage('Neural Rig: Isolating mesh vertex islands (Stage 1/4)...');
 
-    await Future.delayed(const Duration(milliseconds: 35));
+    await Future.delayed(const Duration(milliseconds: 30));
     if (!mounted) return;
     setState(() => _scanStage = 2);
-    _showMessage('Neural Rig: Coaxial hub clustering & circularity analysis (Stage 2/4)...');
 
-    await Future.delayed(const Duration(milliseconds: 35));
+    await Future.delayed(const Duration(milliseconds: 30));
     if (!mounted) return;
     setState(() => _scanStage = 3);
-    _showMessage('Neural Rig: Ground contact patch & outer-track filtering (Stage 3/4)...');
 
-    await Future.delayed(const Duration(milliseconds: 35));
-    if (!mounted) return;
-    setState(() => _scanStage = 4);
-    _showMessage('Neural Rig: Solving hub centers & radius cylinder fit (Stage 4/4)...');
-
-    await Future.delayed(const Duration(milliseconds: 35));
-    if (!mounted) return;
-
-    final jsResult = detectSketchfabWheels();
-    final detection = AutoDetector.detect(_parsedModel!);
-    _syncJsAndAutoWheels(jsResult, detection);
+    // 1. Run AutoDetector in Dart FIRST (purges under-wheel mesh, aligns forward axis -Z, snaps to land Y=0)
+    final detection = AutoDetector.detect(
+      _parsedModel!,
+      excludeRoofAntenna: _excludeRoofAntenna,
+    );
 
     SolidScene.invalidate(_parsedModel!);
     if (detection.autoAxisResult != null &&
@@ -867,6 +935,15 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     if (detection.wheelGroundOffset.abs() > 0.001) {
       snapSketchfabModelToGround();
     }
+
+    await Future.delayed(const Duration(milliseconds: 30));
+    if (!mounted) return;
+    setState(() => _scanStage = 4);
+
+    // 2. Call detectSketchfabWheels AFTER model is oriented and ground-snapped
+    final jsResult = detectSketchfabWheels();
+    _syncJsAndAutoWheels(jsResult, detection);
+    _updateDetectedGroupsFromWheels(detection);
 
     setState(() {
       _detection = detection;
@@ -902,66 +979,137 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         orElse: () => _detectedGroups.first,
       );
       grp.role = role;
+
+      if (groupId == 2) {
+        for (final slot in ['FL', 'FR', 'RL', 'RR']) {
+          final w = _assignedWheels[slot];
+          if (w == null) continue;
+          final spins = <int>{...w.spinNodeIndices};
+          final calipers = <int>{...w.caliperHubNodeIndices};
+          if (role == 'Spin (Wheel)') {
+            spins.addAll(calipers);
+          } else if (role == 'Steer Only (Knuckle/Caliper)' || role == 'Steer Only (Caliper)') {
+            // Keep in caliperHubNodeIndices
+          } else if (role == 'Static (Chassis)' || role == 'Static (Chassis/Exhaust)') {
+            spins.removeAll(calipers);
+          }
+          _assignedWheels[slot] = DetectedWheel(
+            nodeIndex: w.nodeIndex,
+            nodeName: w.nodeName,
+            worldPosition: w.worldPosition,
+            confidence: w.confidence,
+            meshIndex: w.meshIndex,
+            partNodeIndices: w.partNodeIndices,
+            partIds: w.partIds,
+            spinNodeIndices: spins.toList(),
+            caliperHubNodeIndices: calipers.toList(),
+            axle: w.axle,
+            side: w.side,
+            radius: w.radius,
+            width: w.width,
+            circularity: w.circularity,
+            subMeshCount: w.subMeshCount,
+          );
+        }
+      }
+      _viewportUpdateEpoch++;
     });
     _showMessage('Group $groupId assigned role: $role');
   }
 
-  void _onPickWheelInViewport(String corner) {
-    if (_selectedNodeIndex != null) {
-      _reassignWheel(corner, _selectedNodeIndex);
-      final mirrorCorner = corner == 'FL'
-          ? 'FR'
-          : (corner == 'FR'
-              ? 'FL'
-              : (corner == 'RL' ? 'RR' : 'RL'));
-      final source = _assignedWheels[corner];
-      if (source != null) {
-        final mirroredPos = Vec3(
-          -source.worldPosition.x,
-          source.worldPosition.y,
-          source.worldPosition.z,
-        );
-        final mirrorAxle = mirrorCorner.startsWith('F') ? 'front' : 'rear';
-        final mirrorSide = mirrorCorner.endsWith('L') ? 'left' : 'right';
-        _assignedWheels[mirrorCorner] = DetectedWheel(
-          nodeIndex: source.nodeIndex,
-          nodeName: '${source.nodeName}_mirrored',
-          worldPosition: mirroredPos,
-          confidence: source.confidence,
-          meshIndex: source.meshIndex,
-          partNodeIndices: source.partNodeIndices,
-          partIds: source.partIds,
-          axle: mirrorAxle,
-          side: mirrorSide,
-          radius: source.radius,
-          width: source.width,
-          circularity: source.circularity,
-          subMeshCount: source.subMeshCount,
-        );
+  void _onGroupToggle(int groupId, bool isEnabled) {
+    setState(() {
+      final grp = _detectedGroups.firstWhere(
+        (g) => g.id == groupId,
+        orElse: () => _detectedGroups.first,
+      );
+      grp.isEnabled = isEnabled;
+      _viewportUpdateEpoch++;
+    });
+    _showMessage('Group $groupId ${isEnabled ? "enabled" : "disabled"}');
+  }
+
+  void _autoMirrorWheel(String corner) {
+    final mirrorCorner = corner == 'FL'
+        ? 'FR'
+        : (corner == 'FR'
+            ? 'FL'
+            : (corner == 'RL' ? 'RR' : 'RL'));
+    final source = _assignedWheels[corner];
+    if (source != null) {
+      final mirroredPos = Vec3(
+        -source.worldPosition.x,
+        source.worldPosition.y,
+        source.worldPosition.z,
+      );
+      final mirrorAxle = mirrorCorner.startsWith('F') ? 'front' : 'rear';
+      final mirrorSide = mirrorCorner.endsWith('L') ? 'left' : 'right';
+
+      int targetNodeIdx = source.nodeIndex;
+      List<int> targetPartNodes = [...source.partNodeIndices];
+      List<String> targetPartIds = [];
+
+      if (_parsedModel != null) {
+        MeshInstance? closestRightInst;
+        double closestDist = source.radius * 1.15;
+        for (final inst in _parsedModel!.instances) {
+          final dist = (inst.worldBBox.center - mirroredPos).length;
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestRightInst = inst;
+          }
+        }
+        if (closestRightInst != null) {
+          targetNodeIdx = closestRightInst.nodeIndex;
+          targetPartNodes = [closestRightInst.nodeIndex];
+          targetPartIds = ['node:${closestRightInst.nodeIndex}'];
+        }
       }
-      setState(() {
-        _scanCompleted = true;
-        _highlightFoundWheels = true;
-        _viewportUpdateEpoch++;
-      });
-      final effectiveWheels = _getEffectiveWheelPositions();
-      updateSketchfabWheelMarkers(effectiveWheels);
-      _showMessage('Assigned selected part to Wheel $corner & auto-mirrored to $mirrorCorner');
-    } else {
-      _showMessage('Select a tire in the 3D viewport, then click Pick to assign Wheel $corner');
+
+      if (targetPartIds.isEmpty) {
+        targetPartIds = source.partIds.isNotEmpty
+            ? source.partIds.map((id) => '${id}_mirrored_$mirrorCorner').toList()
+            : ['mirrored_${mirrorCorner}_node_${source.nodeIndex}'];
+      }
+
+      _assignedWheels[mirrorCorner] = DetectedWheel(
+        nodeIndex: targetNodeIdx,
+        nodeName: '${source.nodeName}_mirrored',
+        worldPosition: mirroredPos,
+        confidence: source.confidence,
+        meshIndex: source.meshIndex,
+        partNodeIndices: targetPartNodes,
+        partIds: targetPartIds,
+        spinNodeIndices: targetPartNodes,
+        caliperHubNodeIndices: const [],
+        axle: mirrorAxle,
+        side: mirrorSide,
+        radius: source.radius,
+        width: source.width,
+        circularity: source.circularity,
+        subMeshCount: source.subMeshCount,
+      );
     }
   }
 
-  void _onRecalculateHeightFilter(double threshold) {
+  void _onPickWheelInViewport(String corner) {
+    setState(() => _activePickingCorner = corner);
+    _showMessage('Click a wheel mesh in the 3D viewport to assign to Wheel $corner...');
+  }
+
+  void _onRecalculateHeightFilter(double groundTolPercent, double inboardTolPercent) {
     if (_parsedModel != null) {
-      final groundTol = (threshold / 100.0).clamp(0.02, 0.25);
-      final jsResult = detectSketchfabWheels(groundTol: groundTol);
+      final groundTol = (groundTolPercent / 100.0).clamp(0.02, 0.25);
+      final inboardTol = (inboardTolPercent / 100.0).clamp(0.0, 0.10);
+
+      // 1. Run AutoDetector in Dart FIRST
       final detection = AutoDetector.detect(
         _parsedModel!,
         groundTolRatio: groundTol,
-        inboardTolRatio: 0.02,
+        inboardTolRatio: inboardTol,
+        excludeRoofAntenna: _excludeRoofAntenna,
       );
-      _syncJsAndAutoWheels(jsResult, detection);
+
       SolidScene.invalidate(_parsedModel!);
       if (detection.autoAxisResult != null &&
           detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
@@ -970,6 +1118,12 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       if (detection.wheelGroundOffset.abs() > 0.001) {
         snapSketchfabModelToGround();
       }
+
+      // 2. Run detectSketchfabWheels on rotated/snapped Three.js model
+      final jsResult = detectSketchfabWheels(groundTol: groundTol, inboardTol: inboardTol);
+      _syncJsAndAutoWheels(jsResult, detection);
+      _updateDetectedGroupsFromWheels(detection);
+
       setState(() {
         _detection = detection;
         _scanCompleted = true;
@@ -987,7 +1141,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       final cleanNote = detection.underWheelObjectsDeleted > 0
           ? ' · Purged ${detection.underWheelObjectsDeleted} under-wheel mesh'
           : '';
-      _showMessage('Re-run detection (${threshold.round()}% tol)$axisNote$cleanNote · 0.00m land contact');
+      _showMessage('Re-run detection (${groundTolPercent.round()}% tol, ${inboardTolPercent.toStringAsFixed(1)}% inb)$axisNote$cleanNote · 0.00m land contact');
     } else {
       _showMessage('Import a model first to run wheel detection');
     }
@@ -995,47 +1149,70 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
   void _onMirrorLeftToRight() {
     setState(() {
-      final fl = _assignedWheels['FL'];
-      final rl = _assignedWheels['RL'];
-      if (fl != null) {
-        _assignedWheels['FR'] = DetectedWheel(
-          nodeIndex: fl.nodeIndex,
-          nodeName: 'Wheel_FR_Mirrored',
-          worldPosition: Vec3(-fl.worldPosition.x, fl.worldPosition.y, fl.worldPosition.z),
+      for (final pair in [('FL', 'FR'), ('RL', 'RR')]) {
+        final source = _assignedWheels[pair.$1];
+        final targetSlot = pair.$2;
+        if (source == null) continue;
+
+        final mirroredPos = Vec3(
+          -source.worldPosition.x,
+          source.worldPosition.y,
+          source.worldPosition.z,
+        );
+        final mirrorAxle = targetSlot.startsWith('F') ? 'front' : 'rear';
+        final mirrorSide = targetSlot.endsWith('L') ? 'left' : 'right';
+
+        int targetNodeIdx = source.nodeIndex;
+        List<int> targetPartNodes = [...source.partNodeIndices];
+        List<String> targetPartIds = [];
+
+        if (_parsedModel != null) {
+          MeshInstance? closestRightInst;
+          double closestDist = source.radius * 1.15;
+          for (final inst in _parsedModel!.instances) {
+            final dist = (inst.worldBBox.center - mirroredPos).length;
+            if (dist < closestDist) {
+              closestDist = dist;
+              closestRightInst = inst;
+            }
+          }
+          if (closestRightInst != null) {
+            targetNodeIdx = closestRightInst.nodeIndex;
+            targetPartNodes = [closestRightInst.nodeIndex];
+            targetPartIds = ['node:${closestRightInst.nodeIndex}'];
+          }
+        }
+
+        if (targetPartIds.isEmpty) {
+          targetPartIds = source.partIds.isNotEmpty
+              ? source.partIds.map((id) => '${id}_mirrored_$targetSlot').toList()
+              : ['mirrored_${targetSlot}_node_${source.nodeIndex}'];
+        }
+
+        _assignedWheels[targetSlot] = DetectedWheel(
+          nodeIndex: targetNodeIdx,
+          nodeName: 'Wheel_${targetSlot}_Mirrored',
+          worldPosition: mirroredPos,
           confidence: 1.0,
-          meshIndex: fl.meshIndex,
-          partNodeIndices: fl.partNodeIndices,
-          partIds: fl.partIds,
-          spinNodeIndices: fl.spinNodeIndices,
-          caliperHubNodeIndices: fl.caliperHubNodeIndices,
-          axle: 'front',
-          side: 'right',
-          radius: fl.radius,
-          width: fl.width,
-          circularity: fl.circularity,
-          subMeshCount: fl.subMeshCount,
+          meshIndex: source.meshIndex,
+          partNodeIndices: targetPartNodes,
+          partIds: targetPartIds,
+          spinNodeIndices: targetPartNodes,
+          caliperHubNodeIndices: const [],
+          axle: mirrorAxle,
+          side: mirrorSide,
+          radius: source.radius,
+          width: source.width,
+          circularity: source.circularity,
+          subMeshCount: source.subMeshCount,
         );
       }
-      if (rl != null) {
-        _assignedWheels['RR'] = DetectedWheel(
-          nodeIndex: rl.nodeIndex,
-          nodeName: 'Wheel_RR_Mirrored',
-          worldPosition: Vec3(-rl.worldPosition.x, rl.worldPosition.y, rl.worldPosition.z),
-          confidence: 1.0,
-          meshIndex: rl.meshIndex,
-          partNodeIndices: rl.partNodeIndices,
-          partIds: rl.partIds,
-          spinNodeIndices: rl.spinNodeIndices,
-          caliperHubNodeIndices: rl.caliperHubNodeIndices,
-          axle: 'rear',
-          side: 'right',
-          radius: rl.radius,
-          width: rl.width,
-          circularity: rl.circularity,
-          subMeshCount: rl.subMeshCount,
-        );
-      }
+      _scanCompleted = true;
+      _highlightFoundWheels = true;
+      _viewportUpdateEpoch++;
     });
+    final effectiveWheels = _getEffectiveWheelPositions();
+    updateSketchfabWheelMarkers(effectiveWheels);
     _showMessage('Mirrored Left wheels (FL, RL) to Right side (FR, RR)');
   }
 
@@ -1043,28 +1220,57 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() {
       for (final key in ['FL', 'FR', 'RL', 'RR']) {
         final w = _assignedWheels[key];
-        if (w != null && _parsedModel != null && w.nodeIndex < _parsedModel!.nodes.length) {
-          final node = _parsedModel!.nodes[w.nodeIndex];
-          _assignedWheels[key] = DetectedWheel(
-            nodeIndex: w.nodeIndex,
-            nodeName: w.nodeName,
-            worldPosition: AutoDetector.worldCenterForNode(_parsedModel!, node),
-            confidence: w.confidence,
-            meshIndex: w.meshIndex,
-            partNodeIndices: w.partNodeIndices,
-            partIds: w.partIds,
-            spinNodeIndices: w.spinNodeIndices,
-            caliperHubNodeIndices: w.caliperHubNodeIndices,
-            radius: w.radius,
-            width: w.width,
-            circularity: w.circularity,
-            subMeshCount: w.subMeshCount,
-            axle: w.axle,
-            side: w.side,
-          );
+        if (w == null || _parsedModel == null) continue;
+
+        final targetNodeSet = (w.spinNodeIndices.isNotEmpty
+                ? w.spinNodeIndices
+                : (w.partNodeIndices.isNotEmpty ? w.partNodeIndices : [w.nodeIndex]))
+            .toSet();
+
+        BBox? clusterBox;
+        for (final inst in _parsedModel!.instances) {
+          if (targetNodeSet.contains(inst.nodeIndex)) {
+            clusterBox = clusterBox == null
+                ? inst.worldBBox
+                : BBox.union([clusterBox, inst.worldBBox]);
+          }
         }
+
+        Vec3 newCenter = clusterBox?.center ??
+            (w.nodeIndex < _parsedModel!.nodes.length
+                ? AutoDetector.worldCenterForNode(
+                    _parsedModel!, _parsedModel!.nodes[w.nodeIndex])
+                : w.worldPosition);
+
+        // If mirrored wheel whose nodes live on opposite X side, preserve its side
+        if (w.side == 'right' && newCenter.x < 0) {
+          newCenter = Vec3(-newCenter.x, newCenter.y, newCenter.z);
+        } else if (w.side == 'left' && newCenter.x > 0) {
+          newCenter = Vec3(-newCenter.x, newCenter.y, newCenter.z);
+        }
+
+        _assignedWheels[key] = DetectedWheel(
+          nodeIndex: w.nodeIndex,
+          nodeName: w.nodeName,
+          worldPosition: newCenter,
+          confidence: w.confidence,
+          meshIndex: w.meshIndex,
+          partNodeIndices: w.partNodeIndices,
+          partIds: w.partIds,
+          spinNodeIndices: w.spinNodeIndices,
+          caliperHubNodeIndices: w.caliperHubNodeIndices,
+          radius: w.radius,
+          width: w.width,
+          circularity: w.circularity,
+          subMeshCount: w.subMeshCount,
+          axle: w.axle,
+          side: w.side,
+        );
       }
+      _viewportUpdateEpoch++;
     });
+    final effectiveWheels = _getEffectiveWheelPositions();
+    updateSketchfabWheelMarkers(effectiveWheels);
     _showMessage('Wheel spin pivots recentered to cylinder fit');
   }
 
@@ -1117,6 +1323,30 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     _showMessage('Reset $prop to preset default');
   }
 
+  void _onNodeSelected(int idx) {
+    if (_activePickingCorner != null) {
+      final corner = _activePickingCorner!;
+      setState(() {
+        _activePickingCorner = null;
+        _reassignWheel(corner, idx);
+        _autoMirrorWheel(corner);
+        _scanCompleted = true;
+        _highlightFoundWheels = true;
+        _viewportUpdateEpoch++;
+      });
+      final effectiveWheels = _getEffectiveWheelPositions();
+      updateSketchfabWheelMarkers(effectiveWheels);
+      _showMessage('Assigned node $idx to Wheel $corner & mirrored to opposite');
+    } else {
+      setState(() {
+        _selectedNodeIndex = idx;
+        if (_selectedBodyNodeIndex == null && _parsedModel != null) {
+          _selectBody(idx);
+        }
+      });
+    }
+  }
+
   void _onHoverPart(String? partId) {
     setState(() {
       if (partId == null || !_scanCompleted) {
@@ -1144,6 +1374,22 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         } else if (id == 3) {
           highlightSketchfabMeshesCyan(['knuckle', 'upright', 'suspension', 'arm', 'wishbone']);
         }
+      } else if (partId == 'loose_parts') {
+        _hoveredNodeIndex = null;
+        highlightSketchfabMeshesCyan(['caliper', 'disc', 'brake', 'knuckle', 'arm', 'suspension', 'hub']);
+      } else if (partId == 'groups_match') {
+        _hoveredNodeIndex = null;
+        highlightSketchfabMeshesCyan(['wheel', 'tire', 'tyre', 'rim', 'disc', 'caliper']);
+      } else if (partId == 'height_filter') {
+        _hoveredNodeIndex = null;
+        final wheelNames = _assignedWheels.values
+            .whereType<DetectedWheel>()
+            .map((w) => w.nodeName)
+            .toList();
+        highlightSketchfabMeshesCyan(wheelNames.isNotEmpty ? wheelNames : ['wheel', 'tire']);
+      } else if (partId == 'wheel_hubs') {
+        _hoveredNodeIndex = null;
+        highlightSketchfabMeshesCyan(['FL', 'FR', 'RL', 'RR', 'wheel', 'tire', 'rim']);
       } else if (partId == 'model_root' ||
           partId == 'bbox' ||
           partId == 'ground_plane' ||
@@ -1293,7 +1539,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                               modelName: _modelName,
                               onExport: _exportGodotFiles,
                               inspectMode: _inspectMode,
-                              wheelsCount: _detection?.wheels.length ?? 0,
+                              wheelsCount: _assignedWheels.values
+                                  .whereType<DetectedWheel>()
+                                  .length,
                               isScanDone: _scanCompleted,
                               isTestDrive: _isTestDriveMode,
                               onToggleTestDrive: () {
@@ -1353,14 +1601,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                       _selectedNodeIndex,
                                                   hoveredNodeIndex:
                                                       _hoveredNodeIndex,
-                                                  onNodeSelected: (idx) {
-                                                    setState(() {
-                                                      _selectedNodeIndex = idx;
-                                                      if (_selectedBodyNodeIndex == null && _parsedModel != null) {
-                                                        _selectBody(idx);
-                                                      }
-                                                    });
-                                                  },
+                                                  onNodeSelected: _onNodeSelected,
                                                   accentColor: _preset.accent,
                                                   bodyColor: widget.initialCar?.accentColor ??
                                                       const Color(0xFFD6DBDF),
@@ -1408,14 +1649,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                 _selectedNodeIndex,
                                             hoveredNodeIndex:
                                                 _hoveredNodeIndex,
-                                            onNodeSelected: (idx) {
-                                              setState(() {
-                                                _selectedNodeIndex = idx;
-                                                if (_selectedBodyNodeIndex == null && _parsedModel != null) {
-                                                  _selectBody(idx);
-                                                }
-                                              });
-                                            },
+                                            onNodeSelected: _onNodeSelected,
                                             accentColor: _preset.accent,
                                             bodyColor: widget.initialCar?.accentColor ??
                                                 const Color(0xFFD6DBDF),
@@ -1479,6 +1713,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       isScanDone: _scanCompleted,
       onApproveAutoRig: _onStartWheelScan,
       onGroupRoleChange: _onGroupRoleChange,
+      onGroupToggle: _onGroupToggle,
+      excludeRoofAntenna: _excludeRoofAntenna,
+      onExcludeRoofAntennaChanged: (val) => setState(() => _excludeRoofAntenna = val),
       onPickWheelInViewport: _onPickWheelInViewport,
       onRecalculateHeightFilter: _onRecalculateHeightFilter,
       onMirrorLeftToRight: _onMirrorLeftToRight,
