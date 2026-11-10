@@ -3422,11 +3422,26 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
 
+    final sharedOrBodyNodes = <int>{
+      if (detection?.body != null) detection!.body!.nodeIndex,
+    };
+    for (final inst in model!.instances) {
+      final s = inst.worldBBox.size;
+      if (max(s.x.abs(), s.z.abs()) > carLen * 0.42) {
+        sharedOrBodyNodes.add(inst.nodeIndex);
+      }
+    }
     for (final w in wheels.values) {
-      nonWheelNodes.removeAll(w.partNodeIndices);
-      nonWheelNodes.removeAll(w.spinNodeIndices);
-      nonWheelNodes.removeAll(w.caliperHubNodeIndices);
-      nonWheelNodes.remove(w.nodeIndex);
+      for (final n in [
+        ...w.partNodeIndices,
+        ...w.spinNodeIndices,
+        ...w.caliperHubNodeIndices,
+        w.nodeIndex
+      ]) {
+        if (!sharedOrBodyNodes.contains(n)) {
+          nonWheelNodes.remove(n);
+        }
+      }
     }
 
     final nodeToTransform = <int, int>{};
@@ -3471,18 +3486,19 @@ class _TestDriveScenePainter extends CustomPainter {
       eyes[calIdx] = hub + _applyWheelRotTranspose(dVehHubCal, steer, 0.0);
 
       // Map nodes to transforms with strict body/chassis guard
-      if (w.partNodeIndices.isNotEmpty) {
+      if (w.spinNodeIndices.isNotEmpty || w.caliperHubNodeIndices.isNotEmpty) {
+        for (final n in w.spinNodeIndices) {
+          assignSolidTransform(n, spinIdx);
+        }
+        for (final n in w.caliperHubNodeIndices) {
+          assignSolidTransform(n, calIdx);
+        }
+      } else if (w.partNodeIndices.isNotEmpty) {
         for (final n in w.partNodeIndices) {
           assignSolidTransform(n, spinIdx);
         }
       } else if (!nonWheelNodes.contains(w.nodeIndex)) {
         assignSolidTransform(w.nodeIndex, spinIdx);
-      }
-      for (final n in w.spinNodeIndices) {
-        assignSolidTransform(n, spinIdx);
-      }
-      for (final n in w.caliperHubNodeIndices) {
-        assignSolidTransform(n, calIdx);
       }
     }
 
@@ -4295,11 +4311,26 @@ class _TestDriveScenePainter extends CustomPainter {
         nonWheelNodes.add(inst.nodeIndex);
       }
     }
+    final sharedOrBodyNodes = <int>{
+      if (detection?.body != null) detection!.body!.nodeIndex,
+    };
+    for (final inst in model!.instances) {
+      final s = inst.worldBBox.size;
+      if (max(s.x.abs(), s.z.abs()) > carLen * 0.42) {
+        sharedOrBodyNodes.add(inst.nodeIndex);
+      }
+    }
     for (final w in wheels.values) {
-      nonWheelNodes.removeAll(w.partNodeIndices);
-      nonWheelNodes.removeAll(w.spinNodeIndices);
-      nonWheelNodes.removeAll(w.caliperHubNodeIndices);
-      nonWheelNodes.remove(w.nodeIndex);
+      for (final n in [
+        ...w.partNodeIndices,
+        ...w.spinNodeIndices,
+        ...w.caliperHubNodeIndices,
+        w.nodeIndex
+      ]) {
+        if (!sharedOrBodyNodes.contains(n)) {
+          nonWheelNodes.remove(n);
+        }
+      }
     }
 
     final nodeToTransform = <int, int>{};
@@ -4332,18 +4363,19 @@ class _TestDriveScenePainter extends CustomPainter {
       final calLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, 0.0);
       worldMatrices[calIdx] = vehicleMatrix * calLocalMat;
 
-      if (w.partNodeIndices.isNotEmpty) {
+      if (w.spinNodeIndices.isNotEmpty || w.caliperHubNodeIndices.isNotEmpty) {
+        for (final n in w.spinNodeIndices) {
+          assignWireTransform(n, spinIdx);
+        }
+        for (final n in w.caliperHubNodeIndices) {
+          assignWireTransform(n, calIdx);
+        }
+      } else if (w.partNodeIndices.isNotEmpty) {
         for (final n in w.partNodeIndices) {
           assignWireTransform(n, spinIdx);
         }
       } else if (!nonWheelNodes.contains(w.nodeIndex)) {
         assignWireTransform(w.nodeIndex, spinIdx);
-      }
-      for (final n in w.spinNodeIndices) {
-        assignWireTransform(n, spinIdx);
-      }
-      for (final n in w.caliperHubNodeIndices) {
-        assignWireTransform(n, calIdx);
       }
     }
 

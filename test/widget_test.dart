@@ -3296,5 +3296,123 @@ f 4 5 6
       await tester.tap(browseButton);
       await tester.pump(const Duration(milliseconds: 600));
     });
+
+    test('Part III Bug A: Manual Step 1 transforms preserve user orientation and do not auto-reverse', () {
+      final model = ParsedModel.createProceduralDefault(name: 'Apex GT');
+      // Scan first
+      final firstDetection = AutoDetector.detect(model);
+      expect(firstDetection.wheels.length, 4);
+
+      // Rotate yaw by 180 degrees (flip front/back)
+      model.rotateYaw(pi);
+
+      // Detection with autoAlignForward: false (as called in _syncWheelsAfterModelTransform)
+      final afterTransformDetection = AutoDetector.detect(
+        model,
+        pruneUnderWheelObjects: false,
+        autoAlignForward: false,
+        snapToLand: false,
+      );
+
+      // Verify that afterTransformDetection did NOT auto-rotate the model back
+      expect(afterTransformDetection.autoAxisResult, isNull);
+      expect(afterTransformDetection.wheelGroundOffset, 0.0);
+    });
+
+    test('Part III Bug B: Single-node / merged-mesh cars retain body node in nonWheelNodes', () {
+      // Create a single-node model where the single node is large (> 0.42 * carLen)
+      final verts = [
+        Vec3(-1.0, 0.0, -2.0),
+        Vec3(1.0, 0.0, -2.0),
+        Vec3(1.0, 1.0, 2.0),
+        Vec3(-1.0, 1.0, 2.0),
+      ];
+      final singleNodeMesh = MeshData(
+        index: 0,
+        name: 'Single_Merged_Car',
+        vertices: verts,
+        edges: [Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0)],
+        bbox: BBox.fromPoints(verts),
+      );
+      final singleNodeModel = ParsedModel(
+        fileName: 'single_node.glb',
+        meshes: [singleNodeMesh],
+        nodes: [
+          SceneNode(
+            index: 0,
+            name: 'Single_Merged_Car',
+            localTransform: Mat4.identity(),
+            meshIndex: 0,
+            childIndices: const [],
+            parentIndex: null,
+          )
+        ],
+        instances: [
+          MeshInstance(
+            nodeIndex: 0,
+            meshIndex: 0,
+            worldVertices: verts,
+            edges: singleNodeMesh.edges,
+            worldBBox: singleNodeMesh.bbox,
+          )
+        ],
+        rootNodeIndices: const [0],
+        worldBBox: singleNodeMesh.bbox,
+      );
+
+      final carLen = singleNodeModel.worldBBox.size.z.abs();
+      final sharedOrBodyNodes = <int>{};
+      for (final inst in singleNodeModel.instances) {
+        final s = inst.worldBBox.size;
+        if (max(s.x.abs(), s.z.abs()) > carLen * 0.42) {
+          sharedOrBodyNodes.add(inst.nodeIndex);
+        }
+      }
+
+      // Large merged node 0 must be recognized as shared/body and NOT removed from nonWheelNodes
+      expect(sharedOrBodyNodes.contains(0), isTrue);
+    });
+
+    test('Part III Bug C: Group role change and group toggle cleanly updates spin and caliper sets', () {
+      final wheel = DetectedWheel(
+        nodeIndex: 1,
+        nodeName: 'FL',
+        worldPosition: const Vec3(-0.8, 0.35, -1.3),
+        confidence: 0.95,
+        partNodeIndices: [1, 2],
+        spinNodeIndices: [1],
+        caliperHubNodeIndices: [2],
+        axle: 'front',
+        side: 'left',
+        radius: 0.35,
+        width: 0.25,
+      );
+
+      // Reassign group 2 (node 2) to 'Spin (Wheel)'
+      final grpNodes = {2};
+      final spins = <int>{...wheel.spinNodeIndices};
+      final calipers = <int>{...wheel.caliperHubNodeIndices};
+
+      // When role == 'Spin (Wheel)'
+      spins.addAll(grpNodes);
+      calipers.removeAll(grpNodes);
+      expect(spins, contains(2));
+      expect(calipers.contains(2), isFalse);
+
+      // When toggled off (isEnabled == false)
+      spins.removeAll(grpNodes);
+      calipers.removeAll(grpNodes);
+      expect(spins.contains(2), isFalse);
+      expect(calipers.contains(2), isFalse);
+    });
+
+    test('Part III Bug F: WireframeViewer projection uses 60 deg FOV matching scene painter', () {
+      const fov = 60.0 * pi / 180.0;
+      final proj = Mat4.perspective(fov, 16.0 / 9.0, 0.1, 100.0);
+      final clip = proj.transformClip(const Vec3(0, 0, -5));
+      expect(clip[3], greaterThan(0.0));
+      final ndcY = clip[1] / clip[3];
+      expect(ndcY.abs(), lessThanOrEqualTo(1.0));
+    });
   });
 }

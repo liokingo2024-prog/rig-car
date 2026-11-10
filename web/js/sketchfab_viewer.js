@@ -2013,7 +2013,18 @@
     // Re-synchronize wheel hub coordinates after ground snap
     Object.keys(wheelsResult).forEach(corner => {
       const w = wheelsResult[corner];
-      if (w.mesh) {
+      const targetMeshes = (w.spinMeshes && w.spinMeshes.length) ? w.spinMeshes : (w.meshes || []);
+      if (targetMeshes.length > 0) {
+        const b = new THREE.Box3();
+        targetMeshes.forEach(m => {
+          m.updateWorldMatrix(true, false);
+          b.union(new THREE.Box3().setFromObject(m));
+        });
+        const c = b.getCenter(new THREE.Vector3());
+        w.x = c.x;
+        w.y = c.y;
+        w.z = c.z;
+      } else if (w.mesh) {
         w.mesh.updateWorldMatrix(true, false);
         const b = new THREE.Box3().setFromObject(w.mesh);
         const c = b.getCenter(new THREE.Vector3());

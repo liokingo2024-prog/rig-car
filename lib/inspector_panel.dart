@@ -2519,8 +2519,13 @@ class _AudioSlotCardState extends State<_AudioSlotCard> {
                 onPressed: () {
                   final willPlay = !widget.slot.isPlaying;
                   setState(() => widget.slot.isPlaying = willPlay);
+                  widget.onPreview();
                   if (willPlay) {
-                    widget.onPreview();
+                    Future.delayed(const Duration(seconds: 1), () {
+                      if (mounted && widget.slot.isPlaying) {
+                        setState(() => widget.slot.isPlaying = false);
+                      }
+                    });
                   }
                 },
                 icon: Icon(

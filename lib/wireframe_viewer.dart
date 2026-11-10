@@ -264,7 +264,7 @@ class _WireframeViewerState extends State<WireframeViewer>
     );
     final view = Mat4.lookAt(eye, _target, const Vec3(0, 1, 0));
     final proj = Mat4.perspective(
-      45.0 * pi / 180.0,
+      60.0 * pi / 180.0,
       size.width / max(1.0, size.height),
       0.1,
       100.0,
@@ -284,8 +284,8 @@ class _WireframeViewerState extends State<WireframeViewer>
       final ndcZ = clip[2] / clip[3];
       if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2) continue;
 
-      final screenX = (ndcX * 0.5 + 0.5) * size.width;
-      final screenY = (-ndcY * 0.5 + 0.5) * size.height;
+      final screenX = (ndcX * 0.5 + 0.5) * size.width + _panX;
+      final screenY = (1.0 - (ndcY * 0.5 + 0.5)) * size.height + _panY;
       final dist = (Offset(screenX, screenY) - tapPos).distance;
 
       if (dist < bestDist || (dist < bestDist + 20 && ndcZ < bestZ)) {

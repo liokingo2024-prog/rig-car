@@ -875,6 +875,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     final detection = AutoDetector.detect(
       _parsedModel!,
       excludeRoofAntenna: _excludeRoofAntenna,
+      pruneUnderWheelObjects: false,
+      autoAlignForward: false,
+      snapToLand: false,
     );
     _detection = detection;
     _mapDetectedWheels(detection.wheels);
@@ -1012,37 +1015,48 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       );
       grp.role = role;
 
-      if (groupId == 2) {
-        for (final slot in ['FL', 'FR', 'RL', 'RR']) {
-          final w = _assignedWheels[slot];
-          if (w == null) continue;
-          final spins = <int>{...w.spinNodeIndices};
-          final calipers = <int>{...w.caliperHubNodeIndices};
-          if (role == 'Spin (Wheel)') {
-            spins.addAll(calipers);
-          } else if (role == 'Steer Only (Knuckle/Caliper)' || role == 'Steer Only (Caliper)') {
-            // Keep in caliperHubNodeIndices
-          } else if (role == 'Static (Chassis)' || role == 'Static (Chassis/Exhaust)') {
-            spins.removeAll(calipers);
-          }
-          _assignedWheels[slot] = DetectedWheel(
-            nodeIndex: w.nodeIndex,
-            nodeName: w.nodeName,
-            worldPosition: w.worldPosition,
-            confidence: w.confidence,
-            meshIndex: w.meshIndex,
-            partNodeIndices: w.partNodeIndices,
-            partIds: w.partIds,
-            spinNodeIndices: spins.toList(),
-            caliperHubNodeIndices: calipers.toList(),
-            axle: w.axle,
-            side: w.side,
-            radius: w.radius,
-            width: w.width,
-            circularity: w.circularity,
-            subMeshCount: w.subMeshCount,
-          );
+      for (final slot in ['FL', 'FR', 'RL', 'RR']) {
+        final w = _assignedWheels[slot];
+        if (w == null) continue;
+        final spins = <int>{...w.spinNodeIndices};
+        final calipers = <int>{...w.caliperHubNodeIndices};
+        final cornerGroupNodes = grp.nodeIndices
+            .where((n) =>
+                w.partNodeIndices.contains(n) ||
+                w.nodeIndex == n ||
+                spins.contains(n) ||
+                calipers.contains(n))
+            .toSet();
+
+        if (role == 'Spin (Wheel)') {
+          spins.addAll(cornerGroupNodes);
+          calipers.removeAll(cornerGroupNodes);
+        } else if (role.startsWith('Steer Only')) {
+          spins.removeAll(cornerGroupNodes);
+          calipers.addAll(cornerGroupNodes);
+        } else {
+          // Static (Chassis)
+          spins.removeAll(cornerGroupNodes);
+          calipers.removeAll(cornerGroupNodes);
         }
+
+        _assignedWheels[slot] = DetectedWheel(
+          nodeIndex: w.nodeIndex,
+          nodeName: w.nodeName,
+          worldPosition: w.worldPosition,
+          confidence: w.confidence,
+          meshIndex: w.meshIndex,
+          partNodeIndices: w.partNodeIndices,
+          partIds: w.partIds,
+          spinNodeIndices: spins.toList(),
+          caliperHubNodeIndices: calipers.toList(),
+          axle: w.axle,
+          side: w.side,
+          radius: w.radius,
+          width: w.width,
+          circularity: w.circularity,
+          subMeshCount: w.subMeshCount,
+        );
       }
       _viewportUpdateEpoch++;
     });
@@ -1056,6 +1070,54 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         orElse: () => _detectedGroups.first,
       );
       grp.isEnabled = isEnabled;
+
+      for (final slot in ['FL', 'FR', 'RL', 'RR']) {
+        final w = _assignedWheels[slot];
+        if (w == null) continue;
+        final spins = <int>{...w.spinNodeIndices};
+        final calipers = <int>{...w.caliperHubNodeIndices};
+        final cornerGroupNodes = grp.nodeIndices
+            .where((n) =>
+                w.partNodeIndices.contains(n) ||
+                w.nodeIndex == n ||
+                spins.contains(n) ||
+                calipers.contains(n))
+            .toSet();
+
+        if (!isEnabled) {
+          spins.removeAll(cornerGroupNodes);
+          calipers.removeAll(cornerGroupNodes);
+        } else {
+          if (grp.role == 'Spin (Wheel)') {
+            spins.addAll(cornerGroupNodes);
+            calipers.removeAll(cornerGroupNodes);
+          } else if (grp.role.startsWith('Steer Only')) {
+            spins.removeAll(cornerGroupNodes);
+            calipers.addAll(cornerGroupNodes);
+          } else {
+            spins.removeAll(cornerGroupNodes);
+            calipers.removeAll(cornerGroupNodes);
+          }
+        }
+
+        _assignedWheels[slot] = DetectedWheel(
+          nodeIndex: w.nodeIndex,
+          nodeName: w.nodeName,
+          worldPosition: w.worldPosition,
+          confidence: w.confidence,
+          meshIndex: w.meshIndex,
+          partNodeIndices: w.partNodeIndices,
+          partIds: w.partIds,
+          spinNodeIndices: spins.toList(),
+          caliperHubNodeIndices: calipers.toList(),
+          axle: w.axle,
+          side: w.side,
+          radius: w.radius,
+          width: w.width,
+          circularity: w.circularity,
+          subMeshCount: w.subMeshCount,
+        );
+      }
       _viewportUpdateEpoch++;
     });
     _showMessage('Group $groupId ${isEnabled ? "enabled" : "disabled"}');
@@ -1774,8 +1836,13 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           (s) => s.id == slotId,
           orElse: () => _audioSlots.first,
         );
-        playSketchfabAudioPreview(slotId, slot.pitchMultiplier);
-        _showMessage('Playing acoustic preview for $slotId');
+        if (slot.isPlaying) {
+          playSketchfabAudioPreview(slotId, slot.pitchMultiplier);
+          _showMessage('Playing acoustic preview for $slotId');
+        } else {
+          stopSketchfabAudioPreview();
+          _showMessage('Stopped acoustic preview for $slotId');
+        }
       },
       onGodotArchitectureChanged: (arch) => setState(() => _godotArchitecture = arch),
       onExport: _exportGodotFiles,
