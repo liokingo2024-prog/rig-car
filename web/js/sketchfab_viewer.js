@@ -75,6 +75,23 @@
 
   function init(container) {
     if (isInitialized && containerEl === container) return;
+
+    // Re-attach the existing scene when Flutter swaps platform views (for
+    // example Workbench -> Test Drive) instead of rebuilding and reloading.
+    if (isInitialized && renderer && scene && camera) {
+      containerEl = container;
+      const rw = container.clientWidth || 800;
+      const rh = container.clientHeight || 500;
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      container.appendChild(renderer.domElement);
+      renderer.setSize(rw, rh);
+      camera.aspect = rw / rh;
+      camera.updateProjectionMatrix();
+      return;
+    }
+
     containerEl = container;
 
     const width = container.clientWidth || 800;
@@ -269,7 +286,7 @@
 
   function animate() {
     animId = requestAnimationFrame(animate);
-    if (controls) controls.update();
+    if (!testDriveActive && controls) controls.update();
     if (renderer && scene && camera) {
       renderer.render(scene, camera);
     }
@@ -1110,6 +1127,17 @@
         dirLightFill.intensity = 0.0;
         dirLightRim.intensity = 0.0;
         renderer.toneMappingExposure = 1.0;
+        break;
+      case 'sunset':
+        scene.background.set(0x1c1207);
+        hemiLight.color.set(0xffd9b0);
+        hemiLight.groundColor.set(0x2a1a12);
+        hemiLight.intensity = 0.85;
+        dirLightKey.color.set(0xffb066);
+        dirLightKey.intensity = 1.5;
+        dirLightFill.intensity = 0.45;
+        dirLightRim.intensity = 0.6;
+        renderer.toneMappingExposure = 1.05;
         break;
       case 'studio':
       default:
@@ -2382,6 +2410,205 @@
     } catch (e) {}
   }
 
+  // ── WebGL Test Drive Mode ─────────────────────────────────────────────────
+  // Drives the already-loaded Three.js scene with the Dart-side physics state,
+  // keeping full PBR materials, decals and the exact wheel meshes.
+  let testDriveActive = false;
+  let testDriveGroup = null;
+  let testDriveTrackGroup = null;
+  let testDriveWheelPivots = {};
+  let testDriveModelSnapshot = null;
+
+  function snapshotTransform(mesh) {
+    return {
+      mesh: mesh,
+      parent: mesh.parent,
+      pos: mesh.position.clone(),
+      quat: mesh.quaternion.clone(),
+      scale: mesh.scale.clone()
+    };
+  }
+
+  function restoreTransform(item) {
+    if (!item || !item.mesh) return;
+    if (item.parent) {
+      item.parent.attach(item.mesh);
+    }
+    item.mesh.position.copy(item.pos);
+    item.mesh.quaternion.copy(item.quat);
+    item.mesh.scale.copy(item.scale);
+  }
+
+  function buildTestDriveTrack() {
+    if (testDriveTrackGroup) return;
+    testDriveTrackGroup = new THREE.Group();
+    testDriveTrackGroup.name = 'TestDriveTrack';
+
+    const roadGeo = new THREE.PlaneGeometry(30, 700);
+    const roadMat = new THREE.MeshStandardMaterial({
+      color: 0x1a221e,
+      roughness: 0.92,
+      metalness: 0.04
+    });
+    const road = new THREE.Mesh(roadGeo, roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(0, -0.015, -220);
+    testDriveTrackGroup.add(road);
+
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
+    [-14, 14].forEach(function (x) {
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 700), lineMat);
+      edge.rotation.x = -Math.PI / 2;
+      edge.position.set(x, 0.0, -220);
+      testDriveTrackGroup.add(edge);
+    });
+
+    const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
+    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
+    for (let z = 12; z >= -120; z -= 10) {
+      const cone = new THREE.Mesh(coneGeo, coneMat);
+      cone.position.set((z % 20 === 0) ? -2.6 : 2.6, 0.325, z);
+      testDriveTrackGroup.add(cone);
+    }
+
+    scene.add(testDriveTrackGroup);
+  }
+
+  function enterTestDriveMode() {
+    if (!scene || !currentModel || !renderer) return false;
+    if (testDriveActive) return true;
+
+    if (!detectedWheelData) {
+      try {
+        detectWheels({});
+      } catch (e) {}
+    }
+
+    testDriveActive = true;
+    try {
+      highlightWheelMeshes(null);
+      highlightMeshesCyan(null);
+    } catch (e) {}
+    if (wheelMarkersGroup) wheelMarkersGroup.visible = false;
+    if (forwardArrowGroup) forwardArrowGroup.visible = false;
+    if (gridGroup) gridGroup.visible = false;
+    if (controls) controls.enabled = false;
+
+    testDriveGroup = new THREE.Group();
+    testDriveGroup.name = 'TestDriveVehicleRoot';
+    scene.add(testDriveGroup);
+    testDriveModelSnapshot = snapshotTransform(currentModel);
+    testDriveGroup.add(currentModel);
+
+    testDriveWheelPivots = {};
+    const wheels = detectedWheelData && detectedWheelData.wheels;
+    if (wheels) {
+      ['FL', 'FR', 'RL', 'RR'].forEach(function (corner) {
+        const w = wheels[corner];
+        if (!w) return;
+        const hubWorld = new THREE.Vector3(w.x, w.y, w.z);
+        const steerGroup = new THREE.Group();
+        const spinGroup = new THREE.Group();
+        steerGroup.position.copy(hubWorld);
+        steerGroup.add(spinGroup);
+        testDriveGroup.add(steerGroup);
+
+        const origParents = [];
+        const calSet = new Set(w.caliperHubMeshes || []);
+        const spinList = (w.spinMeshes && w.spinMeshes.length)
+          ? w.spinMeshes
+          : (w.meshes || []);
+
+        spinList.forEach(function (mesh) {
+          if (!mesh || calSet.has(mesh)) return;
+          origParents.push(snapshotTransform(mesh));
+          spinGroup.attach(mesh);
+        });
+        calSet.forEach(function (mesh) {
+          if (!mesh) return;
+          origParents.push(snapshotTransform(mesh));
+          steerGroup.attach(mesh);
+        });
+
+        testDriveWheelPivots[corner] = {
+          steerGroup: steerGroup,
+          spinGroup: spinGroup,
+          hubPos: hubWorld,
+          origParents: origParents
+        };
+      });
+    }
+
+    buildTestDriveTrack();
+    return true;
+  }
+
+  function updateTestDriveState(state) {
+    if (!testDriveActive || !testDriveGroup || !state) return;
+
+    testDriveGroup.position.set(state.x || 0, state.y || 0, state.z || 0);
+    testDriveGroup.rotation.order = 'YXZ';
+    testDriveGroup.rotation.y = state.yaw || 0;
+    testDriveGroup.rotation.x = state.pitch || 0;
+    testDriveGroup.rotation.z = state.roll || 0;
+
+    const steer = state.steerAngle || 0;
+    const rearSteer = state.rearSteerAngle || 0;
+    const rollRad = state.wheelRollRad || 0;
+    const comps = state.compressions || [0, 0, 0, 0];
+
+    ['FL', 'FR', 'RL', 'RR'].forEach(function (corner, idx) {
+      const p = testDriveWheelPivots[corner];
+      if (!p) return;
+      const isFront = corner.charAt(0) === 'F';
+      p.steerGroup.rotation.y = isFront ? steer : rearSteer;
+      p.spinGroup.rotation.x = rollRad;
+      p.steerGroup.position.set(
+        p.hubPos.x,
+        p.hubPos.y + (comps[idx] || 0),
+        p.hubPos.z
+      );
+    });
+
+    if (camera && state.camX !== undefined) {
+      camera.position.set(state.camX, state.camY, state.camZ);
+      camera.lookAt(state.targetX || 0, state.targetY || 0.8, state.targetZ || 0);
+    }
+  }
+
+  function exitTestDriveMode() {
+    if (!testDriveActive) return;
+    testDriveActive = false;
+
+    Object.values(testDriveWheelPivots).forEach(function (p) {
+      p.origParents.forEach(restoreTransform);
+    });
+    testDriveWheelPivots = {};
+
+    if (testDriveGroup && currentModel) {
+      if (testDriveModelSnapshot) {
+        restoreTransform(testDriveModelSnapshot);
+      } else {
+        scene.attach(currentModel);
+      }
+      scene.remove(testDriveGroup);
+      testDriveGroup = null;
+    }
+    testDriveModelSnapshot = null;
+
+    if (testDriveTrackGroup) {
+      disposeObject(testDriveTrackGroup);
+      scene.remove(testDriveTrackGroup);
+      testDriveTrackGroup = null;
+    }
+
+    if (wheelMarkersGroup) wheelMarkersGroup.visible = true;
+    if (forwardArrowGroup) forwardArrowGroup.visible = true;
+    if (gridGroup) gridGroup.visible = true;
+    if (controls) controls.enabled = true;
+    resetCamera();
+  }
+
   // Global API attached to window
   window.SketchfabViewer = {
     init: init,
@@ -2392,6 +2619,7 @@
     setRenderMode: applyRenderMode,
     setCameraPreset: setCameraPreset,
     setLighting: setLighting,
+    resize: onWindowResize,
     setTurntable: setTurntable,
     resetCamera: resetCamera,
     setGridStyle: setGridStyle,
@@ -2412,6 +2640,10 @@
     updateSkidAudio: updateSkidAudio,
     updateEngineAndSirenAudio: updateEngineAndSirenAudio,
     stopEngineAndSirenAudio: stopEngineAndSirenAudio,
+    enterTestDriveMode: enterTestDriveMode,
+    updateTestDriveState: updateTestDriveState,
+    exitTestDriveMode: exitTestDriveMode,
+    isTestDriveActive: function() { return testDriveActive; },
     isInitialized: function() { return isInitialized; }
   };
 })();

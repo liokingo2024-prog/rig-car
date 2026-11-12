@@ -24,7 +24,8 @@ enum CameraMode { chase, orbit, hood }
 enum TestDriveRenderMode {
   solid('Solid', Icons.view_in_ar_rounded),
   wireframe('Wireframe', Icons.grid_4x4_rounded),
-  hybrid('Hybrid', Icons.layers_rounded);
+  hybrid('Hybrid', Icons.layers_rounded),
+  webgl('WebGL PBR', Icons.auto_awesome_rounded);
 
   const TestDriveRenderMode(this.label, this.icon);
   final String label;
@@ -69,6 +70,15 @@ enum TrackSurfaceStyle {
   }
 }
 
+typedef LivePhysicsUpdated = void Function({
+  required double mass,
+  required double engineForce,
+  required double grip,
+  required double springStiffness,
+  required double dampingCompression,
+  required String drive,
+});
+
 class TestDriveViewport extends StatefulWidget {
   const TestDriveViewport({
     super.key,
@@ -97,6 +107,7 @@ class TestDriveViewport extends StatefulWidget {
     this.soundProfile = 'v10',
     this.sirenEnabled = false,
     this.tireSkidAudioEnabled = true,
+    this.onPhysicsUpdated,
   });
 
   final double mass;
@@ -124,6 +135,9 @@ class TestDriveViewport extends StatefulWidget {
   final String soundProfile;
   final bool sirenEnabled;
   final bool tireSkidAudioEnabled;
+
+  /// Syncs values tuned live in Test Drive back to the workbench on exit.
+  final LivePhysicsUpdated? onPhysicsUpdated;
 
   /// Builds the local transform matrix that rotates a wheel about its true hub center [hub],
   /// applying [roll] along the lateral axle and [steer] around the vertical spindle axis,
@@ -234,6 +248,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   double _camDist = 5.8;
   double _camHeight = 2.10;
   double _camLookAhead = 0.0;
+  double _camSlip = 0.0;
+  double _camRoll = 0.0;
   double _chaseUserYaw = 0.0;
   double _chaseUserPitch = 0.0;
   double _timeSinceChaseDrag = 10.0;
@@ -256,6 +272,17 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   // Animated pulse for UI
   double _uiPulse = 0.0;
+
+  // Live tuning & performance telemetry
+  bool _showLiveTuning = false;
+  bool _webglActive = false;
+  double _best0to100 = 0.0;
+  double _topSpeedKmh = 0.0;
+  double _accelRunTime = 0.0;
+  bool _accelRunActive = false;
+  bool _accelRunDone = false;
+  int _slalomGates = 0;
+  final Set<int> _passedCones = {};
 
   @override
   void initState() {
@@ -287,11 +314,14 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
+      _syncWebglMode();
     });
   }
 
   @override
   void dispose() {
+    if (_webglActive) exitSketchfabTestDrive();
+    _notifyPhysicsUpdated();
     updateSketchfabSkidAudio(false, false);
     stopSketchfabEngineAudio();
     _ticker.dispose();
@@ -347,6 +377,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       handbrake: handbrake,
     );
 
+    _updatePerformanceTelemetry(dt, throttle);
     updateSketchfabSkidAudio(_sim.isDrifting, widget.tireSkidAudioEnabled);
     updateSketchfabEngineAudio(
       _sim.engineRpm,
@@ -357,6 +388,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
     // Update chase camera
     _updateChaseCamera(dt);
+    if (_webglActive) _pushWebglState();
 
     // Update UI pulse
     _uiPulse = (_uiPulse + dt * 3.0) % (2 * pi);
@@ -374,6 +406,127 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return a;
   }
 
+  void _updatePerformanceTelemetry(double dt, double throttle) {
+    if (_sim.speedKmh > _topSpeedKmh) _topSpeedKmh = _sim.speedKmh;
+
+    // 0-100 km/h: arm from a standstill on throttle, capture the best run.
+    if (!_accelRunActive && !_accelRunDone && throttle > 0.1 && _sim.speedKmh < 1.0) {
+      _accelRunActive = true;
+      _accelRunTime = 0.0;
+    }
+    if (_accelRunActive) {
+      _accelRunTime += dt;
+      if (_sim.speedKmh >= 100.0) {
+        _accelRunActive = false;
+        _accelRunDone = true;
+        if (_best0to100 <= 0 || _accelRunTime < _best0to100) {
+          _best0to100 = _accelRunTime;
+        }
+      }
+    }
+
+    // Slalom gates: count each course cone as it passes under the car.
+    for (var i = 0; i < _sim.cones.length; i++) {
+      if (_passedCones.contains(i)) continue;
+      final c = _sim.cones[i].position;
+      final dx = _sim.position.x - c.x;
+      final dz = _sim.position.z - c.z;
+      if (dx * dx + dz * dz < 16.0) {
+        _passedCones.add(i);
+        _slalomGates++;
+      }
+    }
+  }
+
+  /// Hands the physics state to the live Three.js scene for WebGL Test Drive.
+  void _pushWebglState() {
+    final (eye, target) = _testDriveEyeTarget();
+    final r = _sim.wheelSuspensionCompressions;
+    updateSketchfabTestDriveState(
+      x: _sim.position.x,
+      y: _sim.position.y,
+      z: _sim.position.z,
+      yaw: _sim.yaw,
+      pitch: _sim.pitch,
+      roll: _sim.roll,
+      steerAngle: _sim.frontSteering ? _sim.steerAngle : 0.0,
+      rearSteerAngle: _sim.rearSteering ? -_sim.steerAngle * 0.5 : 0.0,
+      wheelRollRad: -_sim.wheelRoll / 0.34,
+      compressions: r,
+      camX: eye.x,
+      camY: eye.y,
+      camZ: eye.z,
+      targetX: target.x,
+      targetY: target.y,
+      targetZ: target.z,
+    );
+  }
+
+  (Vec3, Vec3) _testDriveEyeTarget() {
+    switch (_cameraMode) {
+      case CameraMode.chase:
+        return (_chaseCamPos, _chaseCamTarget);
+      case CameraMode.hood:
+        final fwd =
+            Vec3(-sin(_sim.yaw), -sin(_sim.pitch) * 0.65, -cos(_sim.yaw))
+                .normalized;
+        final right = Vec3(cos(_sim.yaw), 0, -sin(_sim.yaw));
+        final eye = _sim.position + (fwd * 0.55) + const Vec3(0, 1.02, 0);
+        final target = eye + (fwd * 14.0) - (right * (_sim.steerAngle * 2.8));
+        return (eye, target);
+      case CameraMode.orbit:
+        final totalAz = _sim.yaw + _orbitAzimuth;
+        final target = _sim.position + const Vec3(0, 0.68, 0);
+        final eye = Vec3(
+          target.x + _orbitDistance * cos(_orbitElevation) * sin(totalAz),
+          target.y + _orbitDistance * sin(_orbitElevation),
+          target.z + _orbitDistance * cos(_orbitElevation) * cos(totalAz),
+        );
+        return (eye, target);
+    }
+  }
+
+  int _webglRetries = 0;
+
+  /// Enters/leaves the Three.js drivable mode as the render mode changes.
+  /// Falls back to the CPU solid renderer when the JS scene is unavailable.
+  void _syncWebglMode() {
+    if (!mounted) return;
+    final want = _renderMode == TestDriveRenderMode.webgl;
+    if (!want) {
+      if (!_webglActive) return;
+      exitSketchfabTestDrive();
+      setState(() => _webglActive = false);
+      return;
+    }
+    if (_webglActive) return;
+    if (enterSketchfabTestDrive()) {
+      setState(() => _webglActive = true);
+      return;
+    }
+    if (_webglRetries < 6) {
+      _webglRetries++;
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (mounted &&
+            _renderMode == TestDriveRenderMode.webgl &&
+            !_webglActive) {
+          _syncWebglMode();
+        }
+      });
+    }
+  }
+
+  void _notifyPhysicsUpdated() {
+    widget.onPhysicsUpdated?.call(
+      mass: _sim.mass,
+      engineForce: _sim.engineForce,
+      grip: _sim.grip,
+      springStiffness: _sim.springStiffness,
+      dampingCompression: _sim.dampingCompression,
+      drive: _sim.drive,
+    );
+  }
+
   void _updateChaseCamera(double dt) {
     _timeSinceChaseDrag += dt;
     // Spring the free-look offset back behind the car after a drag.
@@ -386,19 +539,20 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     // Blend the car heading with the velocity vector while drifting so the
     // slip angle reads on screen without the car sliding off-centre.
     var targetYaw = _sim.yaw;
+    var slipDiff = 0.0;
     final horizSpeed = sqrt(
       _sim.velocity.x * _sim.velocity.x + _sim.velocity.z * _sim.velocity.z,
     );
-    if (horizSpeed > 2.5) {
+    if (horizSpeed > 2.0) {
       final velYaw = atan2(-_sim.velocity.x, -_sim.velocity.z);
-      final slipDiff = _wrapAngle(velYaw - _sim.yaw);
-      final blend = _sim.isDrifting ? 0.45 : 0.18;
+      slipDiff = _wrapAngle(velYaw - _sim.yaw);
+      final blend = _sim.isDrifting ? 0.50 : 0.20;
       targetYaw = _sim.yaw + slipDiff * blend;
     }
 
-    // Wrap-safe angular spring-damper on camera yaw.
+    // Wrap-safe, frame-rate independent angular spring on camera yaw.
     final yawFollowRate =
-        (dt * (5.5 + (_sim.speedKmh / 90.0).clamp(0.0, 4.5))).clamp(0.0, 1.0);
+        1.0 - exp(-dt * (5.0 + (_sim.speedKmh / 85.0).clamp(0.0, 5.0)));
     _camYaw = _wrapAngle(_camYaw + _wrapAngle(targetYaw - _camYaw) * yawFollowRate);
 
     final effectiveYaw = _camYaw + _chaseUserYaw;
@@ -407,31 +561,48 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     const up = Vec3(0, 1, 0);
 
     final pitchClamped = _chaseUserPitch.clamp(-0.25, 0.65);
-    final targetDist = (5.8 +
-            (_sim.speedKmh / 180.0).clamp(0.0, 1.1) +
-            (_sim.longitudinalG * 0.35).clamp(-0.35, 0.55)) *
-        cos(pitchClamped);
-    final targetHeight = (2.10 -
-            (_sim.speedKmh / 260.0).clamp(0.0, 0.25) -
-            (_sim.pitch * 1.2)) +
-        5.8 * sin(pitchClamped);
+    final smooth = 1.0 - exp(-dt * 9.0);
 
-    _camDist += (targetDist - _camDist) * (dt * 10.0).clamp(0.0, 1.0);
-    _camHeight += (targetHeight - _camHeight) * (dt * 10.0).clamp(0.0, 1.0);
+    // Sit low and close at rest, easing back and up with speed. Acceleration
+    // pushes the lens out slightly; braking pulls it in.
+    final speedT = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
+    final targetDist = (4.9 +
+            speedT * 1.5 +
+            (_sim.longitudinalG * 0.30).clamp(-0.35, 0.45)) *
+        cos(pitchClamped);
+    final targetHeight =
+        (1.62 + speedT * 0.46 - (_sim.pitch * 1.1)) + 5.0 * sin(pitchClamped);
+
+    _camDist += (targetDist - _camDist) * smooth;
+    _camHeight += (targetHeight - _camHeight) * smooth;
 
     // Pan the target into the corner apex.
-    final targetLookAhead = (-_sim.steerAngle * 1.15).clamp(-0.85, 0.85);
+    final targetLookAhead = (-_sim.steerAngle * 1.35).clamp(-1.0, 1.0);
     _camLookAhead +=
-        (targetLookAhead - _camLookAhead) * (dt * 8.0).clamp(0.0, 1.0);
+        (targetLookAhead - _camLookAhead) * (1.0 - exp(-dt * 8.0));
+
+    // During a slide, step the camera to the outside of the car so the slip
+    // angle stays visible instead of the car hiding its own rear axle.
+    final targetSlip =
+        (slipDiff * (_sim.isDrifting ? 1.5 : 0.4)).clamp(-1.3, 1.3);
+    _camSlip += (targetSlip - _camSlip) * (1.0 - exp(-dt * 5.0));
+
+    // A touch of the body's lean in the horizon makes cornering feel loaded
+    // without the motion-sickness of full chassis roll.
+    final targetRoll = (_sim.roll * 0.45).clamp(-0.10, 0.10);
+    _camRoll += (targetRoll - _camRoll) * (1.0 - exp(-dt * 6.0));
 
     // Tethered directly to the car so it never trails metres behind or drifts
     // laterally across the frame.
-    _chaseCamPos =
-        _sim.position - (camFwd * _camDist) + (up * _camHeight.clamp(0.6, 5.5));
+    final camPos = _sim.position -
+        (camFwd * _camDist) +
+        (camRight * _camSlip) +
+        (up * _camHeight.clamp(0.55, 5.5));
+    _chaseCamPos = Vec3(camPos.x, max(camPos.y, 0.65), camPos.z);
     _chaseCamTarget = _sim.position +
-        (camFwd * 2.2) +
-        (camRight * _camLookAhead) +
-        (up * 0.78);
+        (camFwd * 2.4) +
+        (camRight * (_camLookAhead + _camSlip * 0.35)) +
+        (up * 0.72);
   }
 
   void _resetCar() {
@@ -439,12 +610,20 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     _camYaw = _sim.yaw;
     _camDist = 5.8;
     _camHeight = 2.10;
+    _accelRunActive = false;
+    _accelRunDone = false;
+    _accelRunTime = 0.0;
+    _topSpeedKmh = 0.0;
+    _slalomGates = 0;
+    _passedCones.clear();
     _camLookAhead = 0.0;
+    _camSlip = 0.0;
+    _camRoll = 0.0;
     _chaseUserYaw = 0.0;
     _chaseUserPitch = 0.0;
     _timeSinceChaseDrag = 10.0;
-    _chaseCamPos = _sim.position + const Vec3(0, 2.10, 5.8);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.2);
+    _chaseCamPos = _sim.position + const Vec3(0, 1.62, 4.9);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.4);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -514,9 +693,27 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           },
           child: Stack(
             children: [
+              // Hardware-accelerated Three.js canvas (WebGL PBR mode)
+              if (_renderMode == TestDriveRenderMode.webgl)
+                Positioned.fill(
+                  child: SketchfabViewport(
+                    attachOnly: true,
+                    renderMode: 'solid',
+                    lighting: switch (_lighting) {
+                      TestDriveLighting.day => 'daylight',
+                      TestDriveLighting.sunset => 'sunset',
+                      TestDriveLighting.night => 'night',
+                    },
+                    gridStyle: 'off',
+                    showForwardArrow: false,
+                    autoTurntable: false,
+                    cameraPreset: 'iso',
+                  ),
+                ),
+
               // 3D Canvas
               Positioned.fill(
-                child: CustomPaint(
+                child:                  CustomPaint(
                   painter: _TestDriveScenePainter(
                     sim: _sim,
                     cameraMode: _cameraMode,
@@ -535,6 +732,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                     assignedWheels: widget.assignedWheels,
                     soundProfile: widget.soundProfile,
                     sirenEnabled: widget.sirenEnabled,
+                    cameraRoll: _camRoll,
+                    overlayOnly: _webglActive,
                   ),
                 ),
               ),
@@ -561,6 +760,14 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 left: 16,
                 child: _buildControlsHint(),
               ),
+
+              // Live in-drive tuning drawer
+              if (_showLiveTuning)
+                Positioned(
+                  top: 108,
+                  right: 16,
+                  child: _buildLiveTuningPanel(),
+                ),
             ],
           ),
         ),
@@ -676,7 +883,12 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                       PopupMenuButton<TestDriveRenderMode>(
                         tooltip: 'Render View: ${_renderMode.label}',
                         initialValue: _renderMode,
-                        onSelected: (mode) => setState(() => _renderMode = mode),
+                        onSelected: (mode) {
+                          setState(() => _renderMode = mode);
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            _syncWebglMode();
+                          });
+                        },
                         color: const Color(0xFF111714),
                         surfaceTintColor: Colors.transparent,
                         elevation: 8,
@@ -938,6 +1150,53 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
                       const SizedBox(width: 6),
 
+                      // Live tuning drawer toggle
+                      InkWell(
+                        onTap: () =>
+                            setState(() => _showLiveTuning = !_showLiveTuning),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _showLiveTuning
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: _showLiveTuning
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFF223127),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.tune_rounded,
+                                size: 14,
+                                color: _showLiveTuning
+                                    ? const Color(0xFF041D14)
+                                    : const Color(0xFFC9D1D9),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'TUNE',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _showLiveTuning
+                                      ? const Color(0xFF041D14)
+                                      : const Color(0xFFC9D1D9),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 6),
+
                       // Fullscreen toggle button
                       InkWell(
                         onTap: _toggleFullscreen,
@@ -1048,6 +1307,222 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               fontWeight: FontWeight.w600,
               color: Color(0xFF86978C),
               letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveTuningPanel() {
+    return Container(
+      width: 268,
+      constraints: const BoxConstraints(maxHeight: 480),
+      decoration: BoxDecoration(
+        color: const Color(0xF2111714),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF27392F)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x66000000), blurRadius: 18, spreadRadius: 2),
+        ],
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.tune_rounded,
+                    size: 14, color: Color(0xFF34D399)),
+                const SizedBox(width: 6),
+                const Text(
+                  'LIVE TUNING',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFFF0FDF4),
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const Spacer(),
+                InkWell(
+                  onTap: () => setState(() => _showLiveTuning = false),
+                  child: const Icon(Icons.close,
+                      size: 15, color: Color(0xFF86978C)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _buildTuningSlider(
+              'MASS',
+              _sim.mass,
+              700,
+              2200,
+              30,
+              'kg',
+              (v) => setState(() => _sim.mass = v),
+            ),
+            _buildTuningSlider(
+              'ENGINE FORCE',
+              _sim.engineForce,
+              150,
+              1200,
+              35,
+              'N',
+              (v) => setState(() => _sim.engineForce = v),
+            ),
+            _buildTuningSlider(
+              'TIRE GRIP',
+              _sim.grip,
+              0.6,
+              1.8,
+              24,
+              'g',
+              (v) => setState(() => _sim.grip = v),
+            ),
+            _buildTuningSlider(
+              'SPRING STIFFNESS',
+              _sim.springStiffness,
+              15,
+              90,
+              30,
+              'N/m',
+              (v) => setState(() => _sim.springStiffness = v),
+            ),
+            _buildTuningSlider(
+              'DAMPING',
+              _sim.dampingCompression,
+              0.5,
+              6.0,
+              22,
+              '',
+              (v) => setState(() => _sim.dampingCompression = v),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'DRIVETRAIN',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF86978C),
+                letterSpacing: 0.8,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                for (final d in const ['AWD', 'RWD', 'FWD'])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: InkWell(
+                      onTap: () => setState(() {
+                        _sim.drive = d;
+                        _sim.frontTraction = d != 'RWD';
+                        _sim.rearTraction = d != 'FWD';
+                      }),
+                      borderRadius: BorderRadius.circular(5),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _sim.drive == d
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFF1A231E),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(
+                            color: _sim.drive == d
+                                ? const Color(0xFF34D399)
+                                : const Color(0xFF223127),
+                          ),
+                        ),
+                        child: Text(
+                          d,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: _sim.drive == d
+                                ? const Color(0xFF041D14)
+                                : const Color(0xFFC9D1D9),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(color: Color(0xFF223127), height: 1),
+            const SizedBox(height: 10),
+            Text(
+              '0-100 km/h   ${_best0to100 > 0 ? '${_best0to100.toStringAsFixed(2)}s' : '--'}\n'
+              'TOP SPEED    ${_topSpeedKmh.toStringAsFixed(0)} km/h\n'
+              'SLALOM GATES ${_slalomGates.toString()}',
+              style: const TextStyle(
+                fontSize: 10,
+                height: 1.6,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF86978C),
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTuningSlider(
+    String label,
+    double value,
+    double min,
+    double max,
+    int divisions,
+    String unit,
+    ValueChanged<double> onChanged,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF86978C),
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${value.toStringAsFixed(value < 10 ? 2 : 0)}$unit',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF34D399),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: const Color(0xFF10B981),
+              inactiveTrackColor: const Color(0xFF223127),
+              thumbColor: const Color(0xFF34D399),
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: onChanged,
             ),
           ),
         ],
@@ -1336,6 +1811,79 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               ),
             ],
           ),
+
+          const SizedBox(width: 14),
+          Container(width: 1, height: 68, color: const Color(0xFF223127)),
+          const SizedBox(width: 12),
+
+          // Drag-strip performance telemetry
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'PERFORMANCE',
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF86978C),
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _buildPerfRow(
+                '0-100',
+                _best0to100 > 0
+                    ? '${_best0to100.toStringAsFixed(2)}s'
+                    : (_accelRunActive
+                        ? '${_accelRunTime.toStringAsFixed(2)}s'
+                        : '--'),
+                _accelRunActive ? const Color(0xFFFDE047) : const Color(0xFFF0FDF4),
+              ),
+              _buildPerfRow(
+                'V-MAX',
+                '${_topSpeedKmh.toStringAsFixed(0)} km/h',
+                const Color(0xFFF0FDF4),
+              ),
+              _buildPerfRow(
+                'GATES',
+                '$_slalomGates',
+                const Color(0xFF34D399),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerfRow(String label, String value, Color valueColor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 38,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF86978C),
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: valueColor,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
       ),
     );
@@ -1588,10 +2136,17 @@ class _TestDriveScenePainter extends CustomPainter {
     this.assignedWheels = const {},
     this.soundProfile = 'v10',
     this.sirenEnabled = false,
+    this.cameraRoll = 0.0,
+    this.overlayOnly = false,
   });
 
   final VehiclePhysicsSimulation sim;
   final CameraMode cameraMode;
+  final double cameraRoll;
+
+  /// When true only screen-space HUD paint is drawn; the Three.js canvas
+  /// supplies the world render.
+  final bool overlayOnly;
   final TestDriveLighting lighting;
   final TrackSurfaceStyle trackStyle;
   final TestDriveRenderMode renderMode;
@@ -1781,6 +2336,7 @@ class _TestDriveScenePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
+    if (overlayOnly) return;
 
     // 1. Determine Camera Matrix
     Vec3 eye;
@@ -1790,7 +2346,11 @@ class _TestDriveScenePainter extends CustomPainter {
     if (cameraMode == CameraMode.chase) {
       eye = chaseCamPos;
       target = chaseCamTarget;
-      fovY = (58 + (sim.speedKmh / 190.0 * 9.0).clamp(0.0, 9.0)) * pi / 180;
+      fovY = (56 +
+              (sim.speedKmh / 200.0 * 10.0).clamp(0.0, 10.0) +
+              (sim.longitudinalG.clamp(0.0, 1.0) * 2.0)) *
+          pi /
+          180;
     } else if (cameraMode == CameraMode.hood) {
       // Hood cam tilts with the sprung body and looks into the corner apex.
       final fwd = Vec3(-sin(sim.yaw), -sin(sim.pitch) * 0.65, -cos(sim.yaw))
@@ -1810,7 +2370,15 @@ class _TestDriveScenePainter extends CustomPainter {
       );
     }
 
-    final view = Mat4.lookAt(eye, target, const Vec3(0, 1, 0));
+    // Tilt the horizon with the body roll for a loaded, dynamic chase view.
+    final viewFwd = (target - eye).normalized;
+    var viewRight = Vec3(viewFwd.z, 0, -viewFwd.x);
+    if (viewRight.lengthSquared < 1e-6) viewRight = const Vec3(1, 0, 0);
+    viewRight = viewRight.normalized;
+    final viewUp =
+        ((const Vec3(0, 1, 0) * cos(cameraRoll)) + (viewRight * sin(cameraRoll)))
+            .normalized;
+    final view = Mat4.lookAt(eye, target, viewUp);
     final aspect = size.width / size.height;
     final proj = Mat4.perspective(fovY, aspect, 0.1, 400.0);
     final viewProj = proj * view;
@@ -3346,7 +3914,8 @@ class _TestDriveScenePainter extends CustomPainter {
     _drawVehicleContactShadow(canvas, project, wheels);
 
     final showSolid = renderMode == TestDriveRenderMode.solid ||
-        renderMode == TestDriveRenderMode.hybrid;
+        renderMode == TestDriveRenderMode.hybrid ||
+        renderMode == TestDriveRenderMode.webgl;
     final showWire = renderMode == TestDriveRenderMode.wireframe ||
         renderMode == TestDriveRenderMode.hybrid;
 

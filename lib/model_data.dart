@@ -353,6 +353,171 @@ class ParsedModel {
     required this.worldBBox,
   });
 
+  /// Splits triangles that belong to the four detected wheels out of the main
+  /// merged mesh into dedicated `Wheel_FL..RR` scene nodes.
+  ///
+  /// Many Sketchfab/CAD exports bake an entire car into one instance, so Test
+  /// Drive can only rotate the whole vehicle. This lifts each wheel's triangles
+  /// into its own node while leaving the remaining body geometry in place.
+  /// Returns the original model when nothing can be split.
+  ({ParsedModel model, Map<String, int> wheelNodeIndices}) splitWheelIslands(
+    Map<String, DetectedWheel> wheels,
+  ) {
+    if (instances.isEmpty || wheels.length < 4) {
+      return (model: this, wheelNodeIndices: const {});
+    }
+
+    final carLen = max(worldBBox.size.z.abs(), worldBBox.size.x.abs());
+    MeshInstance? shared;
+    for (final inst in instances) {
+      if (inst.triangles.isEmpty) continue;
+      final s = inst.worldBBox.size;
+      if (max(s.x.abs(), s.z.abs()) <= carLen * 0.42) continue;
+      if (shared == null || inst.triangles.length > shared.triangles.length) {
+        shared = inst;
+      }
+    }
+    if (shared == null) {
+      return (model: this, wheelNodeIndices: const {});
+    }
+
+    const corners = ['FL', 'FR', 'RL', 'RR'];
+    final buckets = <String, List<Triangle>>{for (final c in corners) c: []};
+    final remaining = <Triangle>[];
+    final verts = shared.worldVertices;
+
+    for (final t in shared.triangles) {
+      if (t.a >= verts.length || t.b >= verts.length || t.c >= verts.length) {
+        continue;
+      }
+      final v0 = verts[t.a], v1 = verts[t.b], v2 = verts[t.c];
+      final cx = (v0.x + v1.x + v2.x) / 3.0;
+      final cy = (v0.y + v1.y + v2.y) / 3.0;
+      final cz = (v0.z + v1.z + v2.z) / 3.0;
+
+      String? matched;
+      for (final corner in corners) {
+        final w = wheels[corner];
+        if (w == null) continue;
+        final baseR = w.radius > 0.05 ? w.radius : 0.34;
+        final r = baseR * 1.06;
+        final halfW = max(min(w.width, baseR * 0.90) * 0.52, baseR * 0.24);
+        if ((cx - w.worldPosition.x).abs() > halfW) continue;
+        final dy = cy - w.worldPosition.y;
+        final dz = cz - w.worldPosition.z;
+        if (dy * dy + dz * dz <= r * r) {
+          matched = corner;
+          break;
+        }
+      }
+      if (matched != null) {
+        buckets[matched]!.add(t);
+      } else {
+        remaining.add(t);
+      }
+    }
+
+    final splitCorners = corners
+        .where((c) => buckets[c]!.length >= 8)
+        .toList(growable: false);
+    if (splitCorners.length < 2) {
+      return (model: this, wheelNodeIndices: const {});
+    }
+
+    List<Edge> edgesFor(List<Triangle> tris) {
+      final set = <Edge>{};
+      for (final t in tris) {
+        set.add(Edge(t.a, t.b));
+        set.add(Edge(t.b, t.c));
+        set.add(Edge(t.c, t.a));
+      }
+      final list = set.toList(growable: false);
+      if (list.length <= 6000) return list;
+      final step = (list.length / 6000).ceil();
+      return [for (var i = 0; i < list.length; i += step) list[i]];
+    }
+
+    BBox boundsFor(List<Triangle> tris) {
+      final set = <int>{};
+      for (final t in tris) {
+        set.add(t.a);
+        set.add(t.b);
+        set.add(t.c);
+      }
+      return BBox.fromPoints([for (final i in set) verts[i]]);
+    }
+
+    final updatedNodes = List<SceneNode>.of(nodes);
+    final updatedInstances = List<MeshInstance>.of(instances)
+      ..remove(shared);
+    final wheelNodeIndices = <String, int>{};
+    var nextNodeIndex = nodes.length;
+
+    final newChildren = <int>[...nodes[shared.nodeIndex].childIndices];
+    for (final corner in splitCorners) {
+      final tris = buckets[corner]!;
+      final nodeIndex = nextNodeIndex++;
+      updatedNodes.add(
+        SceneNode(
+          index: nodeIndex,
+          name: 'Wheel_$corner',
+          localTransform: Mat4.identity(),
+          meshIndex: shared.meshIndex,
+          childIndices: const [],
+          parentIndex: shared.nodeIndex,
+        ),
+      );
+      newChildren.add(nodeIndex);
+      wheelNodeIndices[corner] = nodeIndex;
+      updatedInstances.add(
+        MeshInstance(
+          nodeIndex: nodeIndex,
+          meshIndex: shared.meshIndex,
+          worldVertices: verts,
+          edges: edgesFor(tris),
+          triangles: tris,
+          worldBBox: boundsFor(tris),
+        ),
+      );
+    }
+
+    final parent = nodes[shared.nodeIndex];
+    updatedNodes[shared.nodeIndex] = SceneNode(
+      index: parent.index,
+      name: parent.name,
+      localTransform: parent.localTransform,
+      meshIndex: parent.meshIndex,
+      childIndices: newChildren,
+      parentIndex: parent.parentIndex,
+      worldTransform: parent.worldTransform,
+    );
+
+    if (remaining.isNotEmpty) {
+      updatedInstances.add(
+        MeshInstance(
+          nodeIndex: shared.nodeIndex,
+          meshIndex: shared.meshIndex,
+          worldVertices: verts,
+          edges: edgesFor(remaining),
+          triangles: remaining,
+          worldBBox: boundsFor(remaining),
+        ),
+      );
+    }
+
+    return (
+      model: ParsedModel(
+        fileName: fileName,
+        nodes: updatedNodes,
+        meshes: meshes,
+        instances: updatedInstances,
+        rootNodeIndices: rootNodeIndices,
+        worldBBox: worldBBox,
+      ),
+      wheelNodeIndices: wheelNodeIndices,
+    );
+  }
+
   /// Returns a normalized copy for rigging and viewport display.
   ///
   /// Imported assets commonly use millimeters, centimeters, or arbitrary

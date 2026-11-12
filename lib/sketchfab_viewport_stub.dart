@@ -17,6 +17,7 @@ class SketchfabViewport extends StatelessWidget {
     this.onCameraOrbit,
     this.onMeshSelected,
     this.fallbackWidget,
+    this.attachOnly = false,
   });
 
   final Uint8List? bytes;
@@ -32,6 +33,7 @@ class SketchfabViewport extends StatelessWidget {
   final void Function(double azimuth, double elevation, double distance)? onCameraOrbit;
   final ValueChanged<String>? onMeshSelected;
   final Widget? fallbackWidget;
+  final bool attachOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -65,3 +67,23 @@ void updateSketchfabEngineAudio(
   bool sirenEnabled,
 ) {}
 void stopSketchfabEngineAudio() {}
+bool enterSketchfabTestDrive() => false;
+void updateSketchfabTestDriveState({
+  required double x,
+  required double y,
+  required double z,
+  required double yaw,
+  required double pitch,
+  required double roll,
+  required double steerAngle,
+  required double rearSteerAngle,
+  required double wheelRollRad,
+  required List<double> compressions,
+  required double camX,
+  required double camY,
+  required double camZ,
+  required double targetX,
+  required double targetY,
+  required double targetZ,
+}) {}
+void exitSketchfabTestDrive() {}

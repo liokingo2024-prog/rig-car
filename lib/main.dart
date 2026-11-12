@@ -138,6 +138,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   String _inspectMode = 'auto'; // 'auto' | 'manual'
   int? _hoveredNodeIndex;
   bool _isTestDriveMode = false;
+  ParsedModel? _testDriveModel;
+  Map<String, DetectedWheel?> _testDriveWheels = const {};
   bool _isDriveFullscreen = false;
   bool _showLeftPanel = true;
   bool _showRightPanel = true;
@@ -722,6 +724,20 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       const JsonEncoder.withIndent('  ').convert(config.toJson()),
     );
 
+    // Also ship a split OBJ with dedicated wheel groups: single-mesh cars have
+    // no wheel nodes for the Godot script to bind.
+    if (_parsedModel != null) {
+      final wheels = <String, DetectedWheel>{};
+      for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
+        final w = _assignedWheels[corner];
+        if (w != null) wheels[corner] = w;
+      }
+      final splitModel = wheels.length == 4
+          ? _parsedModel!.splitWheelIslands(wheels).model
+          : _parsedModel!;
+      addText('${modelBase}_rigged.obj', _buildRiggedObj(splitModel));
+    }
+
     final modelBytes = _modelBytes;
     if (modelBytes != null && modelBytes.isNotEmpty) {
       // Keep the exact authored filename: rig_car.tscn references res://<name>.
@@ -747,6 +763,34 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       'application/zip',
     );
     if (mounted) _showMessage('Exported $bundleName.zip (Godot 4 project bundle)');
+  }
+
+  /// Wavefront OBJ with one group per scene node, so merged-mesh exports still
+  /// expose `Wheel_FL..RR` and `Vehicle_Body` objects in Godot 4.
+  String _buildRiggedObj(ParsedModel model) {
+    final sb = StringBuffer('# RIG-CAR rigged split export\n');
+    var offset = 1;
+    for (final inst in model.instances) {
+      if (inst.triangles.isEmpty) continue;
+      final nodeName = inst.nodeIndex < model.nodes.length
+          ? model.nodes[inst.nodeIndex].name
+          : 'Node_${inst.nodeIndex}';
+      final safeName = nodeName
+          .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
+      sb.writeln('o ${safeName.isEmpty ? 'Part_${inst.nodeIndex}' : safeName}');
+      for (final v in inst.worldVertices) {
+        sb.writeln(
+          'v ${v.x.toStringAsFixed(5)} ${v.y.toStringAsFixed(5)} '
+          '${v.z.toStringAsFixed(5)}',
+        );
+      }
+      for (final t in inst.triangles) {
+        sb.writeln('f ${t.a + offset} ${t.b + offset} ${t.c + offset}');
+      }
+      offset += inst.worldVertices.length;
+    }
+    return sb.toString();
   }
 
   /// Minimal Godot 4.3 project file so the exported scene opens and drives
@@ -783,8 +827,50 @@ handle_brake=${action(key(32))}
   }
 
   void _enterTestDrive() {
+    _prepareTestDriveRig();
     setState(() {
       _isTestDriveMode = true;
+    });
+  }
+
+  /// Builds a Test-Drive-only copy of the model whose wheel triangles live in
+  /// their own scene nodes, so merged-mesh cars spin their wheels individually.
+  /// The workbench model is left untouched.
+  void _prepareTestDriveRig() {
+    _testDriveModel = _parsedModel;
+    _testDriveWheels = Map.of(_assignedWheels);
+
+    final wheels = <String, DetectedWheel>{};
+    for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
+      final w = _assignedWheels[corner];
+      if (w != null) wheels[corner] = w;
+    }
+    if (_parsedModel == null || wheels.length < 4) return;
+
+    final split = _parsedModel!.splitWheelIslands(wheels);
+    if (split.wheelNodeIndices.isEmpty) return;
+    _testDriveModel = split.model;
+
+    split.wheelNodeIndices.forEach((corner, nodeIndex) {
+      final w = wheels[corner]!;
+      final node = split.model.nodes[nodeIndex];
+      _testDriveWheels[corner] = DetectedWheel(
+        nodeIndex: node.index,
+        nodeName: node.name,
+        worldPosition: w.worldPosition,
+        confidence: w.confidence,
+        meshIndex: node.meshIndex,
+        partNodeIndices: [node.index],
+        partIds: w.partIds,
+        spinNodeIndices: [node.index],
+        caliperHubNodeIndices: const [],
+        axle: w.axle,
+        side: w.side,
+        radius: w.radius,
+        width: w.width,
+        circularity: w.circularity,
+        subMeshCount: 1,
+      );
     });
   }
 
@@ -793,6 +879,8 @@ handle_brake=${action(key(32))}
       _isTestDriveMode = false;
       _isDriveFullscreen = false;
       _activeStep = 1;
+      _testDriveModel = null;
+      _testDriveWheels = const {};
     });
   }
 
@@ -1669,7 +1757,7 @@ handle_brake=${action(key(32))}
       frontTraction: _frontTraction,
       rearTraction: _rearTraction,
       wheelPositions: _getEffectiveWheelPositions(),
-      model: _parsedModel,
+      model: _testDriveModel ?? _parsedModel,
       detection: _detection,
       accentColor: _preset.accent,
       isFullscreen: isFullscreen,
@@ -1679,10 +1767,34 @@ handle_brake=${action(key(32))}
       springRestLength: _springRestLength,
       springStiffness: _springStiffness,
       dampingCompression: _dampingCompression,
-      assignedWheels: _assignedWheels,
+      assignedWheels: _testDriveWheels.isEmpty
+          ? _assignedWheels
+          : _testDriveWheels,
       soundProfile: _selectedAcousticProfile,
       sirenEnabled: _sirenAudioEnabled,
       tireSkidAudioEnabled: _tireSkidAudioEnabled,
+      onPhysicsUpdated: ({
+        required double mass,
+        required double engineForce,
+        required double grip,
+        required double springStiffness,
+        required double dampingCompression,
+        required String drive,
+      }) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _mass = mass;
+            _engineForce = engineForce;
+            _grip = grip;
+            _springStiffness = springStiffness;
+            _dampingCompression = dampingCompression;
+            _drive = drive;
+            _frontTraction = drive != 'RWD';
+            _rearTraction = drive != 'FWD';
+          });
+        });
+      },
     );
 
     if (isFullscreen) {

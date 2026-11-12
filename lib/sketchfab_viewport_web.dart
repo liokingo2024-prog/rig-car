@@ -23,6 +23,7 @@ class SketchfabViewport extends StatefulWidget {
     this.onCameraOrbit,
     this.onMeshSelected,
     this.fallbackWidget,
+    this.attachOnly = false,
   });
 
   final Uint8List? bytes;
@@ -39,6 +40,9 @@ class SketchfabViewport extends StatefulWidget {
   final ValueChanged<String>? onMeshSelected;
   final Widget? fallbackWidget;
 
+  /// Re-attaches the already-loaded Three.js scene without reloading a model.
+  final bool attachOnly;
+
   @override
   State<SketchfabViewport> createState() => _SketchfabViewportState();
 }
@@ -48,6 +52,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   late final String _viewType;
   html.DivElement? _container;
   Uint8List? _loadedBytes;
+  static Uint8List? _globalLoadedBytes;
   html.EventListener? _cameraOrbitListener;
   html.EventListener? _nodeSelectListener;
 
@@ -127,12 +132,26 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
       final viewer = js.context['SketchfabViewer'];
       if (viewer != null) {
         viewer.callMethod('init', [_container]);
-        if (widget.bytes != null && widget.bytes!.isNotEmpty) {
-          _loadModel(widget.bytes!);
-        } else {
+        final bytes = widget.bytes;
+        if (widget.attachOnly) {
+          // Keep the existing scene/model; Flutter only moved the canvas.
+        } else if (bytes != null &&
+            bytes.isNotEmpty &&
+            !identical(bytes, _globalLoadedBytes)) {
+          _loadModel(bytes);
+        } else if (bytes == null || bytes.isEmpty) {
           viewer.callMethod('loadDemoCar');
+          _globalLoadedBytes = null;
         }
         _syncControls();
+        // Platform views are laid out after the first frame; a late resize
+        // avoids a stretched canvas in freshly mounted Test Drive views.
+        Future.delayed(const Duration(milliseconds: 120), () {
+          if (!mounted) return;
+          try {
+            js.context['SketchfabViewer']?.callMethod('resize');
+          } catch (_) {}
+        });
       } else {
         Future.delayed(const Duration(milliseconds: 50), () {
           if (mounted) _initViewer();
@@ -146,6 +165,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   void _loadModel(Uint8List bytes) {
     if (_loadedBytes == bytes) return;
     _loadedBytes = bytes;
+    _globalLoadedBytes = bytes;
     try {
       final viewer = js.context['SketchfabViewer'];
       if (viewer != null) {
@@ -220,7 +240,8 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.bytes == null || widget.bytes!.isEmpty) {
+    if (!widget.attachOnly &&
+        (widget.bytes == null || widget.bytes!.isEmpty)) {
       return widget.fallbackWidget ?? const SizedBox.shrink();
     }
     return HtmlElementView(viewType: _viewType);
@@ -425,6 +446,79 @@ void stopSketchfabEngineAudio() {
     }
   } catch (e) {
     debugPrint('stopSketchfabEngineAudio error: $e');
+  }
+}
+
+/// Puts the live Three.js scene into drivable Test Drive mode.
+bool enterSketchfabTestDrive() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      return viewer.callMethod('enterTestDriveMode') == true;
+    }
+  } catch (e) {
+    debugPrint('enterSketchfabTestDrive error: $e');
+  }
+  return false;
+}
+
+final js.JsObject _tdState = js.JsObject(js.context['Object']);
+final js.JsObject _tdCompressions = js.JsObject.jsify(<double>[0, 0, 0, 0]);
+
+void updateSketchfabTestDriveState({
+  required double x,
+  required double y,
+  required double z,
+  required double yaw,
+  required double pitch,
+  required double roll,
+  required double steerAngle,
+  required double rearSteerAngle,
+  required double wheelRollRad,
+  required List<double> compressions,
+  required double camX,
+  required double camY,
+  required double camZ,
+  required double targetX,
+  required double targetY,
+  required double targetZ,
+}) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer == null) return;
+    for (var i = 0; i < 4 && i < compressions.length; i++) {
+      _tdCompressions[i] = compressions[i];
+    }
+    _tdState['x'] = x;
+    _tdState['y'] = y;
+    _tdState['z'] = z;
+    _tdState['yaw'] = yaw;
+    _tdState['pitch'] = pitch;
+    _tdState['roll'] = roll;
+    _tdState['steerAngle'] = steerAngle;
+    _tdState['rearSteerAngle'] = rearSteerAngle;
+    _tdState['wheelRollRad'] = wheelRollRad;
+    _tdState['compressions'] = _tdCompressions;
+    _tdState['camX'] = camX;
+    _tdState['camY'] = camY;
+    _tdState['camZ'] = camZ;
+    _tdState['targetX'] = targetX;
+    _tdState['targetY'] = targetY;
+    _tdState['targetZ'] = targetZ;
+    viewer.callMethod('updateTestDriveState', [_tdState]);
+  } catch (e) {
+    debugPrint('updateSketchfabTestDriveState error: $e');
+  }
+}
+
+void exitSketchfabTestDrive() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('exitTestDriveMode');
+    }
+  } catch (e) {
+    debugPrint('exitSketchfabTestDrive error: $e');
   }
 }
 
