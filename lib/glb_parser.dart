@@ -594,7 +594,7 @@ class GlbParser {
     final bodyBBox = BBox.fromPoints(bodyVerts);
     final bodyMesh = MeshData(
       index: 0,
-      name: 'Car_Body',
+      name: kBodyNodeName,
       vertices: bodyVerts,
       edges: bodyEdges,
       triangles: bodyTris,
@@ -628,16 +628,16 @@ class GlbParser {
       return MeshData(index: index, name: name, vertices: wVerts, edges: wEdges, triangles: wTris, bbox: wBox);
     }
 
-    final flWheelMesh = makeWheelMesh(1, 'Wheel_FL');
-    final frWheelMesh = makeWheelMesh(2, 'Wheel_FR');
-    final rlWheelMesh = makeWheelMesh(3, 'Wheel_RL');
-    final rrWheelMesh = makeWheelMesh(4, 'Wheel_RR');
+    final flWheelMesh = makeWheelMesh(1, wheelNodeNameFor('FL'));
+    final frWheelMesh = makeWheelMesh(2, wheelNodeNameFor('FR'));
+    final rlWheelMesh = makeWheelMesh(3, wheelNodeNameFor('RL'));
+    final rrWheelMesh = makeWheelMesh(4, wheelNodeNameFor('RR'));
 
     final meshes = [bodyMesh, flWheelMesh, frWheelMesh, rlWheelMesh, rrWheelMesh];
     final nodes = [
       SceneNode(
         index: 0,
-        name: 'Car_Body',
+        name: kBodyNodeName,
         localTransform: Mat4.identity(),
         meshIndex: 0,
         childIndices: const [],
@@ -645,7 +645,7 @@ class GlbParser {
       ),
       SceneNode(
         index: 1,
-        name: 'Wheel_FL',
+        name: wheelNodeNameFor('FL'),
         localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(-halfW * 0.92, wheelR, -halfL * 0.65)),
         meshIndex: 1,
         childIndices: const [],
@@ -653,7 +653,7 @@ class GlbParser {
       ),
       SceneNode(
         index: 2,
-        name: 'Wheel_FR',
+        name: wheelNodeNameFor('FR'),
         localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(halfW * 0.92, wheelR, -halfL * 0.65)),
         meshIndex: 2,
         childIndices: const [],
@@ -661,7 +661,7 @@ class GlbParser {
       ),
       SceneNode(
         index: 3,
-        name: 'Wheel_RL',
+        name: wheelNodeNameFor('RL'),
         localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(-halfW * 0.92, wheelR, halfL * 0.65)),
         meshIndex: 3,
         childIndices: const [],
@@ -669,7 +669,7 @@ class GlbParser {
       ),
       SceneNode(
         index: 4,
-        name: 'Wheel_RR',
+        name: wheelNodeNameFor('RR'),
         localTransform: Mat4.uniformScaleTranslate(1.0, const Vec3(halfW * 0.92, wheelR, halfL * 0.65)),
         meshIndex: 4,
         childIndices: const [],

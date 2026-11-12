@@ -645,6 +645,45 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       );
   }
 
+  /// Model plus the part names the exported vehicle should use. Merged-mesh
+  /// models are split so the export exposes `Body`, `Left Front Wheel`,
+  /// `Right Front Wheel`, `Left Rear Wheel` and `Right Rear Wheel`.
+  ({ParsedModel? model, Map<String, String> wheelNames, String? bodyName})
+      _exportRig() {
+    final model = _parsedModel;
+    if (model == null) {
+      return (model: null, wheelNames: const {}, bodyName: null);
+    }
+
+    final wheels = <String, DetectedWheel>{};
+    for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
+      final w = _assignedWheels[corner];
+      if (w != null) wheels[corner] = w;
+    }
+
+    var rigModel = model;
+    var wheelNames = {
+      for (final e in wheels.entries) e.key: e.value.nodeName,
+    };
+    String? bodyName = _selectedBodyNodeIndex == null
+        ? null
+        : model.nodes[_selectedBodyNodeIndex!].name;
+
+    if (wheels.length == 4) {
+      final split = model.splitWheelIslands(wheels);
+      if (split.wheelNodeIndices.isNotEmpty) {
+        rigModel = split.model;
+        wheelNames = {
+          for (final e in split.wheelNodeIndices.entries)
+            e.key: rigModel.nodes[e.value].name,
+        };
+        bodyName = kBodyNodeName;
+      }
+    }
+
+    return (model: rigModel, wheelNames: wheelNames, bodyName: bodyName);
+  }
+
   RigConfig get _config {
     List<Vec3>? wheelPositions;
     final fl = _assignedWheels['FL'];
@@ -660,6 +699,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
         rr.worldPosition,
       ];
     }
+
+    final rig = _exportRig();
 
     return RigConfig(
       modelName: _modelName,
@@ -682,14 +723,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       frontTraction: _frontTraction,
       rearTraction: _rearTraction,
       wheelPositions: wheelPositions,
-      bodyNodeName: _parsedModel == null || _selectedBodyNodeIndex == null
-          ? null
-          : _parsedModel!.nodes[_selectedBodyNodeIndex!].name,
-      wheelNodeNames: {
-        for (final corner in const ['FL', 'FR', 'RL', 'RR'])
-          if (_assignedWheels[corner] != null)
-            corner: _assignedWheels[corner]!.nodeName,
-      },
+      bodyNodeName: rig.bodyName,
+      wheelNodeNames: rig.wheelNames,
     );
   }
 
@@ -702,6 +737,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
 
     final config = _config;
+    final rig = _exportRig();
     final modelBase = _modelName
         .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
         .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '');
@@ -726,16 +762,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
     // Also ship a split OBJ with dedicated wheel groups: single-mesh cars have
     // no wheel nodes for the Godot script to bind.
-    if (_parsedModel != null) {
-      final wheels = <String, DetectedWheel>{};
-      for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
-        final w = _assignedWheels[corner];
-        if (w != null) wheels[corner] = w;
-      }
-      final splitModel = wheels.length == 4
-          ? _parsedModel!.splitWheelIslands(wheels).model
-          : _parsedModel!;
-      addText('${modelBase}_rigged.obj', _buildRiggedObj(splitModel));
+    final rigModel = rig.model;
+    if (rigModel != null) {
+      addText('${modelBase}_rigged.obj', rigModel.toRiggedObj());
     }
 
     final modelBytes = _modelBytes;
@@ -763,34 +792,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       'application/zip',
     );
     if (mounted) _showMessage('Exported $bundleName.zip (Godot 4 project bundle)');
-  }
-
-  /// Wavefront OBJ with one group per scene node, so merged-mesh exports still
-  /// expose `Wheel_FL..RR` and `Vehicle_Body` objects in Godot 4.
-  String _buildRiggedObj(ParsedModel model) {
-    final sb = StringBuffer('# RIG-CAR rigged split export\n');
-    var offset = 1;
-    for (final inst in model.instances) {
-      if (inst.triangles.isEmpty) continue;
-      final nodeName = inst.nodeIndex < model.nodes.length
-          ? model.nodes[inst.nodeIndex].name
-          : 'Node_${inst.nodeIndex}';
-      final safeName = nodeName
-          .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
-          .replaceAll(RegExp(r'^_+|_+$'), '');
-      sb.writeln('o ${safeName.isEmpty ? 'Part_${inst.nodeIndex}' : safeName}');
-      for (final v in inst.worldVertices) {
-        sb.writeln(
-          'v ${v.x.toStringAsFixed(5)} ${v.y.toStringAsFixed(5)} '
-          '${v.z.toStringAsFixed(5)}',
-        );
-      }
-      for (final t in inst.triangles) {
-        sb.writeln('f ${t.a + offset} ${t.b + offset} ${t.c + offset}');
-      }
-      offset += inst.worldVertices.length;
-    }
-    return sb.toString();
   }
 
   /// Minimal Godot 4.3 project file so the exported scene opens and drives

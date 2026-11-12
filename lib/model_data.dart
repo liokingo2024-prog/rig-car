@@ -2,6 +2,31 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 
+// ── Final vehicle part naming ───────────────────────────────────────────────
+//
+// Everything the rigger emits (split nodes, the rigged OBJ and the Godot scene)
+// uses the same human-readable part names, so the exported vehicle reads as
+// `Body`, `Left Front Wheel`, `Right Front Wheel`, `Left Rear Wheel` and
+// `Right Rear Wheel` instead of internal corner codes.
+
+const String kBodyNodeName = 'Body';
+
+const Map<String, String> kWheelCornerNames = {
+  'FL': 'Left Front Wheel',
+  'FR': 'Right Front Wheel',
+  'RL': 'Left Rear Wheel',
+  'RR': 'Right Rear Wheel',
+};
+
+/// Readable node name for a wheel corner (`FL`, `FR`, `RL`, `RR`).
+String wheelNodeNameFor(String corner) =>
+    kWheelCornerNames[corner] ?? 'Wheel';
+
+/// OBJ object names cannot contain spaces, so exported groups use underscores
+/// (`Left_Front_Wheel`).
+String objSafeObjectName(String name) =>
+    name.replaceAll(RegExp(r'\s+'), '_').replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+
 // ── 3D Math ─────────────────────────────────────────────────────────────────
 
 class Vec3 {
@@ -354,7 +379,7 @@ class ParsedModel {
   });
 
   /// Splits triangles that belong to the four detected wheels out of the main
-  /// merged mesh into dedicated `Wheel_FL..RR` scene nodes.
+  /// merged mesh into dedicated scene nodes named [kWheelCornerNames].
   ///
   /// Many Sketchfab/CAD exports bake an entire car into one instance, so Test
   /// Drive can only rotate the whole vehicle. This lifts each wheel's triangles
@@ -460,7 +485,7 @@ class ParsedModel {
       updatedNodes.add(
         SceneNode(
           index: nodeIndex,
-          name: 'Wheel_$corner',
+          name: wheelNodeNameFor(corner),
           localTransform: Mat4.identity(),
           meshIndex: shared.meshIndex,
           childIndices: const [],
@@ -484,7 +509,7 @@ class ParsedModel {
     final parent = nodes[shared.nodeIndex];
     updatedNodes[shared.nodeIndex] = SceneNode(
       index: parent.index,
-      name: parent.name,
+      name: kBodyNodeName,
       localTransform: parent.localTransform,
       meshIndex: parent.meshIndex,
       childIndices: newChildren,
@@ -516,6 +541,54 @@ class ParsedModel {
       ),
       wheelNodeIndices: wheelNodeIndices,
     );
+  }
+
+  /// Wavefront OBJ with one object group per part, so merged-mesh exports
+  /// expose `Body`, `Left_Front_Wheel`, `Right_Front_Wheel`,
+  /// `Left_Rear_Wheel` and `Right_Rear_Wheel` objects in Godot 4. The body is
+  /// written first, then the wheels.
+  String toRiggedObj() {
+    final sb = StringBuffer('# RIG-CAR rigged split export\n');
+    var offset = 1;
+    final usedNames = <String>{};
+
+    String nameOf(MeshInstance i) =>
+        i.nodeIndex >= 0 && i.nodeIndex < nodes.length
+            ? nodes[i.nodeIndex].name
+            : '';
+
+    final ordered = List<MeshInstance>.of(instances)
+      ..sort((a, b) => (nameOf(a) == kBodyNodeName ? 0 : 1)
+          .compareTo(nameOf(b) == kBodyNodeName ? 0 : 1));
+
+    for (final inst in ordered) {
+      if (inst.triangles.isEmpty) continue;
+      final nodeName = inst.nodeIndex < nodes.length
+          ? nodes[inst.nodeIndex].name
+          : 'Part_${inst.nodeIndex}';
+      var safeName =
+          objSafeObjectName(nodeName).replaceAll(RegExp(r'^_+|_+$'), '');
+      if (safeName.isEmpty) safeName = 'Part_${inst.nodeIndex}';
+      if (!usedNames.add(safeName)) {
+        var suffix = 2;
+        while (!usedNames.add('${safeName}_$suffix')) {
+          suffix++;
+        }
+        safeName = '${safeName}_$suffix';
+      }
+      sb.writeln('o $safeName');
+      for (final v in inst.worldVertices) {
+        sb.writeln(
+          'v ${v.x.toStringAsFixed(5)} ${v.y.toStringAsFixed(5)} '
+          '${v.z.toStringAsFixed(5)}',
+        );
+      }
+      for (final t in inst.triangles) {
+        sb.writeln('f ${t.a + offset} ${t.b + offset} ${t.c + offset}');
+      }
+      offset += inst.worldVertices.length;
+    }
+    return sb.toString();
   }
 
   /// Returns a normalized copy for rigging and viewport display.
@@ -1183,7 +1256,10 @@ class ParsedModel {
       const Vec3(0.85, 0.34, 1.35),
     ];
 
-    const wheelNames = ['Wheel_FL', 'Wheel_FR', 'Wheel_RL', 'Wheel_RR'];
+    final wheelNames = [
+      for (final corner in const ['FL', 'FR', 'RL', 'RR'])
+        wheelNodeNameFor(corner),
+    ];
     const segments = 16;
     const r = 0.34;
     const w = 0.28;
@@ -1599,10 +1675,10 @@ func _physics_process(delta: float) -> void:
 @onready var skid_audio: AudioStreamPlayer3D = get_node_or_null("SkidAudio")
 @onready var visual_model: Node3D = get_node_or_null("VisualModel")
 @onready var physics_wheels: Dictionary = {
-    "FL": get_node_or_null("Wheel_FL"),
-    "FR": get_node_or_null("Wheel_FR"),
-    "RL": get_node_or_null("Wheel_RL"),
-    "RR": get_node_or_null("Wheel_RR"),
+    "FL": get_node_or_null("${wheelNodeNameFor('FL')}"),
+    "FR": get_node_or_null("${wheelNodeNameFor('FR')}"),
+    "RL": get_node_or_null("${wheelNodeNameFor('RL')}"),
+    "RR": get_node_or_null("${wheelNodeNameFor('RR')}"),
 }
 
 # Visual wheel nodes authored inside the imported model.
@@ -1687,19 +1763,19 @@ position = Vector3(0, ${(cs.y * 0.5).toStringAsFixed(3)}, 0)
 shape = SubResource("BoxShape3D_body")
 
 ${hasCustomModel ? '[node name="VisualModel" parent="." instance=ExtResource("2_model")]\n' : ''}
-[node name="WheelRay_FL" type="RayCast3D" parent="."]
+[node name="${wheelNodeNameFor('FL')} Ray" type="RayCast3D" parent="."]
 position = ${v3(fl)}
 target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
 
-[node name="WheelRay_FR" type="RayCast3D" parent="."]
+[node name="${wheelNodeNameFor('FR')} Ray" type="RayCast3D" parent="."]
 position = ${v3(fr)}
 target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
 
-[node name="WheelRay_RL" type="RayCast3D" parent="."]
+[node name="${wheelNodeNameFor('RL')} Ray" type="RayCast3D" parent="."]
 position = ${v3(rl)}
 target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
 
-[node name="WheelRay_RR" type="RayCast3D" parent="."]
+[node name="${wheelNodeNameFor('RR')} Ray" type="RayCast3D" parent="."]
 position = ${v3(rr)}
 target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed(3)}, 0)
 
@@ -1727,7 +1803,7 @@ position = Vector3(0, ${(cs.y * 0.5).toStringAsFixed(3)}, 0)
 shape = SubResource("BoxShape3D_body")
 
 ${hasCustomModel ? '[node name="VisualModel" parent="." instance=ExtResource("2_model")]\n' : ''}
-[node name="Wheel_FL" type="VehicleWheel3D" parent="."]
+[node name="${wheelNodeNameFor('FL')}" type="VehicleWheel3D" parent="."]
 position = ${v3(fl)}
 wheel_radius = ${wheelRadius.toStringAsFixed(3)}
 wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
@@ -1738,7 +1814,7 @@ suspension_travel = 0.20
 use_as_steering = $frontSteering
 use_as_traction = $frontTraction
 
-[node name="Wheel_FR" type="VehicleWheel3D" parent="."]
+[node name="${wheelNodeNameFor('FR')}" type="VehicleWheel3D" parent="."]
 position = ${v3(fr)}
 wheel_radius = ${wheelRadius.toStringAsFixed(3)}
 wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
@@ -1749,7 +1825,7 @@ suspension_travel = 0.20
 use_as_steering = $frontSteering
 use_as_traction = $frontTraction
 
-[node name="Wheel_RL" type="VehicleWheel3D" parent="."]
+[node name="${wheelNodeNameFor('RL')}" type="VehicleWheel3D" parent="."]
 position = ${v3(rl)}
 wheel_radius = ${wheelRadius.toStringAsFixed(3)}
 wheel_rest_length = ${springRestLength.toStringAsFixed(3)}
@@ -1760,7 +1836,7 @@ suspension_travel = 0.20
 use_as_steering = $rearSteering
 use_as_traction = $rearTraction
 
-[node name="Wheel_RR" type="VehicleWheel3D" parent="."]
+[node name="${wheelNodeNameFor('RR')}" type="VehicleWheel3D" parent="."]
 position = ${v3(rr)}
 wheel_radius = ${wheelRadius.toStringAsFixed(3)}
 wheel_rest_length = ${springRestLength.toStringAsFixed(3)}

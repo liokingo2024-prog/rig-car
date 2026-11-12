@@ -85,11 +85,19 @@ void main() {
     final result = model.splitWheelIslands(wheels);
 
     expect(result.wheelNodeIndices.length, 4);
-    for (final corner in hubs.keys) {
-      final nodeIndex = result.wheelNodeIndices[corner];
+    const expectedNames = {
+      'FL': 'Left Front Wheel',
+      'FR': 'Right Front Wheel',
+      'RL': 'Left Rear Wheel',
+      'RR': 'Right Rear Wheel',
+    };
+    for (final entry in expectedNames.entries) {
+      final nodeIndex = result.wheelNodeIndices[entry.key];
       expect(nodeIndex, isNotNull);
-      expect(result.model.nodes[nodeIndex!].name, 'Wheel_$corner');
+      expect(result.model.nodes[nodeIndex!].name, entry.value);
     }
+    // The merged remainder is the vehicle body.
+    expect(result.model.nodes[0].name, 'Body');
 
     final wheelInstances = result.model.instances
         .where((i) => result.wheelNodeIndices.containsValue(i.nodeIndex))
@@ -105,6 +113,15 @@ void main() {
         .single;
     expect(body.triangles.length, 1);
     expect(result.model.nodes[0].childIndices.length, 4);
+
+    // The rigged OBJ is the final exported vehicle: Body plus four named wheels.
+    final obj = result.model.toRiggedObj();
+    expect(obj, contains('o Body'));
+    expect(obj, contains('o Left_Front_Wheel'));
+    expect(obj, contains('o Right_Front_Wheel'));
+    expect(obj, contains('o Left_Rear_Wheel'));
+    expect(obj, contains('o Right_Rear_Wheel'));
+    expect(obj.indexOf('o Body'), lessThan(obj.indexOf('o Left_Front_Wheel')));
   });
 
   test('separate wheel nodes are left untouched', () {

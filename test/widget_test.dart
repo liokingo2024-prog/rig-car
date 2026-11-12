@@ -903,7 +903,8 @@ void main() {
       );
 
       final tscn = config.toTscn();
-      expect(tscn.contains('Wheel_FL'), isTrue);
+      expect(tscn.contains('[node name="Left Front Wheel"'), isTrue);
+      expect(tscn.contains('[node name="Right Rear Wheel"'), isTrue);
       expect(tscn.contains('-0.820'), isTrue);
       expect(tscn.contains('-1.380'), isTrue);
 
@@ -1917,9 +1918,9 @@ endsolid sports_car''';
       expect(model.fileName, 'racecar.fbx');
       expect(model.nodes.length, 5); // Body + 4 wheels
       final nodeNames = model.nodes.map((n) => n.name).toList();
-      expect(nodeNames.contains('Wheel_FL'), isTrue);
-      expect(nodeNames.contains('Wheel_FR'), isTrue);
-      expect(nodeNames.contains('Car_Body'), isTrue);
+      expect(nodeNames.contains('Left Front Wheel'), isTrue);
+      expect(nodeNames.contains('Right Front Wheel'), isTrue);
+      expect(nodeNames.contains('Body'), isTrue);
     });
 
     testWidgets('Orientation quick-fix rotates, flips, snaps and scales vehicle with visible feedback', (tester) async {
