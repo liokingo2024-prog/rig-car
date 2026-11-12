@@ -254,8 +254,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   double _chaseUserPitch = 0.0;
   double _timeSinceChaseDrag = 10.0;
 
-  Vec3 _chaseCamPos = const Vec3(0, 2.10, 29.8);
-  Vec3 _chaseCamTarget = const Vec3(0, 0.78, 21.8);
+  Vec3 _chaseCamPos = const Vec3(0, 1.88, 29.6);
+  Vec3 _chaseCamTarget = const Vec3(0, 0.78, 21.6);
 
   // Time tracking
   Duration _lastTick = Duration.zero;
@@ -307,8 +307,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
     // Initial camera position behind car
     _camYaw = _sim.yaw;
-    _chaseCamPos = _sim.position + const Vec3(0, 2.10, 5.8);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.2);
+    _camDist = 5.6;
+    _camHeight = 1.88;
+    _chaseCamPos = _sim.position + const Vec3(0, 1.88, 5.6);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.4);
 
     _ticker = createTicker(_onTick)..start();
 
@@ -566,12 +568,12 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     // Sit low and close at rest, easing back and up with speed. Acceleration
     // pushes the lens out slightly; braking pulls it in.
     final speedT = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
-    final targetDist = (4.9 +
-            speedT * 1.5 +
+    final targetDist = (5.6 +
+            speedT * 1.4 +
             (_sim.longitudinalG * 0.30).clamp(-0.35, 0.45)) *
         cos(pitchClamped);
     final targetHeight =
-        (1.62 + speedT * 0.46 - (_sim.pitch * 1.1)) + 5.0 * sin(pitchClamped);
+        (1.88 + speedT * 0.34 - (_sim.pitch * 1.1)) + 5.0 * sin(pitchClamped);
 
     _camDist += (targetDist - _camDist) * smooth;
     _camHeight += (targetHeight - _camHeight) * smooth;
@@ -622,8 +624,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     _chaseUserYaw = 0.0;
     _chaseUserPitch = 0.0;
     _timeSinceChaseDrag = 10.0;
-    _chaseCamPos = _sim.position + const Vec3(0, 1.62, 4.9);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.4);
+    _chaseCamPos = _sim.position + const Vec3(0, 1.88, 5.6);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.4);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
