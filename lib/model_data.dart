@@ -1293,6 +1293,7 @@ class RigConfig {
     this.bodyNodeName,
     this.chassisSize,
     this.godotArchitecture = 'standard',
+    this.wheelNodeNames = const {},
   });
 
   final String modelName;
@@ -1321,6 +1322,10 @@ class RigConfig {
   /// The confirmed body node from the imported model, when available.
   final String? bodyNodeName;
 
+  /// Assigned visual wheel node names per corner (FL/FR/RL/RR), so the exported
+  /// Godot script can spin and steer the model's own wheels.
+  final Map<String, String> wheelNodeNames;
+
   Vec3 _wp(int i, Vec3 fallback) =>
       wheelPositions != null && i < wheelPositions!.length
       ? wheelPositions![i]
@@ -1347,6 +1352,7 @@ class RigConfig {
       'wheel_radius': wheelRadius,
     },
     if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
+    if (wheelNodeNames.isNotEmpty) 'wheel_nodes': wheelNodeNames,
     'wheels': {
       'front': {
         'use_as_steering': frontSteering,
@@ -1369,8 +1375,16 @@ class RigConfig {
     },
   };
 
+  String _gdEscape(String value) => value
+      .replaceAll('\\', r'\\')
+      .replaceAll('"', r'\"')
+      .replaceAll('\n', ' ')
+      .replaceAll('\r', ' ');
+
   String toGdScript() {
     final maxSteerRad = (steerAngle * pi / 180.0).toStringAsFixed(3);
+    String wheelName(String corner) =>
+        _gdEscape(wheelNodeNames[corner] ?? '');
     if (godotArchitecture == 'raycast') {
       return '''extends RigidBody3D
 
@@ -1418,8 +1432,49 @@ func _physics_process(delta: float) -> void:
 @onready var idle_audio: AudioStreamPlayer3D = get_node_or_null("IdleAudio")
 @onready var high_rpm_audio: AudioStreamPlayer3D = get_node_or_null("HighRpmAudio")
 @onready var skid_audio: AudioStreamPlayer3D = get_node_or_null("SkidAudio")
+@onready var visual_model: Node3D = get_node_or_null("VisualModel")
+@onready var physics_wheels: Dictionary = {
+    "FL": get_node_or_null("Wheel_FL"),
+    "FR": get_node_or_null("Wheel_FR"),
+    "RL": get_node_or_null("Wheel_RL"),
+    "RR": get_node_or_null("Wheel_RR"),
+}
+
+# Visual wheel nodes authored inside the imported model.
+const WHEEL_NODE_NAMES := {
+    "FL": "${wheelName('FL')}",
+    "FR": "${wheelName('FR')}",
+    "RL": "${wheelName('RL')}",
+    "RR": "${wheelName('RR')}",
+}
+
+var visual_wheels: Dictionary = {}
+var _wheel_rest_offsets: Dictionary = {}
+
+func _ready() -> void:
+    # Bind the model's own wheel nodes to the physics wheels so the exported car
+    # visibly steers and spins instead of rolling on frozen geometry.
+    for corner in WHEEL_NODE_NAMES.keys():
+        var target_name: String = WHEEL_NODE_NAMES[corner]
+        if target_name.is_empty() or visual_model == null:
+            continue
+        var found := visual_model.find_child(target_name, true, false)
+        var physics_wheel := physics_wheels.get(corner) as Node3D
+        if found is Node3D and physics_wheel != null:
+            visual_wheels[corner] = found
+            # Preserve the authored mesh offset relative to its wheel origin.
+            _wheel_rest_offsets[corner] = physics_wheel.global_transform.affine_inverse() * (found as Node3D).global_transform
+
+func _sync_visual_wheels() -> void:
+    for corner in visual_wheels.keys():
+        var visual_wheel := visual_wheels[corner] as Node3D
+        var physics_wheel := physics_wheels.get(corner) as Node3D
+        if visual_wheel != null and physics_wheel != null:
+            var rest: Transform3D = _wheel_rest_offsets[corner]
+            visual_wheel.global_transform = physics_wheel.global_transform * rest
 
 func _physics_process(_delta: float) -> void:
+    _sync_visual_wheels()
     var throttle := Input.get_axis("brake", "accelerate")
     var steer := Input.get_axis("steer_right", "steer_left")
     engine_force = throttle * max_engine_force

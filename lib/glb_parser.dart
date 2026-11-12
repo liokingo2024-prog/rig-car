@@ -23,8 +23,10 @@ class _DecodedTexture {
   final Uint8List rgba;
   final Color averageColor;
 
-  Color? sampleUv(double u, double v) {
+  Color? sampleUv(double u, double v, {List<double>? baseColorFactor}) {
     if (width <= 0 || height <= 0 || rgba.isEmpty) return null;
+    // Malformed TEXCOORD_0 data (NaN/Infinity) would otherwise throw in round().
+    if (!u.isFinite || !v.isFinite) return averageColor;
     var uu = u % 1.0;
     var vv = v % 1.0;
     if (uu < 0) uu += 1.0;
@@ -35,7 +37,17 @@ class _DecodedTexture {
     if (o + 4 > rgba.length) return averageColor;
     final a = rgba[o + 3];
     if (a <= 10) return averageColor;
-    return Color.fromARGB(a, rgba[o], rgba[o + 1], rgba[o + 2]);
+    var r = rgba[o];
+    var g = rgba[o + 1];
+    var b = rgba[o + 2];
+    // Tinted materials often combine a neutral AO/detail atlas with a coloured
+    // baseColorFactor; multiply so the authored paint tint survives sampling.
+    if (baseColorFactor != null && baseColorFactor.length >= 3) {
+      r = (r * baseColorFactor[0]).round().clamp(0, 255);
+      g = (g * baseColorFactor[1]).round().clamp(0, 255);
+      b = (b * baseColorFactor[2]).round().clamp(0, 255);
+    }
+    return Color.fromARGB(a, r, g, b);
   }
 }
 
@@ -1011,6 +1023,7 @@ class GlbParser {
           decodedTextures: decodedTextures,
           jsonTextures: jsonTextures,
         );
+        final baseColorFactor = _readBaseColorFactor(matMap);
 
         List<Color>? vertexColors;
         final colorIdx = attrs['COLOR_0'] as int?;
@@ -1064,6 +1077,7 @@ class GlbParser {
             vertexColors: vertexColors,
             uvs: uvs,
             decodedTexture: decodedTex,
+            baseColorFactor: baseColorFactor,
           );
         } else {
           // glTF's default primitive mode is TRIANGLES.
@@ -1077,6 +1091,7 @@ class GlbParser {
             vertexColors: vertexColors,
             uvs: uvs,
             decodedTexture: decodedTex,
+            baseColorFactor: baseColorFactor,
           );
         }
 
@@ -1125,6 +1140,13 @@ class GlbParser {
 
         int targetNodeIdx = node.index;
         if (p == 0) {
+          // Register the synthetic primitive nodes as children so childIndices
+          // stays consistent with parentIndex for downstream tree traversal.
+          final updatedChildren = <int>[
+            ...node.childIndices,
+            for (var extra = 1; extra < mappedMeshes.length; extra++)
+              nodes.length + extra - 1,
+          ];
           nodes[ni] = SceneNode(
             index: node.index,
             name: mappedMeshes.length > 1
@@ -1132,7 +1154,7 @@ class GlbParser {
                 : node.name,
             localTransform: node.localTransform,
             meshIndex: mIdx,
-            childIndices: node.childIndices,
+            childIndices: updatedChildren,
             parentIndex: node.parentIndex,
           )..worldTransform = wt;
         } else {
@@ -1231,6 +1253,19 @@ class GlbParser {
     r'(chassis|underbody|undercarriage|suspension|subframe|axle)',
     caseSensitive: false,
   );
+
+  /// Reads `pbrMetallicRoughness.baseColorFactor` as RGB multipliers for
+  /// per-triangle texel sampling.
+  static List<double>? _readBaseColorFactor(Map<String, dynamic>? material) {
+    if (material == null) return null;
+    final pbr = material['pbrMetallicRoughness'] as Map<String, dynamic>?;
+    final factor = pbr?['baseColorFactor'] as List<dynamic>?;
+    if (factor == null || factor.length < 3) return null;
+    return [
+      for (var i = 0; i < 3; i++)
+        ((factor[i] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0).toDouble(),
+    ];
+  }
 
   /// Resolves an authored material colour using sampled embedded textures,
   /// PBR baseColorFactor, and vertex colors, falling back to semantic recognition.
@@ -1424,6 +1459,7 @@ class GlbParser {
     List<Color>? vertexColors,
     List<Offset>? uvs,
     _DecodedTexture? decodedTexture,
+    List<double>? baseColorFactor,
   }) {
     Color? vertexColorFor(int idx) {
       if (vertexColors != null && idx >= 0 && idx < vertexColors.length) {
@@ -1440,7 +1476,7 @@ class GlbParser {
       if (a >= uvs.length || b >= uvs.length || c >= uvs.length) return null;
       final u = (uvs[a].dx + uvs[b].dx + uvs[c].dx) / 3.0;
       final v = (uvs[a].dy + uvs[b].dy + uvs[c].dy) / 3.0;
-      return decodedTexture.sampleUv(u, v);
+      return decodedTexture.sampleUv(u, v, baseColorFactor: baseColorFactor);
     }
 
     void addTriangle(int a, int b, int c) {
@@ -1584,26 +1620,45 @@ class GlbParser {
     Uint8List? bin,
   ) {
     if (bin == null) return [];
+    if (accessor['type'] != null && accessor['type'] != 'VEC2') return [];
     final count = accessor['count'] as int? ?? 0;
     final bvIdx = accessor['bufferView'] as int?;
-    if (bvIdx == null || bvIdx >= bufferViews.length) return [];
+    if (bvIdx == null || bvIdx < 0 || bvIdx >= bufferViews.length) return [];
+
+    // KHR_mesh_quantization stores TEXCOORD_0 as normalized 5121/5123/5122.
+    final compType = accessor['componentType'] as int? ?? 5126;
+    final compBytes = compType == 5126
+        ? 4
+        : ((compType == 5123 || compType == 5122) ? 2 : 1);
 
     final bv = bufferViews[bvIdx] as Map<String, dynamic>;
     final byteOffset =
         (bv['byteOffset'] as int? ?? 0) + (accessor['byteOffset'] as int? ?? 0);
-    final byteStride = bv['byteStride'] as int? ?? 8;
+    final byteStride = bv['byteStride'] as int? ?? (compBytes * 2);
 
     final bd = ByteData.sublistView(bin);
     final result = <Offset>[];
     for (var i = 0; i < count; i++) {
       final o = byteOffset + i * byteStride;
-      if (o + 8 > bin.length) break;
-      result.add(
-        Offset(
-          bd.getFloat32(o, Endian.little),
-          bd.getFloat32(o + 4, Endian.little),
-        ),
-      );
+      if (o + compBytes * 2 > bin.length) break;
+      double u, v;
+      if (compType == 5126) {
+        u = bd.getFloat32(o, Endian.little);
+        v = bd.getFloat32(o + 4, Endian.little);
+      } else if (compType == 5123) {
+        u = bd.getUint16(o, Endian.little) / 65535.0;
+        v = bd.getUint16(o + 2, Endian.little) / 65535.0;
+      } else if (compType == 5122) {
+        u = max(-1.0, bd.getInt16(o, Endian.little) / 32767.0);
+        v = max(-1.0, bd.getInt16(o + 2, Endian.little) / 32767.0);
+      } else if (compType == 5121) {
+        u = bd.getUint8(o) / 255.0;
+        v = bd.getUint8(o + 1) / 255.0;
+      } else {
+        u = max(-1.0, bd.getInt8(o) / 127.0);
+        v = max(-1.0, bd.getInt8(o + 1) / 127.0);
+      }
+      result.add(Offset(u, v));
     }
     return result;
   }

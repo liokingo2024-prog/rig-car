@@ -683,6 +683,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       bodyNodeName: _parsedModel == null || _selectedBodyNodeIndex == null
           ? null
           : _parsedModel!.nodes[_selectedBodyNodeIndex!].name,
+      wheelNodeNames: {
+        for (final corner in const ['FL', 'FR', 'RL', 'RR'])
+          if (_assignedWheels[corner] != null)
+            corner: _assignedWheels[corner]!.nodeName,
+      },
     );
   }
 

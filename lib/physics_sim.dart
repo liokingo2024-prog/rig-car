@@ -139,12 +139,12 @@ class VehiclePhysicsSimulation {
     required double steerInput, // -1.0 (left) to +1.0 (right)
     required bool handbrake,
   }) {
-    // 1. Steering smoothing with speed-sensitive attenuation so high-speed
-    //    inputs do not apply the full lock and spin the car.
-    final maxSteer = (maxSteerAngleDegrees * pi / 180.0).clamp(0.20, 0.95);
-    final speedSteerFactor = 1.0 / (1.0 + (speedKmh / 110.0) * 0.85);
+    // 1. Progressive speed-sensitive steering with realistic steering rack rate
+    final maxSteer = (maxSteerAngleDegrees * pi / 180.0).clamp(0.20, 0.85);
+    final speedSteerFactor = 1.0 / (1.0 + (speedKmh / 95.0) * 1.15);
     targetSteerAngle = -steerInput * maxSteer * speedSteerFactor;
-    steerAngle += (targetSteerAngle - steerAngle) * (dt * 12.0).clamp(0.0, 1.0);
+    final steerRate = steerInput.abs() > 0.01 ? 9.5 : 14.0; // Faster centering
+    steerAngle += (targetSteerAngle - steerAngle) * (dt * steerRate).clamp(0.0, 1.0);
 
     // 2. Local direction vectors (Godot convention: -Z is forward, +X is right)
     final fwd = Vec3(-sin(yaw), 0, -cos(yaw));
@@ -158,7 +158,7 @@ class VehiclePhysicsSimulation {
 
     // 4. Transmission & Engine RPM model
     final gearRatios = [3.4, 2.1, 1.45, 1.1, 0.88, 0.72];
-    if (longSpeed >= 0) {
+    if (longSpeed >= -0.2) {
       if (speedKmh > 185) {
         currentGear = 6;
       } else if (speedKmh > 140) {
@@ -173,13 +173,14 @@ class VehiclePhysicsSimulation {
         currentGear = 1;
       }
       final ratio = gearRatios[(currentGear - 1).clamp(0, 5)];
-      engineRpm = (1000 + (speedKmh * ratio * 38)).clamp(950.0, 7800.0);
+      final throttleBlip = throttleInput > 0 ? throttleInput * 320.0 : 0.0;
+      engineRpm = (950 + (speedKmh * ratio * 38) + throttleBlip).clamp(950.0, 7800.0);
     } else {
       currentGear = -1; // Reverse
-      engineRpm = (1000 + (speedKmh * 3.5 * 38)).clamp(950.0, 5000.0);
+      engineRpm = (950 + (speedKmh * 3.5 * 38)).clamp(950.0, 5000.0);
     }
 
-    // 5. Powertrain Forces
+    // 5. Powertrain Forces & Engine Compression Braking
     var driveForce = 0.0;
     var brakeForce = 0.0;
 
@@ -188,15 +189,13 @@ class VehiclePhysicsSimulation {
         : gearRatios[(currentGear - 1).clamp(0, 5)];
 
     if (throttleInput > 0.05) {
-      // Throttle applied with gear transmission leverage
-      final torqueCurve = 1.0 - (engineRpm / 8500.0) * 0.25;
-      driveForce = throttleInput * engineForce * gearRatio * 4.2 * torqueCurve;
+      final torqueCurve = 1.0 - (engineRpm / 9000.0) * 0.22;
+      driveForce = throttleInput * engineForce * gearRatio * 4.4 * torqueCurve;
     } else if (throttleInput < -0.05) {
-      // If moving forward, pedal acts as brake; if stopped, acts as reverse
-      if (longSpeed > 1.2) {
-        brakeForce = (-throttleInput) * (mass * 9.81 * 1.05);
+      if (longSpeed > 0.8) {
+        brakeForce = (-throttleInput) * (mass * 9.81 * 1.15);
       } else {
-        driveForce = throttleInput * engineForce * 9.0; // Reverse
+        driveForce = throttleInput * engineForce * 8.5; // Reverse
       }
     }
 
@@ -208,7 +207,6 @@ class VehiclePhysicsSimulation {
     } else if (drive == 'RWD') {
       rearPower = rearTraction ? 1.0 : 0.0;
     } else {
-      // AWD
       frontPower = frontTraction ? 0.5 : 0.0;
       rearPower = rearTraction ? 0.5 : 0.0;
     }
@@ -216,92 +214,119 @@ class VehiclePhysicsSimulation {
     final totalForwardThrust = (driveForce * (frontPower + rearPower)) -
         (brakeForce * (longSpeed >= 0 ? 1.0 : -1.0));
 
-    // 6. Cornering & Lateral Grip (Tire Friction Model)
-    final wheelbase = (wheelPositions.length >= 4)
-        ? (wheelPositions[2].z - wheelPositions[0].z).abs().clamp(2.0, 4.0)
-        : 2.7;
+    // 6. Wheelbase, Rear-Axle Offset & Ackermann Tire Cornering Model
+    final frontZ = (wheelPositions.length >= 2) ? wheelPositions[0].z : -1.35;
+    final rearZ = (wheelPositions.length >= 4) ? wheelPositions[2].z : 1.35;
+    final wheelbase = (rearZ - frontZ).abs().clamp(2.0, 4.2);
+    final rearAxleOffset = rearZ.abs().clamp(0.85, 2.2);
 
-    // Ackermann yaw velocity target factoring front/rear steering flags
     final effectiveFrontSteer = frontSteering ? steerAngle : 0.0;
-    final effectiveRearSteer = rearSteering ? -steerAngle * 0.5 : 0.0;
+    final effectiveRearSteer = rearSteering ? -steerAngle * 0.45 : 0.0;
     final netSteer = effectiveFrontSteer - effectiveRearSteer;
-    final targetYawRate = (longSpeed / wheelbase) * tan(netSteer);
-    final maxCorneringG = (grip * 1.25).clamp(0.6, 2.8);
+
+    // Raw kinematic yaw rate, clamped by the physical tire adhesion limit.
+    final rawTargetYawRate = (longSpeed / wheelbase) * tan(netSteer);
+    final maxCorneringG = (grip * 1.35).clamp(0.65, 2.8);
     final maxLateralAccel = maxCorneringG * 9.81;
+    final maxPhysYawRate = longSpeed.abs() > 1.5
+        ? (maxLateralAccel / longSpeed.abs())
+        : 4.0;
+    final clampedTargetYawRate =
+        rawTargetYawRate.clamp(-maxPhysYawRate, maxPhysYawRate);
 
-    // Check drift condition: handbrake or extreme overspeed slip
+    // Drift triggers: handbrake at speed, or power/steer demand beyond grip.
     final isHandbrakeActive = handbrake;
-    final gripFactor = isHandbrakeActive ? 0.28 : grip;
+    final demandOverLimit =
+        (rawTargetYawRate.abs() * longSpeed.abs()) / maxLateralAccel;
+    final rwdPowerOversteer =
+        (drive == 'RWD' && throttleInput > 0.75 && speedKmh > 45.0) ? 0.25 : 0.0;
+    isDrifting = (isHandbrakeActive && speedKmh > 10.0) ||
+        ((demandOverLimit + rwdPowerOversteer) > 1.28 && speedKmh > 65.0);
 
-    // Lateral slip calculation
-    final theoreticalLatAccel = longSpeed * yawRate;
-    lateralG = theoreticalLatAccel / 9.81;
-    longitudinalG = (totalForwardThrust / mass) / 9.81;
-
-    // Relative lateral slip ratio against tire adhesion limit
-    final gripLimit = maxLateralAccel.clamp(6.0, 28.0);
-    final slipRatio = (latSpeed.abs() + (isHandbrakeActive ? 4.0 : 0.0)) / gripLimit;
-
-    // Realistic drift trigger: handbrake pull at speed, or extreme high-speed powerslide
-    isDrifting = (isHandbrakeActive && speedKmh > 8.0) ||
-        (slipRatio > 1.35 && speedKmh > 75.0);
-
-    // Update individual wheel slip telemetry
-    final isHardBrakingLockup = (brakeForce > 9000.0 && speedKmh > 35.0);
-    for (var i = 0; i < 4; i++) {
-      final isRear = i >= 2;
-      var slip = isDrifting ? 0.85 : 0.0;
-      if (isRear && isHandbrakeActive) slip = 1.0;
-      if (isHardBrakingLockup) slip += 0.35;
-      wheelSlips[i] = slip.clamp(0.0, 1.0);
-    }
-
-    // 7. Resistance Forces (Aerodynamic Drag + Rolling Friction)
-    const airDragCoeff = 0.38;
+    // 7. Aerodynamic Drag + Rolling Resistance + Engine Braking (Off-Throttle)
+    const airDragCoeff = 0.36;
     final dragForce = 0.5 * airDragCoeff * 1.225 * (longSpeed * longSpeed.abs());
-    const rollingResistance = 180.0;
+    final rollingResistance = mass * 9.81 * 0.016;
+    final engineBraking = (throttleInput.abs() <= 0.05 && longSpeed.abs() > 0.5)
+        ? (mass * 0.85 * gearRatio * 0.42)
+        : 0.0;
+    final corneringScrubDrag = (steerAngle.abs() * longSpeed.abs() * mass * 0.12);
 
+    final signLong = longSpeed > 0.05 ? 1.0 : (longSpeed < -0.05 ? -1.0 : 0.0);
     final totalNetLongForce = totalForwardThrust -
         dragForce -
-        (rollingResistance * (longSpeed > 0 ? 1 : (longSpeed < 0 ? -1 : 0)));
+        ((rollingResistance + engineBraking + corneringScrubDrag) * signLong);
 
     final longAccel = totalNetLongForce / mass;
 
-    // 8. Integrate Linear Velocity, Yaw & Position (Anti-Slide Zero-Slip System)
+    // 8. Integrate Velocity, Yaw & Position (rear-axle planted kinematic model)
     if (!isDrifting) {
-      // ── 100% Locked Lateral Grip: Tires track strictly along vehicle heading ──
-      // In normal driving on asphalt, lateral sliding is 0.0 (pure rolling constraint).
+      // Smooth yaw rate with tire cornering stiffness so lateral load builds
+      // progressively instead of snapping the heading in a single frame.
+      final corneringResponse =
+          (11.0 * (grip / 1.1).clamp(0.6, 1.6)).clamp(6.0, 18.0);
+      yawRate +=
+          (clampedTargetYawRate - yawRate) * (dt * corneringResponse).clamp(0.0, 1.0);
+
       final newLongSpeed = longSpeed + longAccel * dt;
-      yawRate = targetYawRate;
-      yaw += yawRate * dt;
+      final dYaw = yawRate * dt;
+      final oldYaw = yaw;
+      yaw += dYaw;
+
+      // Pivot yaw rotation around the REAR AXLE so the rear tires track a pure
+      // rolling arc: the chassis rotates about the rear contact patches instead
+      // of spinning around its geometric centre like a hovercraft.
+      final oldFwd = Vec3(-sin(oldYaw), 0, -cos(oldYaw));
       final newFwd = Vec3(-sin(yaw), 0, -cos(yaw));
-      velocity = newFwd * newLongSpeed;
+      final newRight = Vec3(cos(yaw), 0, -sin(yaw));
+
+      final rearAxleWorld = position - (oldFwd * rearAxleOffset);
+      final pivotedCenter = rearAxleWorld + (newFwd * rearAxleOffset);
+
+      // Bleed off any residual lateral velocity into pure rolling.
+      final decayedLatSpeed = latSpeed * exp(-dt * 14.0);
+      velocity = (newFwd * newLongSpeed) + (newRight * decayedLatSpeed);
+      position = pivotedCenter + (velocity * dt);
     } else {
-      // ── Controlled Drift Mode: Handbrake engaged -> rear wheels break loose ──
-      final driftYawTarget = targetYawRate * 1.6;
-      yawRate += (driftYawTarget - yawRate) * (dt * 7.0);
+      // Controlled drift: handbrake or grip limit exceeded.
+      final driftYawTarget = clampedTargetYawRate * 1.45;
+      yawRate += (driftYawTarget - yawRate) * (dt * 6.5).clamp(0.0, 1.0);
       yaw += yawRate * dt;
 
       final newFwd = Vec3(-sin(yaw), 0, -cos(yaw));
       final newRight = Vec3(cos(yaw), 0, -sin(yaw));
-      final driftLatAccel = -steerInput * 6.5;
-      final latDamping = 8.5 * gripFactor;
-      final newLatSpeed = latSpeed + (driftLatAccel - latSpeed * latDamping) * dt;
-      final newLongSpeed = (longSpeed + longAccel * dt) * 0.96;
+      // Centrifugal tail-out slip opposes the turn direction.
+      final centrifugalSlip = (longSpeed * yawRate) * 0.32;
+      final latDamping = (5.5 * (isHandbrakeActive ? 0.45 : grip)).clamp(1.8, 9.0);
+      final newLatSpeed =
+          (latSpeed + (centrifugalSlip - latSpeed * latDamping) * dt)
+              .clamp(-14.0, 14.0);
+      final newLongSpeed = (longSpeed + longAccel * dt) * (1.0 - 0.35 * dt);
 
       velocity = (newFwd * newLongSpeed) + (newRight * newLatSpeed);
+      position = position + (velocity * dt);
     }
 
-    // Stop complete jitter when stationary
-    if (throttleInput.abs() < 0.05 && speedKmh < 0.6) {
+    // Stop micro-crawl when stationary with no throttle
+    if (throttleInput.abs() < 0.05 && speedKmh < 0.8) {
       velocity = Vec3.zero;
       speedKmh = 0.0;
       yawRate = 0.0;
     }
 
-    position = position + (velocity * dt);
+    // 9. Lateral & Longitudinal G-Force + Suspension Deflection
+    lateralG = ((longSpeed * yawRate) / 9.81).clamp(-2.5, 2.5);
+    longitudinalG = (longAccel / 9.81).clamp(-2.0, 2.0);
 
-    // 9. Suspension Dynamics (Pitch under accel/brake, Roll during cornering)
+    final isHardBrakingLockup = (brakeForce > 9000.0 && speedKmh > 35.0);
+    for (var i = 0; i < 4; i++) {
+      final isRear = i >= 2;
+      var slip = isDrifting ? 0.82 : (lateralG.abs() / maxCorneringG * 0.25);
+      if (isRear && isHandbrakeActive) slip = 1.0;
+      if (isHardBrakingLockup) slip += 0.35;
+      wheelSlips[i] = slip.clamp(0.0, 1.0);
+    }
+
     // Derived from the authored spring rate, damper and rest length so the
     // Workbench sliders produce a physically consistent ride.
     final effStiff = ((springStiffness / 45.0) * (suspension / 6.0)).clamp(0.35, 2.5);
@@ -310,30 +335,28 @@ class VehiclePhysicsSimulation {
     final comHeightFactor =
         ((0.55 - centerOfMass.abs()) * restingFactor).clamp(0.15, 1.2);
     final targetPitch =
-        (longitudinalG * 0.045 * comHeightFactor / effStiff).clamp(-0.12, 0.12);
+        (longitudinalG * 0.042 * comHeightFactor / effStiff).clamp(-0.09, 0.09);
     final targetRoll =
-        (-lateralG * 0.065 * comHeightFactor / effStiff).clamp(-0.16, 0.16);
+        (-lateralG * 0.055 * comHeightFactor / effStiff).clamp(-0.11, 0.11);
 
-    final responseRate = (10.0 * effDamp).clamp(3.0, 24.0);
+    final responseRate = (11.0 * effDamp).clamp(4.0, 24.0);
     pitch += (targetPitch - pitch) * (dt * responseRate).clamp(0.0, 1.0);
     roll += (targetRoll - roll) * (dt * responseRate).clamp(0.0, 1.0);
 
-    // Suspension compression per wheel
-    wheelSuspensionCompressions[0] = (pitch - roll).clamp(-0.15, 0.15); // FL
-    wheelSuspensionCompressions[1] = (pitch + roll).clamp(-0.15, 0.15); // FR
-    wheelSuspensionCompressions[2] = (-pitch - roll).clamp(-0.15, 0.15); // RL
-    wheelSuspensionCompressions[3] = (-pitch + roll).clamp(-0.15, 0.15); // RR
+    wheelSuspensionCompressions[0] = (pitch - roll).clamp(-0.12, 0.12); // FL
+    wheelSuspensionCompressions[1] = (pitch + roll).clamp(-0.12, 0.12); // FR
+    wheelSuspensionCompressions[2] = (-pitch - roll).clamp(-0.12, 0.12); // RL
+    wheelSuspensionCompressions[3] = (-pitch + roll).clamp(-0.12, 0.12); // RR
 
     // 10. Record Skid Marks when slipping
     if (isDrifting ||
         isHardBrakingLockup ||
         (isHandbrakeActive && speedKmh > 5)) {
-      final slipAlpha = (isDrifting ? 0.75 : 0.40)
-          .clamp(0.25, 0.85);
-
-      // Use actual rear wheel positions if available (in Godot 4 -Z fwd, rear wheels have +Z)
-      final rearLeftZ = wheelPositions.length >= 4 ? wheelPositions[2].z.abs() : 1.35;
-      final rearRightZ = wheelPositions.length >= 4 ? wheelPositions[3].z.abs() : 1.35;
+      final slipAlpha = (isDrifting ? 0.75 : 0.40).clamp(0.25, 0.85);
+      final rearLeftZ =
+          wheelPositions.length >= 4 ? wheelPositions[2].z.abs() : 1.35;
+      final rearRightZ =
+          wheelPositions.length >= 4 ? wheelPositions[3].z.abs() : 1.35;
       final rearLeftX = wheelPositions.length >= 4 ? wheelPositions[2].x : -0.85;
       final rearRightX = wheelPositions.length >= 4 ? wheelPositions[3].x : 0.85;
 

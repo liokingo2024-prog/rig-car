@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -222,13 +223,23 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   TestDriveLighting _lighting = TestDriveLighting.day;
   TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
   TestDriveRenderMode _renderMode = TestDriveRenderMode.solid;
-  double _orbitAzimuth = 0.785;
-  double _orbitElevation = 0.35;
-  final double _orbitDistance = 7.5;
+  double _orbitAzimuth = 0.65;
+  double _orbitElevation = 0.32;
+  double _orbitDistance = 7.2;
 
-  // Chase cam smoothed position
-  Vec3 _chaseCamPos = const Vec3(0, 3.2, 32);
-  Vec3 _chaseCamTarget = const Vec3(0, 1.0, 24);
+  // Angular spring-tethered chase camera state. The camera is stored relative
+  // to the car in polar coordinates so it can never lag behind or cut the
+  // chord of a corner at speed.
+  double _camYaw = 0.0;
+  double _camDist = 5.8;
+  double _camHeight = 2.10;
+  double _camLookAhead = 0.0;
+  double _chaseUserYaw = 0.0;
+  double _chaseUserPitch = 0.0;
+  double _timeSinceChaseDrag = 10.0;
+
+  Vec3 _chaseCamPos = const Vec3(0, 2.10, 29.8);
+  Vec3 _chaseCamTarget = const Vec3(0, 0.78, 21.8);
 
   // Time tracking
   Duration _lastTick = Duration.zero;
@@ -268,8 +279,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     );
 
     // Initial camera position behind car
-    _chaseCamPos = _sim.position + const Vec3(0, 2.6, 7.0);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.8, -1.0);
+    _camYaw = _sim.yaw;
+    _chaseCamPos = _sim.position + const Vec3(0, 2.10, 5.8);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.2);
 
     _ticker = createTicker(_onTick)..start();
 
@@ -352,29 +364,87 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     setState(() {});
   }
 
+  static double _wrapAngle(double a) {
+    while (a > pi) {
+      a -= 2 * pi;
+    }
+    while (a < -pi) {
+      a += 2 * pi;
+    }
+    return a;
+  }
+
   void _updateChaseCamera(double dt) {
-    final yaw = _sim.yaw;
-    final fwd = Vec3(-sin(yaw), 0, -cos(yaw));
-    final up = const Vec3(0, 1, 0);
+    _timeSinceChaseDrag += dt;
+    // Spring the free-look offset back behind the car after a drag.
+    if (_timeSinceChaseDrag > 1.1) {
+      final recenter = (dt * 4.5).clamp(0.0, 1.0);
+      _chaseUserYaw += (0.0 - _chaseUserYaw) * recenter;
+      _chaseUserPitch += (0.0 - _chaseUserPitch) * recenter;
+    }
 
-    // Target position is behind and above the car
-    final camDistance = 6.2 + (_sim.speedKmh / 160.0).clamp(0.0, 3.0);
-    final camHeight = 2.4 - (_sim.speedKmh / 200.0).clamp(0.0, 0.4);
-    final desiredPos = _sim.position - (fwd * camDistance) + (up * camHeight);
+    // Blend the car heading with the velocity vector while drifting so the
+    // slip angle reads on screen without the car sliding off-centre.
+    var targetYaw = _sim.yaw;
+    final horizSpeed = sqrt(
+      _sim.velocity.x * _sim.velocity.x + _sim.velocity.z * _sim.velocity.z,
+    );
+    if (horizSpeed > 2.5) {
+      final velYaw = atan2(-_sim.velocity.x, -_sim.velocity.z);
+      final slipDiff = _wrapAngle(velYaw - _sim.yaw);
+      final blend = _sim.isDrifting ? 0.45 : 0.18;
+      targetYaw = _sim.yaw + slipDiff * blend;
+    }
 
-    // Look slightly ahead of car
-    final desiredTarget = _sim.position + (fwd * 2.5) + (up * 0.7);
+    // Wrap-safe angular spring-damper on camera yaw.
+    final yawFollowRate =
+        (dt * (5.5 + (_sim.speedKmh / 90.0).clamp(0.0, 4.5))).clamp(0.0, 1.0);
+    _camYaw = _wrapAngle(_camYaw + _wrapAngle(targetYaw - _camYaw) * yawFollowRate);
 
-    // Smooth spring interpolation
-    final lerpRate = (dt * 6.5).clamp(0.0, 1.0);
-    _chaseCamPos = _chaseCamPos + (desiredPos - _chaseCamPos) * lerpRate;
-    _chaseCamTarget = _chaseCamTarget + (desiredTarget - _chaseCamTarget) * lerpRate;
+    final effectiveYaw = _camYaw + _chaseUserYaw;
+    final camFwd = Vec3(-sin(effectiveYaw), 0, -cos(effectiveYaw));
+    final camRight = Vec3(cos(effectiveYaw), 0, -sin(effectiveYaw));
+    const up = Vec3(0, 1, 0);
+
+    final pitchClamped = _chaseUserPitch.clamp(-0.25, 0.65);
+    final targetDist = (5.8 +
+            (_sim.speedKmh / 180.0).clamp(0.0, 1.1) +
+            (_sim.longitudinalG * 0.35).clamp(-0.35, 0.55)) *
+        cos(pitchClamped);
+    final targetHeight = (2.10 -
+            (_sim.speedKmh / 260.0).clamp(0.0, 0.25) -
+            (_sim.pitch * 1.2)) +
+        5.8 * sin(pitchClamped);
+
+    _camDist += (targetDist - _camDist) * (dt * 10.0).clamp(0.0, 1.0);
+    _camHeight += (targetHeight - _camHeight) * (dt * 10.0).clamp(0.0, 1.0);
+
+    // Pan the target into the corner apex.
+    final targetLookAhead = (-_sim.steerAngle * 1.15).clamp(-0.85, 0.85);
+    _camLookAhead +=
+        (targetLookAhead - _camLookAhead) * (dt * 8.0).clamp(0.0, 1.0);
+
+    // Tethered directly to the car so it never trails metres behind or drifts
+    // laterally across the frame.
+    _chaseCamPos =
+        _sim.position - (camFwd * _camDist) + (up * _camHeight.clamp(0.6, 5.5));
+    _chaseCamTarget = _sim.position +
+        (camFwd * 2.2) +
+        (camRight * _camLookAhead) +
+        (up * 0.78);
   }
 
   void _resetCar() {
     _sim.reset();
-    _chaseCamPos = _sim.position + const Vec3(0, 2.6, 7.0);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.8, -1.0);
+    _camYaw = _sim.yaw;
+    _camDist = 5.8;
+    _camHeight = 2.10;
+    _camLookAhead = 0.0;
+    _chaseUserYaw = 0.0;
+    _chaseUserPitch = 0.0;
+    _timeSinceChaseDrag = 10.0;
+    _chaseCamPos = _sim.position + const Vec3(0, 2.10, 5.8);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.2);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -420,64 +490,79 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         behavior: HitTestBehavior.opaque,
         onTap: () => _focusNode.requestFocus(),
         onPanUpdate: (details) {
-          if (_cameraMode == CameraMode.orbit) {
-            setState(() {
+          setState(() {
+            if (_cameraMode == CameraMode.orbit) {
               _orbitAzimuth -= details.delta.dx * 0.008;
               _orbitElevation = (_orbitElevation + details.delta.dy * 0.008)
                   .clamp(0.05, 1.4);
-            });
-          }
+            } else if (_cameraMode == CameraMode.chase) {
+              _timeSinceChaseDrag = 0.0;
+              _chaseUserYaw -= details.delta.dx * 0.007;
+              _chaseUserPitch =
+                  (_chaseUserPitch + details.delta.dy * 0.006).clamp(-0.20, 0.60);
+            }
+          });
         },
-        child: Stack(
-          children: [
-            // 3D Canvas
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _TestDriveScenePainter(
-                  sim: _sim,
-                  cameraMode: _cameraMode,
-                  lighting: _lighting,
-                  trackStyle: _trackStyle,
-                  renderMode: _renderMode,
-                  chaseCamPos: _chaseCamPos,
-                  chaseCamTarget: _chaseCamTarget,
-                  orbitAzimuth: _orbitAzimuth,
-                  orbitElevation: _orbitElevation,
-                  orbitDistance: _orbitDistance,
-                  model: widget.model,
-                  detection: widget.detection,
-                  accentColor: widget.accentColor,
-                  uiPulse: _uiPulse,
-                  assignedWheels: widget.assignedWheels,
-                  soundProfile: widget.soundProfile,
-                  sirenEnabled: widget.sirenEnabled,
+        child: Listener(
+          onPointerSignal: (event) {
+            if (event is PointerScrollEvent && _cameraMode == CameraMode.orbit) {
+              setState(() {
+                _orbitDistance = (_orbitDistance + event.scrollDelta.dy * 0.012)
+                    .clamp(3.2, 18.0);
+              });
+            }
+          },
+          child: Stack(
+            children: [
+              // 3D Canvas
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _TestDriveScenePainter(
+                    sim: _sim,
+                    cameraMode: _cameraMode,
+                    lighting: _lighting,
+                    trackStyle: _trackStyle,
+                    renderMode: _renderMode,
+                    chaseCamPos: _chaseCamPos,
+                    chaseCamTarget: _chaseCamTarget,
+                    orbitAzimuth: _orbitAzimuth,
+                    orbitElevation: _orbitElevation,
+                    orbitDistance: _orbitDistance,
+                    model: widget.model,
+                    detection: widget.detection,
+                    accentColor: widget.accentColor,
+                    uiPulse: _uiPulse,
+                    assignedWheels: widget.assignedWheels,
+                    soundProfile: widget.soundProfile,
+                    sirenEnabled: widget.sirenEnabled,
+                  ),
                 ),
               ),
-            ),
+  
+              // Top Control Bar
+              Positioned(
+                top: 14,
+                left: 14,
+                right: 14,
+                child: _buildTopBar(),
+              ),
+  
+              // Telemetry Bottom Panel & Controls
+              Positioned(
+                left: 16,
+                bottom: 16,
+                right: 16,
+                child: _buildBottomHud(),
+              ),
 
-            // Top Control Bar
-            Positioned(
-              top: 14,
-              left: 14,
-              right: 14,
-              child: _buildTopBar(),
-            ),
-
-            // Telemetry Bottom Panel & Controls
-            Positioned(
-              left: 16,
-              bottom: 16,
-              right: 16,
-              child: _buildBottomHud(),
-            ),
-
-            // Keyboard Helper Badge
-            Positioned(
-              top: 72,
-              left: 16,
-              child: _buildControlsHint(),
-            ),
-          ],
+              // Keyboard Helper Badge
+              Positioned(
+                top: 72,
+                left: 16,
+                child: _buildControlsHint(),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1705,19 +1790,23 @@ class _TestDriveScenePainter extends CustomPainter {
     if (cameraMode == CameraMode.chase) {
       eye = chaseCamPos;
       target = chaseCamTarget;
-      fovY = (60 + (sim.speedKmh / 180.0 * 12.0)) * pi / 180;
+      fovY = (58 + (sim.speedKmh / 190.0 * 9.0).clamp(0.0, 9.0)) * pi / 180;
     } else if (cameraMode == CameraMode.hood) {
-      final fwd = Vec3(-sin(sim.yaw), 0, -cos(sim.yaw));
-      eye = sim.position + (fwd * 0.8) + const Vec3(0, 0.95, 0);
-      target = eye + (fwd * 12.0);
-      fovY = 72 * pi / 180;
+      // Hood cam tilts with the sprung body and looks into the corner apex.
+      final fwd = Vec3(-sin(sim.yaw), -sin(sim.pitch) * 0.65, -cos(sim.yaw))
+          .normalized;
+      final right = Vec3(cos(sim.yaw), 0, -sin(sim.yaw));
+      eye = sim.position + (fwd * 0.55) + const Vec3(0, 1.02, 0);
+      target = eye + (fwd * 14.0) - (right * (sim.steerAngle * 2.8));
+      fovY = 68 * pi / 180;
     } else {
-      // Orbit
-      target = sim.position + const Vec3(0, 0.6, 0);
+      // Orbit is anchored to the car heading plus the user orbit azimuth.
+      final totalAz = sim.yaw + orbitAzimuth;
+      target = sim.position + const Vec3(0, 0.68, 0);
       eye = Vec3(
-        target.x + orbitDistance * cos(orbitElevation) * sin(orbitAzimuth),
+        target.x + orbitDistance * cos(orbitElevation) * sin(totalAz),
         target.y + orbitDistance * sin(orbitElevation),
-        target.z + orbitDistance * cos(orbitElevation) * cos(orbitAzimuth),
+        target.z + orbitDistance * cos(orbitElevation) * cos(totalAz),
       );
     }
 
@@ -2157,6 +2246,47 @@ class _TestDriveScenePainter extends CustomPainter {
         _drawDragstripAsphalt(canvas, size, viewProj, project);
       case TrackSurfaceStyle.cyberGrid:
         _drawCyberGridAsphalt(canvas, size, viewProj, project);
+    }
+
+    // World-anchored 2D tarmac expansion joints across the driving surface in
+    // both axes. Without lateral seams, turning off the main straight leaves no
+    // ground optical flow under the tires and the car reads as hovering.
+    final halfW = switch (trackStyle) {
+      TrackSurfaceStyle.circuit => 14.0,
+      TrackSurfaceStyle.skidpad => 35.0,
+      TrackSurfaceStyle.dragstrip => 11.0,
+      TrackSurfaceStyle.cyberGrid => 12.0,
+    };
+    const cell = 4.0;
+    const radius = 44.0;
+    final baseX = (sim.position.x / cell).floor() * cell;
+    final baseZ = (sim.position.z / cell).floor() * cell;
+    final gridPaint = Paint()
+      ..color = lighting == TestDriveLighting.day
+          ? const Color(0x1CFFFFFF)
+          : const Color(0x1E34D399)
+      ..strokeWidth = 1.1;
+
+    for (var x = baseX - radius; x <= baseX + radius; x += cell) {
+      if (x.abs() > halfW) continue;
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(x, 0.002, baseZ - radius),
+        Vec3(x, 0.002, baseZ + radius),
+        gridPaint,
+      );
+    }
+    for (var z = baseZ - radius; z <= baseZ + radius; z += cell) {
+      _drawClippedLine(
+        canvas,
+        viewProj,
+        size,
+        Vec3(-halfW, 0.002, z),
+        Vec3(halfW, 0.002, z),
+        gridPaint,
+      );
     }
   }
 
@@ -3400,6 +3530,36 @@ class _TestDriveScenePainter extends CustomPainter {
     final localEyeUnshifted = rotTranspose(dEye);
     final localEye = localEyeUnshifted - alignOffset;
 
+    // Un-sprung frame: yaw + ground position only. Wheels are anchored here so
+    // all four tires stay planted flat on the asphalt while the sprung body
+    // (k = 8) pitches and rolls above them on its suspension.
+    final unsprungCy = cos(sim.yaw);
+    final unsprungSy = sin(sim.yaw);
+    final unsprungRot = Mat4([
+      unsprungCy, 0, -unsprungSy, 0,
+      0, 1, 0, 0,
+      unsprungSy, 0, unsprungCy, 0,
+      0, 0, 0, 1,
+    ]);
+    final transOnly = Mat4([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      sim.position.x, sim.position.y, sim.position.z, 1,
+    ]);
+    final unsprungVehicleMatrix = transOnly * unsprungRot;
+
+    Vec3 unsprungRotTranspose(Vec3 v) => Vec3(
+      unsprungCy * v.x + unsprungSy * v.z,
+      v.y,
+      -unsprungSy * v.x + unsprungCy * v.z,
+    );
+
+    final unsprungKeyLight = unsprungRotTranspose(worldKeyLight);
+    final unsprungFillLight = unsprungRotTranspose(worldFillLight);
+    final unsprungRimLight = unsprungRotTranspose(worldRimLight);
+    final unsprungLocalEye = unsprungRotTranspose(dEye);
+
     // Build the 9 transforms:
     // 0..3: spinning wheel parts (steer + roll)
     // 4..7: caliper & hub frame parts (steer only)
@@ -3474,22 +3634,22 @@ class _TestDriveScenePainter extends CustomPainter {
       final roll = -sim.wheelRoll / r;
       final hub = w.worldPosition;
 
-      // Spinning matrix (steer + roll)
+      // Spinning matrix (steer + roll) anchored to the planted wheel frame.
       final spinLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, roll);
-      wvpMatrices[spinIdx] = viewProj * (vehicleMatrix * spinLocalMat);
-      keyLights[spinIdx] = _applyWheelRotTranspose(keyLight, steer, roll);
-      fillLights[spinIdx] = _applyWheelRotTranspose(fillLight, steer, roll);
-      rimLights[spinIdx] = _applyWheelRotTranspose(rimLight, steer, roll);
-      final dVehHubSpin = localEyeUnshifted - (hub + alignOffset);
+      wvpMatrices[spinIdx] = viewProj * (unsprungVehicleMatrix * spinLocalMat);
+      keyLights[spinIdx] = _applyWheelRotTranspose(unsprungKeyLight, steer, roll);
+      fillLights[spinIdx] = _applyWheelRotTranspose(unsprungFillLight, steer, roll);
+      rimLights[spinIdx] = _applyWheelRotTranspose(unsprungRimLight, steer, roll);
+      final dVehHubSpin = unsprungLocalEye - (hub + alignOffset);
       eyes[spinIdx] = hub + _applyWheelRotTranspose(dVehHubSpin, steer, roll);
 
       // Caliper matrix (steer only)
       final calLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, 0.0);
-      wvpMatrices[calIdx] = viewProj * (vehicleMatrix * calLocalMat);
-      keyLights[calIdx] = _applyWheelRotTranspose(keyLight, steer, 0.0);
-      fillLights[calIdx] = _applyWheelRotTranspose(fillLight, steer, 0.0);
-      rimLights[calIdx] = _applyWheelRotTranspose(rimLight, steer, 0.0);
-      final dVehHubCal = localEyeUnshifted - (hub + alignOffset);
+      wvpMatrices[calIdx] = viewProj * (unsprungVehicleMatrix * calLocalMat);
+      keyLights[calIdx] = _applyWheelRotTranspose(unsprungKeyLight, steer, 0.0);
+      fillLights[calIdx] = _applyWheelRotTranspose(unsprungFillLight, steer, 0.0);
+      rimLights[calIdx] = _applyWheelRotTranspose(unsprungRimLight, steer, 0.0);
+      final dVehHubCal = unsprungLocalEye - (hub + alignOffset);
       eyes[calIdx] = hub + _applyWheelRotTranspose(dVehHubCal, steer, 0.0);
 
       // Map nodes to transforms with strict body/chassis guard
@@ -4345,6 +4505,24 @@ class _TestDriveScenePainter extends CustomPainter {
     ]);
     final carModelMatrix = vehicleMatrix * alignMatrix;
 
+    // Yaw-only wheel frame so wireframe/hybrid tires stay planted exactly like
+    // solid mode instead of tilting with the sprung body.
+    final unsprungCy = cos(sim.yaw);
+    final unsprungSy = sin(sim.yaw);
+    final unsprungRot = Mat4([
+      unsprungCy, 0, -unsprungSy, 0,
+      0, 1, 0, 0,
+      unsprungSy, 0, unsprungCy, 0,
+      0, 0, 0, 1,
+    ]);
+    final transOnly = Mat4([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      sim.position.x, sim.position.y, sim.position.z, 1,
+    ]);
+    final unsprungVehicleMatrix = transOnly * unsprungRot;
+
     final worldMatrices = List<Mat4>.filled(9, carModelMatrix);
 
     final nonWheelNodes = <int>{};
@@ -4412,10 +4590,10 @@ class _TestDriveScenePainter extends CustomPainter {
       final hub = w.worldPosition;
 
       final spinLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, roll);
-      worldMatrices[spinIdx] = vehicleMatrix * spinLocalMat;
+      worldMatrices[spinIdx] = unsprungVehicleMatrix * spinLocalMat;
 
       final calLocalMat = _buildWheelLocalMatrix(hub, alignOffset, steer, 0.0);
-      worldMatrices[calIdx] = vehicleMatrix * calLocalMat;
+      worldMatrices[calIdx] = unsprungVehicleMatrix * calLocalMat;
 
       if (w.spinNodeIndices.isNotEmpty || w.caliperHubNodeIndices.isNotEmpty) {
         for (final n in w.spinNodeIndices) {
@@ -4433,6 +4611,37 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
 
+    // Wheel envelopes mirror the solid renderer so a shared node cannot drag
+    // its fenders, mirrors or body panels into a wheel transform.
+    final wheelEnvelopes = <int, ({
+      Vec3 hub,
+      double rMaxSq,
+      double halfW,
+      bool hasDedicatedNode,
+    })>{};
+    for (var c = 0; c < 4; c++) {
+      final w = wheels[corners[c]];
+      if (w == null) continue;
+      final baseR = w.radius > 0.05 ? w.radius : 0.34;
+      final r = baseR * 1.08;
+      final clampedW = min(w.width > 0.05 ? w.width : 0.28, baseR * 0.95);
+      final halfW = max(clampedW * 0.52, baseR * 0.28);
+      final candidateNodes = <int>{
+        ...w.spinNodeIndices,
+        ...w.caliperHubNodeIndices,
+        ...w.partNodeIndices,
+        w.nodeIndex,
+      };
+      final hasDedicatedNode =
+          candidateNodes.any((n) => n >= 0 && nodeToTransform.containsKey(n));
+      wheelEnvelopes[c] = (
+        hub: w.worldPosition,
+        rMaxSq: r * r,
+        halfW: halfW,
+        hasDedicatedNode: hasDedicatedNode,
+      );
+    }
+
     final wirePaint = Paint()
       ..color = const Color(0xFF64B5F6)
       ..strokeWidth = 1.0;
@@ -4440,8 +4649,7 @@ class _TestDriveScenePainter extends CustomPainter {
     for (final inst in model!.instances) {
       final verts = inst.worldVertices;
       final edges = inst.edges;
-      final k = nodeToTransform[inst.nodeIndex] ?? 8;
-      final transMat = worldMatrices[k];
+      final baseK = nodeToTransform[inst.nodeIndex] ?? 8;
 
       final step = (edges.length > 2500) ? (edges.length ~/ 2500) : 1;
 
@@ -4450,7 +4658,35 @@ class _TestDriveScenePainter extends CustomPainter {
         if (e.a < verts.length && e.b < verts.length) {
           final v0 = verts[e.a];
           final v1 = verts[e.b];
+          var k = baseK;
+          final mx = (v0.x + v1.x) * 0.5;
+          final my = (v0.y + v1.y) * 0.5;
+          final mz = (v0.z + v1.z) * 0.5;
+          if (k != 8) {
+            final env = wheelEnvelopes[k % 4];
+            if (env != null &&
+                ((mx - env.hub.x).abs() > env.halfW * 1.35 ||
+                    (my - env.hub.y) * (my - env.hub.y) +
+                            (mz - env.hub.z) * (mz - env.hub.z) >
+                        env.rMaxSq * 1.25)) {
+              k = 8;
+            }
+          } else if (nodeToTransform.isEmpty) {
+            for (final entry in wheelEnvelopes.entries) {
+              final env = entry.value;
+              if (env.hasDedicatedNode) continue;
+              if ((mx - env.hub.x).abs() <= env.halfW) {
+                final dy = my - env.hub.y;
+                final dz = mz - env.hub.z;
+                if (dy * dy + dz * dz <= env.rMaxSq) {
+                  k = entry.key;
+                  break;
+                }
+              }
+            }
+          }
 
+          final transMat = worldMatrices[k];
           final world0 = transMat.transformPoint(v0);
           final world1 = transMat.transformPoint(v1);
 
