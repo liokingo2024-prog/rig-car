@@ -1702,10 +1702,12 @@
         // Step 2 Anchor Ring Candidates:
         // Circular parts in the outer lateral track near the ground
         const isAnchorRing = (
-          (diameter >= 0.08 * carLength && diameter <= 0.38 * carLength) &&
+          (diameter >= 0.08 * carLength && diameter <= 0.36 * carLength) &&
           (circularity >= (namedWheel ? 0.60 : 0.75)) &&
           (center.y < groundY + 0.35 * carHeight) &&
-          (Math.abs(center[lAxis] - carCenter[lAxis]) > 0.25 * carWidth)
+          (Math.abs(center[lAxis] - carCenter[lAxis]) > 0.25 * carWidth) &&
+          // Thin across the axle: rejects axle shafts and chassis crossmembers.
+          (dLat <= 0.25 * carWidth && dLat <= 1.25 * diameter)
         );
 
         allParts.push({
@@ -1766,7 +1768,9 @@
             ringParts[i].center[fAxis] - ringParts[j].center[fAxis],
             ringParts[i].center.y - ringParts[j].center.y
           );
-          if (dist2D <= maxSpinAxisDist) {
+          // Coaxial only: wide axle shafts must not merge a whole axle.
+          const latDist = Math.abs(ringParts[i].center[lAxis] - ringParts[j].center[lAxis]);
+          if (dist2D <= maxSpinAxisDist && latDist <= 0.14 * carWidth) {
             unionRoots(i, j);
           }
         }
@@ -1890,7 +1894,7 @@
       const hubF = (coreWheelBox.min[fAxis] + coreWheelBox.max[fAxis]) / 2;
       const hubY = (coreWheelBox.min.y + coreWheelBox.max.y) / 2;
       const tireRadius = Math.max(coreWheelBox.max[fAxis] - coreWheelBox.min[fAxis], coreWheelBox.max.y - coreWheelBox.min.y) / 2;
-      const tireWidth = coreWheelBox.max[lAxis] - coreWheelBox.min[lAxis];
+      const tireWidth = Math.min(coreWheelBox.max[lAxis] - coreWheelBox.min[lAxis], tireRadius * 1.15);
       const minLat = coreWheelBox.min[lAxis];
       const maxLat = coreWheelBox.max[lAxis];
       const hubCenter = coreWheelBox.getCenter(new THREE.Vector3());
@@ -2064,6 +2068,37 @@
     return detectedWheelData;
   }
 
+  // Shared highlight materials: allocated once so hover/rescan never leaks a
+  // new GPU material per mesh on every pass.
+  let sharedWheelHighlightMat = null;
+  let sharedCyanHighlightMat = null;
+
+  function wheelHighlightMaterial() {
+    if (!sharedWheelHighlightMat) {
+      sharedWheelHighlightMat = new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        emissive: 0x059669,
+        emissiveIntensity: 0.5,
+        roughness: 0.2,
+        metalness: 0.8
+      });
+    }
+    return sharedWheelHighlightMat;
+  }
+
+  function cyanHighlightMaterial() {
+    if (!sharedCyanHighlightMat) {
+      sharedCyanHighlightMat = new THREE.MeshStandardMaterial({
+        color: 0x00e5ff,
+        emissive: 0x008ba3,
+        emissiveIntensity: 0.7,
+        roughness: 0.2,
+        metalness: 0.8
+      });
+    }
+    return sharedCyanHighlightMat;
+  }
+
   function highlightWheelMeshes(wheelNodeNames) {
     if (!currentModel) return;
 
@@ -2100,13 +2135,7 @@
           if (!child.userData.origMaterial) {
             child.userData.origMaterial = child.material;
           }
-          child.material = new THREE.MeshStandardMaterial({
-            color: 0x10b981,
-            emissive: 0x059669,
-            emissiveIntensity: 0.5,
-            roughness: 0.2,
-            metalness: 0.8
-          });
+          child.material = wheelHighlightMaterial();
         }
       }
     });
@@ -2136,13 +2165,7 @@
             child.userData.origMaterial = child.material;
           }
           child.userData.cyanOverride = true;
-          child.material = new THREE.MeshStandardMaterial({
-            color: 0x00e5ff,
-            emissive: 0x008ba3,
-            emissiveIntensity: 0.7,
-            roughness: 0.2,
-            metalness: 0.8
-          });
+          child.material = cyanHighlightMaterial();
         }
       }
     });
@@ -2155,6 +2178,7 @@
       if (child.material) {
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         mats.forEach(m => {
+          if (m === sharedWheelHighlightMat || m === sharedCyanHighlightMat) return;
           if (m.map) m.map.dispose();
           m.dispose();
         });
@@ -2164,14 +2188,65 @@
 
   let audioCtx = null;
   let currentPreviewOsc = null;
+  let currentPreviewSource = null;
   let currentSkidOsc = null;
   let currentSkidGain = null;
+  let engineOscA = null;
+  let engineOscB = null;
+  let engineGain = null;
+  let engineFilter = null;
+  let sirenOsc = null;
+  let sirenLfo = null;
+  let sirenGain = null;
 
-  function playAudioPreview(slotId, pitchMultiplier) {
+  function ensureAudioContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function toAudioArrayBuffer(data) {
+    if (!data) return null;
+    if (data instanceof ArrayBuffer) return data;
+    if (ArrayBuffer.isView(data)) {
+      return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    }
+    if (Array.isArray(data)) return new Uint8Array(data).buffer;
+    if (data.buffer instanceof ArrayBuffer) {
+      return data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength);
+    }
+    return null;
+  }
+
+  function playAudioPreview(slotId, pitchMultiplier, bytes) {
     try {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const ctx = ensureAudioContext();
       stopAudioPreview();
+
+      // Step 4 uploads: decode and play the actual authored audio bytes.
+      const raw = toAudioArrayBuffer(bytes);
+      if (raw && raw.byteLength > 44) {
+        ctx.decodeAudioData(
+          raw.slice(0),
+          function(buffer) {
+            try {
+              const src = ctx.createBufferSource();
+              src.buffer = buffer;
+              src.playbackRate.value = Math.max(0.25, Math.min(4.0, pitchMultiplier || 1.0));
+              src.connect(ctx.destination);
+              src.start();
+              currentPreviewSource = src;
+            } catch (e) {
+              console.warn('Audio preview playback error:', e);
+            }
+          },
+          function(err) { console.warn('decodeAudioData failed:', err); }
+        );
+        return;
+      }
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       const id = String(slotId || '').toLowerCase();
@@ -2195,6 +2270,92 @@
       try { currentPreviewOsc.stop(); } catch(e) {}
       currentPreviewOsc = null;
     }
+    if (currentPreviewSource) {
+      try { currentPreviewSource.stop(); } catch(e) {}
+      currentPreviewSource = null;
+    }
+  }
+
+  // Live engine + siren synthesizer for Test Drive. Two oscillators (fundamental
+  // plus harmonic overtone) track RPM, and a sweeping LFO drives the siren.
+  const ENGINE_PROFILES = {
+    v10: { fundamental: 34, harmonic: 2.02, filter: 2600, gain: 0.16 },
+    v8: { fundamental: 27, harmonic: 1.5, filter: 1500, gain: 0.18 },
+    turbo_i4: { fundamental: 24, harmonic: 2.5, filter: 2000, gain: 0.14 },
+    ev: { fundamental: 90, harmonic: 3.0, filter: 5200, gain: 0.10 }
+  };
+
+  function updateEngineAndSirenAudio(rpm, throttle, profile, sirenEnabled) {
+    try {
+      const ctx = ensureAudioContext();
+      const cfg = ENGINE_PROFILES[String(profile || 'v10').toLowerCase()] || ENGINE_PROFILES.v10;
+      const rev = Math.max(0, Math.min(1.0, (rpm || 0) / 7800));
+      const load = Math.max(0, Math.min(1.0, Math.abs(throttle || 0)));
+      const fundamental = cfg.fundamental + rev * 210;
+      const targetGain = 0.004 + rev * 0.03 + load * cfg.gain * 0.55;
+
+      if (!engineOscA) {
+        engineGain = ctx.createGain();
+        engineFilter = ctx.createBiquadFilter();
+        engineOscA = ctx.createOscillator();
+        engineOscB = ctx.createOscillator();
+        engineOscA.type = 'sawtooth';
+        engineOscB.type = 'sine';
+        engineFilter.type = 'lowpass';
+        engineFilter.frequency.setValueAtTime(cfg.filter, ctx.currentTime);
+        engineGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        engineOscA.connect(engineFilter);
+        engineOscB.connect(engineFilter);
+        engineFilter.connect(engineGain);
+        engineGain.connect(ctx.destination);
+        engineOscA.start();
+        engineOscB.start();
+      }
+      engineOscA.frequency.setTargetAtTime(fundamental, ctx.currentTime, 0.04);
+      engineOscB.frequency.setTargetAtTime(fundamental * cfg.harmonic, ctx.currentTime, 0.04);
+      engineFilter.frequency.setTargetAtTime(cfg.filter * (0.55 + rev * 0.8), ctx.currentTime, 0.08);
+      engineGain.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.06);
+
+      if (sirenEnabled) {
+        if (!sirenOsc) {
+          sirenGain = ctx.createGain();
+          sirenOsc = ctx.createOscillator();
+          sirenLfo = ctx.createOscillator();
+          const lfoGain = ctx.createGain();
+          sirenOsc.type = 'square';
+          sirenOsc.frequency.setValueAtTime(880, ctx.currentTime);
+          sirenLfo.type = 'sine';
+          sirenLfo.frequency.setValueAtTime(0.55, ctx.currentTime);
+          lfoGain.gain.setValueAtTime(420, ctx.currentTime);
+          sirenLfo.connect(lfoGain);
+          lfoGain.connect(sirenOsc.frequency);
+          sirenGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+          sirenOsc.connect(sirenGain);
+          sirenGain.connect(ctx.destination);
+          sirenOsc.start();
+          sirenLfo.start();
+        }
+        sirenGain.gain.setTargetAtTime(0.035, ctx.currentTime, 0.15);
+      } else if (sirenGain) {
+        sirenGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
+      }
+    } catch (e) {}
+  }
+
+  function stopEngineAndSirenAudio() {
+    if (!audioCtx) return;
+    if (engineGain) engineGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
+    if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
+    [engineOscA, engineOscB, sirenOsc, sirenLfo].forEach(function(osc) {
+      if (osc) { try { osc.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
+    });
+    engineOscA = null;
+    engineOscB = null;
+    engineFilter = null;
+    engineGain = null;
+    sirenOsc = null;
+    sirenLfo = null;
+    sirenGain = null;
   }
 
   function updateSkidAudio(isDrifting, enabled) {
@@ -2249,6 +2410,8 @@
     playAudioPreview: playAudioPreview,
     stopAudioPreview: stopAudioPreview,
     updateSkidAudio: updateSkidAudio,
+    updateEngineAndSirenAudio: updateEngineAndSirenAudio,
+    stopEngineAndSirenAudio: stopEngineAndSirenAudio,
     isInitialized: function() { return isInitialized; }
   };
 })();

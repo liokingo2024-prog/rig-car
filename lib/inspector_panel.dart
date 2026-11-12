@@ -2553,7 +2553,11 @@ class _AudioSlotCardState extends State<_AudioSlotCard> {
                 onPressed: () async {
                   final picked = await pickAudioFile();
                   if (picked != null) {
-                    setState(() => widget.slot.fileName = picked.name);
+                    setState(() {
+                      widget.slot.fileName = picked.name;
+                      widget.slot.bytes =
+                          picked.bytes.isEmpty ? null : picked.bytes;
+                    });
                   }
                 },
                 icon: const Icon(Icons.folder_open_rounded, size: 13),

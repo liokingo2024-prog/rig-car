@@ -51,6 +51,17 @@ void setSketchfabCameraPreset(String preset) {}
 void setSketchfabForwardArrowVisible(bool visible) {}
 void highlightSketchfabMeshesCyan(dynamic meshNamesOrList) {}
 dynamic detectSketchfabWheels({double groundTol = 0.08, double inboardTol = 0.015}) => null;
-void playSketchfabAudioPreview(String slotId, double pitchMultiplier) {}
+void playSketchfabAudioPreview(
+  String slotId,
+  double pitchMultiplier, {
+  Uint8List? bytes,
+}) {}
 void stopSketchfabAudioPreview() {}
 void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {}
+void updateSketchfabEngineAudio(
+  double rpm,
+  double throttle,
+  String profile,
+  bool sirenEnabled,
+) {}
+void stopSketchfabEngineAudio() {}

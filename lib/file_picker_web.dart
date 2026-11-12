@@ -58,5 +58,23 @@ Future<PickedFile?> pickAudioFile() async {
   if (files == null || files.isEmpty) return null;
 
   final file = files.first;
-  return PickedFile(file.name, Uint8List(0));
+  final reader = html.FileReader();
+  final completer = Completer<Uint8List>();
+
+  reader.onLoadEnd.listen((event) {
+    final result = reader.result;
+    if (result is Uint8List) {
+      completer.complete(result);
+    } else if (result is ByteBuffer) {
+      completer.complete(result.asUint8List());
+    } else if (result is List<int>) {
+      completer.complete(Uint8List.fromList(result));
+    } else {
+      completer.complete(Uint8List(0));
+    }
+  });
+  reader.onError.listen((error) => completer.complete(Uint8List(0)));
+  reader.readAsArrayBuffer(file);
+
+  return PickedFile(file.name, await completer.future);
 }

@@ -345,7 +345,13 @@ class AutoDetector {
           final p1Long = fAxisIsZ ? ringParts[i].center.z : ringParts[i].center.x;
           final p2Long = fAxisIsZ ? ringParts[j].center.z : ringParts[j].center.x;
           final dist2D = sqrt(pow(p1Long - p2Long, 2) + pow(ringParts[i].center.y - ringParts[j].center.y, 2));
-          if (dist2D <= maxSpinAxisDist) {
+          // Coaxial only: wide axle shafts / crossmembers must not merge a
+          // whole axle into one corner cluster.
+          final latDist = (
+            (fAxisIsZ ? ringParts[i].center.x : ringParts[i].center.z) -
+            (fAxisIsZ ? ringParts[j].center.x : ringParts[j].center.z)
+          ).abs();
+          if (dist2D <= maxSpinAxisDist && latDist <= 0.14 * carWidth) {
             unionRoots(i, j);
           }
         }
@@ -478,7 +484,10 @@ class AutoDetector {
       final hubFLong = ((fAxisIsZ ? coreWheelBox.lo.z : coreWheelBox.lo.x) + (fAxisIsZ ? coreWheelBox.hi.z : coreWheelBox.hi.x)) * 0.5;
       final hubY = (coreWheelBox.lo.y + coreWheelBox.hi.y) * 0.5;
       final tireRadius = cluster.outerDiameter * 0.5;
-      final tireWidth = (fAxisIsZ ? coreWheelBox.size.x : coreWheelBox.size.z).abs();
+      final tireWidth = min(
+        (fAxisIsZ ? coreWheelBox.size.x : coreWheelBox.size.z).abs(),
+        tireRadius * 1.15,
+      );
       final minLat = fAxisIsZ ? coreWheelBox.lo.x : coreWheelBox.lo.z;
       final maxLat = fAxisIsZ ? coreWheelBox.hi.x : coreWheelBox.hi.z;
       final hubCenter = coreWheelBox.center;
@@ -703,10 +712,13 @@ class AutoDetector {
 
         final minCirc = named ? 0.60 : 0.75;
         final isAnchorRing = (
-          diameter >= 0.08 * carLength && diameter <= 0.38 * carLength &&
+          diameter >= 0.08 * carLength && diameter <= 0.36 * carLength &&
           circularity >= minCirc &&
           (bbox.center.y < groundY + 0.35 * carHeight) &&
-          (fAxisIsZ ? (bbox.center.x - carCenter.x).abs() : (bbox.center.z - carCenter.z).abs()) > 0.25 * carWidth
+          (fAxisIsZ ? (bbox.center.x - carCenter.x).abs() : (bbox.center.z - carCenter.z).abs()) > 0.25 * carWidth &&
+          // A genuine wheel ring is thin across the axle; wide axle shafts,
+          // crossmembers and chassis braces are rejected here.
+          dLat <= 0.25 * carWidth && dLat <= 1.25 * diameter
         );
 
         final shapeScore = _wheelShapeScore(model, bbox);

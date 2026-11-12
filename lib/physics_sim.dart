@@ -139,9 +139,11 @@ class VehiclePhysicsSimulation {
     required double steerInput, // -1.0 (left) to +1.0 (right)
     required bool handbrake,
   }) {
-    // 1. Steering smoothing with configured maximum steering angle
+    // 1. Steering smoothing with speed-sensitive attenuation so high-speed
+    //    inputs do not apply the full lock and spin the car.
     final maxSteer = (maxSteerAngleDegrees * pi / 180.0).clamp(0.20, 0.95);
-    targetSteerAngle = -steerInput * maxSteer;
+    final speedSteerFactor = 1.0 / (1.0 + (speedKmh / 110.0) * 0.85);
+    targetSteerAngle = -steerInput * maxSteer * speedSteerFactor;
     steerAngle += (targetSteerAngle - steerAngle) * (dt * 12.0).clamp(0.0, 1.0);
 
     // 2. Local direction vectors (Godot convention: -Z is forward, +X is right)
@@ -300,16 +302,21 @@ class VehiclePhysicsSimulation {
     position = position + (velocity * dt);
 
     // 9. Suspension Dynamics (Pitch under accel/brake, Roll during cornering)
-    // Spring stiffness factor: higher stiffness = stiffer, less lean
-    final effectiveStiffness = ((springStiffness / 10.0) * (suspension / 5.0)).clamp(1.5, 25.0);
-    final targetPitch = (-longitudinalG * (centerOfMass.abs() + 0.25) / effectiveStiffness)
-        .clamp(-0.25, 0.25);
-    final targetRoll = (lateralG * (centerOfMass.abs() + 0.25) / effectiveStiffness)
-        .clamp(-0.35, 0.35);
+    // Derived from the authored spring rate, damper and rest length so the
+    // Workbench sliders produce a physically consistent ride.
+    final effStiff = ((springStiffness / 45.0) * (suspension / 6.0)).clamp(0.35, 2.5);
+    final effDamp = (dampingCompression / 2.4).clamp(0.35, 2.5);
+    final restingFactor = (springRestLength / 0.18).clamp(0.45, 2.0);
+    final comHeightFactor =
+        ((0.55 - centerOfMass.abs()) * restingFactor).clamp(0.15, 1.2);
+    final targetPitch =
+        (longitudinalG * 0.045 * comHeightFactor / effStiff).clamp(-0.12, 0.12);
+    final targetRoll =
+        (-lateralG * 0.065 * comHeightFactor / effStiff).clamp(-0.16, 0.16);
 
-    final dampingRate = (dampingCompression * 3.5).clamp(4.0, 18.0);
-    pitch += (targetPitch - pitch) * (dt * dampingRate);
-    roll += (targetRoll - roll) * (dt * dampingRate);
+    final responseRate = (10.0 * effDamp).clamp(3.0, 24.0);
+    pitch += (targetPitch - pitch) * (dt * responseRate).clamp(0.0, 1.0);
+    roll += (targetRoll - roll) * (dt * responseRate).clamp(0.0, 1.0);
 
     // Suspension compression per wheel
     wheelSuspensionCompressions[0] = (pitch - roll).clamp(-0.15, 0.15); // FL

@@ -711,17 +711,27 @@ class ParsedModel {
 
     // 2. Scene nodes front vs rear features
     final frontFeaturePattern = RegExp(
-      r'(headlight|head_light|headlamp|grille|radiator|hood|bonnet|bumper_f|front_bumper|windshield|windscreen|steering_wheel|dashboard|intercooler)',
+      r'(headlight|head_light|headlamp|front_light|light_front|drl|grille|grill|radiator|hood|bonnet|bumper_f|front_bumper|front_grill|windshield|windscreen|steering_wheel|steeringwheel|dashboard|dash_|intercooler|front_lamp)',
       caseSensitive: false,
     );
     final rearFeaturePattern = RegExp(
-      r'(taillight|tail_light|taillamp|exhaust|muffler|trunk|boot|bumper_r|rear_bumper|diffuser|spoiler|plate_r|rear_plate)',
+      r'(taillight|tail_light|tail_lamp|taillamp|rear_light|light_rear|brake_light|exhaust|muffler|trunk|boot|bumper_r|rear_bumper|diffuser|spoiler|wing|plate_r|rear_plate)',
       caseSensitive: false,
     );
 
+    // Use each node's mesh bounds rather than its pivot: exported models often
+    // keep every pivot at the origin, which hides which end a light/grille is on.
+    final nodeZCents = <int, double>{};
+    for (final inst in instances) {
+      final z = inst.worldBBox.center.z;
+      final prev = nodeZCents[inst.nodeIndex];
+      nodeZCents[inst.nodeIndex] =
+          prev == null ? z : (prev * 0.5 + z * 0.5);
+    }
+
     for (final node in nodes) {
+      final z = nodeZCents[node.index] ?? node.worldTransform.translation.z;
       if (frontFeaturePattern.hasMatch(node.name)) {
-        final z = node.worldTransform.translation.z;
         if (z < midZ) {
           frontAtNegZScore += 2.0;
         } else {
@@ -729,7 +739,6 @@ class ParsedModel {
         }
       }
       if (rearFeaturePattern.hasMatch(node.name)) {
-        final z = node.worldTransform.translation.z;
         if (z > midZ) {
           frontAtNegZScore += 2.0;
         } else {
@@ -1370,6 +1379,7 @@ class RigConfig {
 @export var spring_stiffness: float = ${springStiffness.toStringAsFixed(1)}
 @export var damping_compression: float = ${dampingCompression.toStringAsFixed(2)}
 @export var rest_length: float = ${springRestLength.toStringAsFixed(2)}
+@export var wheel_radius: float = ${wheelRadius.toStringAsFixed(3)}
 
 @onready var idle_audio: AudioStreamPlayer3D = get_node_or_null("IdleAudio")
 @onready var high_rpm_audio: AudioStreamPlayer3D = get_node_or_null("HighRpmAudio")
@@ -1379,15 +1389,19 @@ func _physics_process(delta: float) -> void:
     var throttle := Input.get_axis("brake", "accelerate")
     var steer := Input.get_axis("steer_right", "steer_left") * max_steering_angle
     
-    # Raycast suspension & drive integration
+    # Raycast suspension & drive integration (spring + damper)
     for child in get_children():
         if child is RayCast3D and child.is_colliding():
             var contact_point := child.get_collision_point()
             var current_dist := (global_position - contact_point).length()
-            var spring_force := (rest_length - current_dist) * spring_stiffness
-            apply_force(child.global_transform.basis.y * spring_force, contact_point - global_position)
+            var point_offset := contact_point - global_position
+            var point_vel := linear_velocity + angular_velocity.cross(point_offset)
+            var ray_up := child.global_transform.basis.y
+            var rel_vel := ray_up.dot(point_vel)
+            var spring_force := (rest_length + wheel_radius - current_dist) * spring_stiffness - rel_vel * damping_compression
+            apply_force(ray_up * maxf(0.0, spring_force), point_offset)
             if throttle != 0:
-                apply_force(-global_transform.basis.z * throttle * (engine_power / 4.0), contact_point - global_position)
+                apply_force(-global_transform.basis.z * throttle * (engine_power / 4.0), point_offset)
     
     # Audio RPM tracking
     if high_rpm_audio:

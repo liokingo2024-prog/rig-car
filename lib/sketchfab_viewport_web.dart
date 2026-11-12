@@ -369,11 +369,18 @@ dynamic detectSketchfabWheels({double groundTol = 0.08, double inboardTol = 0.01
   return null;
 }
 
-void playSketchfabAudioPreview(String slotId, double pitchMultiplier) {
+void playSketchfabAudioPreview(
+  String slotId,
+  double pitchMultiplier, {
+  Uint8List? bytes,
+}) {
   try {
     final viewer = js.context['SketchfabViewer'];
     if (viewer != null) {
-      viewer.callMethod('playAudioPreview', [slotId, pitchMultiplier]);
+      final payload = bytes != null && bytes.isNotEmpty
+          ? js.JsObject.jsify(bytes.toList())
+          : null;
+      viewer.callMethod('playAudioPreview', [slotId, pitchMultiplier, payload]);
     }
   } catch (e) {
     debugPrint('playSketchfabAudioPreview error: $e');
@@ -388,6 +395,36 @@ void stopSketchfabAudioPreview() {
     }
   } catch (e) {
     debugPrint('stopSketchfabAudioPreview error: $e');
+  }
+}
+
+void updateSketchfabEngineAudio(
+  double rpm,
+  double throttle,
+  String profile,
+  bool sirenEnabled,
+) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod(
+        'updateEngineAndSirenAudio',
+        [rpm, throttle, profile, sirenEnabled],
+      );
+    }
+  } catch (e) {
+    debugPrint('updateSketchfabEngineAudio error: $e');
+  }
+}
+
+void stopSketchfabEngineAudio() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('stopEngineAndSirenAudio');
+    }
+  } catch (e) {
+    debugPrint('stopSketchfabEngineAudio error: $e');
   }
 }
 

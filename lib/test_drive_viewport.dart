@@ -281,6 +281,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   @override
   void dispose() {
     updateSketchfabSkidAudio(false, false);
+    stopSketchfabEngineAudio();
     _ticker.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -335,6 +336,12 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     );
 
     updateSketchfabSkidAudio(_sim.isDrifting, widget.tireSkidAudioEnabled);
+    updateSketchfabEngineAudio(
+      _sim.engineRpm,
+      throttle,
+      widget.soundProfile,
+      widget.sirenEnabled,
+    );
 
     // Update chase camera
     _updateChaseCamera(dt);
@@ -3502,18 +3509,37 @@ class _TestDriveScenePainter extends CustomPainter {
       }
     }
 
-    // Pre-calculate cylinder bounds for wheel corners if single-node or merged
-    final wheelEnvelopes = <int, ({Vec3 hub, double rMaxSq, double halfW})>{};
+    // Pre-calculate cylinder bounds for wheel corners. The half-width is
+    // clamped so an inflated tire width can never grab fenders or mudflaps,
+    // and each corner tracks whether it already has a dedicated wheel node.
+    final wheelEnvelopes = <int, ({
+      Vec3 hub,
+      double rMaxSq,
+      double halfW,
+      bool hasDedicatedNode,
+    })>{};
     for (var c = 0; c < 4; c++) {
       final corner = corners[c];
       final w = wheels[corner];
       if (w != null) {
-        final r = (w.radius > 0.05 ? w.radius : 0.34) * 1.08;
-        final halfW = (w.width > 0.05 ? w.width : 0.28) * 0.65;
+        final baseR = w.radius > 0.05 ? w.radius : 0.34;
+        final r = baseR * 1.08;
+        final clampedW = min(w.width > 0.05 ? w.width : 0.28, baseR * 0.95);
+        final halfW = max(clampedW * 0.52, baseR * 0.28);
+        final candidateNodes = <int>{
+          ...w.spinNodeIndices,
+          ...w.caliperHubNodeIndices,
+          ...w.partNodeIndices,
+          w.nodeIndex,
+        };
+        final hasDedicatedNode = candidateNodes.any(
+          (n) => n >= 0 && nodeToTransform.containsKey(n),
+        );
         wheelEnvelopes[c] = (
           hub: w.worldPosition,
           rMaxSq: r * r,
           halfW: halfW,
+          hasDedicatedNode: hasDedicatedNode,
         );
       }
     }
@@ -3525,26 +3551,52 @@ class _TestDriveScenePainter extends CustomPainter {
     final centroids = mesh.centroids;
     for (var t = 0; t < triCount; t++) {
       final n = triNode[t];
+      final kind = triKind[t];
+      final cx = centroids[t * 3];
+      final cy = centroids[t * 3 + 1];
+      final cz = centroids[t * 3 + 2];
       var k = 8;
+
       if (!nonWheelNodes.contains(n)) {
         final cand = nodeToTransform[n];
         if (cand != null) {
-          final kind = triKind[t];
-          if (kind == solidKindBody || kind == solidKindGlass || kind == solidKindInterior) {
+          if (kind == solidKindBody ||
+              kind == solidKindGlass ||
+              kind == solidKindInterior ||
+              kind == solidKindHeadlight ||
+              kind == solidKindTaillight) {
             k = 8;
           } else {
-            k = cand;
+            // Verify the triangle is actually near the assigned wheel hub so
+            // non-wheel islands sharing the node stay on the chassis.
+            final env = wheelEnvelopes[cand % 4];
+            if (env != null) {
+              final dx = (cx - env.hub.x).abs();
+              final dy = cy - env.hub.y;
+              final dz = cz - env.hub.z;
+              if (dx <= env.halfW * 1.35 &&
+                  (dy * dy + dz * dz) <= env.rMaxSq * 1.25) {
+                k = cand;
+              }
+            } else {
+              k = cand;
+            }
           }
         }
       }
-      // If node assignment left it as body (e.g. single-node / merged-mesh model),
-      // check if centroid falls inside any wheel cylinder envelope
-      if (k == 8 && wheelEnvelopes.isNotEmpty) {
-        final cx = centroids[t * 3];
-        final cy = centroids[t * 3 + 1];
-        final cz = centroids[t * 3 + 2];
+
+      // Per-triangle cylinder fallback only for corners without a dedicated
+      // wheel node (single-mesh STL/OBJ), and never on body/glass/interior.
+      if (k == 8 &&
+          kind != solidKindBody &&
+          kind != solidKindGlass &&
+          kind != solidKindInterior &&
+          kind != solidKindHeadlight &&
+          kind != solidKindTaillight &&
+          wheelEnvelopes.isNotEmpty) {
         for (final entry in wheelEnvelopes.entries) {
           final env = entry.value;
+          if (env.hasDedicatedNode) continue;
           final dx = (cx - env.hub.x).abs();
           if (dx <= env.halfW) {
             final dy = cy - env.hub.y;
@@ -3572,7 +3624,9 @@ class _TestDriveScenePainter extends CustomPainter {
     final visDepth = mesh.visDepth;
     final triCoords = Float32List(triCount * 6);
 
-    final bodyPaintRgb = accentColor.toARGB32();
+    // Imported models keep a neutral silver-white body so their authored
+    // material/UV tints read correctly; the accent only paints demo cars.
+    final bodyPaintRgb = model != null ? 0xFFD6DBDF : accentColor.toARGB32();
     final kindColors = <int>[
       bodyPaintRgb, // 0: solidKindBody
       0xCC162832,   // 1: solidKindGlass

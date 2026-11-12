@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 // ── Pipeline Status & Modes ─────────────────────────────────────────────────
 
 enum StepStatus {
@@ -220,6 +222,7 @@ class AudioSlotConfig {
     this.fileName = 'Default asset',
     this.pitchMultiplier = 1.0,
     this.isPlaying = false,
+    this.bytes,
   });
 
   final String id;
@@ -228,4 +231,8 @@ class AudioSlotConfig {
   String fileName;
   double pitchMultiplier;
   bool isPlaying;
+
+  /// Raw bytes of a user-uploaded .wav/.mp3/.ogg file, played verbatim by the
+  /// Step 4 preview instead of the procedural fallback tone.
+  Uint8List? bytes;
 }

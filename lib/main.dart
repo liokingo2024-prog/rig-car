@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'auto_detector.dart';
 import 'download_config.dart';
@@ -125,6 +126,13 @@ class RigWorkbenchPage extends StatefulWidget {
   State<RigWorkbenchPage> createState() => _RigWorkbenchPageState();
 }
 
+class _RigUndoSnapshot {
+  _RigUndoSnapshot(this.wheels, {this.yawApplied = 0});
+
+  final Map<String, DetectedWheel?> wheels;
+  final double yawApplied;
+}
+
 class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _activeStep = 1;
   String _inspectMode = 'auto'; // 'auto' | 'manual'
@@ -141,6 +149,9 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
   int _viewportUpdateEpoch = 0;
+  int _turntableRequest = 0;
+  int _cameraResetRequest = 0;
+  final List<_RigUndoSnapshot> _undoStack = [];
 
   // Drivetrain & physics
   String _drive = 'AWD';
@@ -321,6 +332,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
   void _reassignWheel(String slot, int? nodeIndex) {
     if (nodeIndex == null || _parsedModel == null) return;
+    _pushUndo();
     final node = _parsedModel!.nodes[nodeIndex];
     final axle = slot.startsWith('F') ? 'front' : 'rear';
     final side = slot.endsWith('L') ? 'left' : 'right';
@@ -407,10 +419,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
               final expectedPos = existing?.worldPosition ?? (hubPos != Vec3.zero ? hubPos : null);
 
               if (model != null) {
-                final carBox = model.worldBBox;
-                final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
-                final carLength = max(1e-4, (fAxisIsZ ? carBox.size.z : carBox.size.x).abs());
-
                 for (final node in model.nodes) {
                   if (nonWheelNodes.contains(node.index)) continue;
                   final nName = node.name.toLowerCase();
@@ -425,7 +433,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                       if (nodeInsts.isNotEmpty) {
                         final nodeCenter = nodeInsts.first.worldBBox.center;
                         final dist = (nodeCenter - expectedPos).length;
-                        if (dist > max(0.55 * carLength, 1.2)) {
+                        // Wheel-local radius: a quadrant test measured in rad, not
+                        // body length, so matching parts from adjacent corners
+                        // never get pulled into this wheel.
+                        if (dist > max(r * 1.45, 0.45)) {
                           inQuadrant = false;
                         }
                       }
@@ -684,14 +695,86 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
 
     final config = _config;
-    await downloadTextFile(
+    final modelBase = _modelName
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
+        .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '');
+    final bundleName =
+        '${modelBase == 'No_model_loaded' || modelBase.isEmpty ? 'rig_car' : modelBase}_godot4_bundle';
+
+    // Bundle every asset into a single zip: browsers block chained multi-file
+    // downloads, and Godot needs the project file next to the scene.
+    final archive = Archive();
+    void addText(String name, String contents) {
+      final bytes = utf8.encode(contents);
+      archive.addFile(ArchiveFile(name, bytes.length, bytes));
+    }
+
+    addText('project.godot', _godotProjectFile());
+    addText('rig_car.gd', config.toGdScript());
+    addText('rig_car.tscn', config.toTscn());
+    addText(
       'rig_car_config.json',
       const JsonEncoder.withIndent('  ').convert(config.toJson()),
-      'application/json',
     );
-    await downloadTextFile('rig_car.gd', config.toGdScript(), 'text/plain');
-    await downloadTextFile('rig_car.tscn', config.toTscn(), 'text/plain');
-    if (mounted) _showMessage('Exported Godot 4 rig files');
+
+    final modelBytes = _modelBytes;
+    if (modelBytes != null && modelBytes.isNotEmpty) {
+      // Keep the exact authored filename: rig_car.tscn references res://<name>.
+      final modelEntry = _modelName.contains('/')
+          ? _modelName.split('/').last
+          : _modelName;
+      archive.addFile(
+        ArchiveFile(modelEntry, modelBytes.length, modelBytes),
+      );
+    }
+
+    for (final slot in _audioSlots) {
+      final bytes = slot.bytes;
+      if (bytes == null || bytes.isEmpty) continue;
+      final safeName = slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
+    }
+
+    final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive));
+    await downloadBytesFile(
+      '$bundleName.zip',
+      zipBytes,
+      'application/zip',
+    );
+    if (mounted) _showMessage('Exported $bundleName.zip (Godot 4 project bundle)');
+  }
+
+  /// Minimal Godot 4.3 project file so the exported scene opens and drives
+  /// immediately, including the input actions used by rig_car.gd.
+  String _godotProjectFile() {
+    String key(int physicalKeycode) =>
+        'Object(InputEventKey,"resource_local_to_scene":false,'
+        '"resource_name":"","device":-1,"window_id":0,'
+        '"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,'
+        '"meta_pressed":false,"pressed":false,"keycode":0,'
+        '"physical_keycode":$physicalKeycode,"key_label":0,"unicode":0,'
+        '"location":0,"echo":false,"script":null)';
+
+    String action(String code) =>
+        '{\n"deadzone": 0.5,\n"events": [$code]\n}';
+
+    return '''; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="RIG-CAR"
+config/features=PackedStringArray("4.3", "Forward Plus")
+run/main_scene="res://rig_car.tscn"
+
+[input]
+
+accelerate=${action(key(87))}
+brake=${action(key(83))}
+steer_left=${action(key(65))}
+steer_right=${action(key(68))}
+handle_brake=${action(key(32))}
+''';
   }
 
   void _enterTestDrive() {
@@ -889,6 +972,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 
   void _onRotateYaw(double angle) {
+    _pushUndo(yawApplied: angle);
     setState(() {
       _ensureModel();
       _parsedModel!.rotateYaw(angle);
@@ -901,6 +985,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   }
 
   void _onFlipFrontBack() {
+    _pushUndo(yawApplied: pi);
     setState(() {
       _ensureModel();
       _parsedModel!.flipFrontBack();
@@ -936,6 +1021,49 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     _showMessage('Normalized vehicle footprint to ${targetLength.toStringAsFixed(1)}m');
   }
 
+  void _pushUndo({double yawApplied = 0}) {
+    if (_parsedModel == null) return;
+    _undoStack.add(
+      _RigUndoSnapshot(Map.of(_assignedWheels), yawApplied: yawApplied),
+    );
+    if (_undoStack.length > 20) _undoStack.removeAt(0);
+  }
+
+  void _undoLastRigEdit() {
+    if (_undoStack.isEmpty) {
+      _showMessage('Nothing to undo');
+      return;
+    }
+    final snapshot = _undoStack.removeLast();
+    setState(() {
+      if (snapshot.yawApplied != 0 && _parsedModel != null) {
+        _parsedModel!.rotateYaw(-snapshot.yawApplied);
+        SolidScene.invalidate(_parsedModel!);
+        _syncWheelsAfterModelTransform();
+      }
+      // Restore the manual assignments after re-detection so the undo wins.
+      _assignedWheels
+        ..clear()
+        ..addAll(snapshot.wheels);
+      _viewportUpdateEpoch++;
+    });
+    if (snapshot.yawApplied != 0) {
+      rotateSketchfabModel(-snapshot.yawApplied);
+    }
+    _showMessage('Undid last rig edit');
+  }
+
+  bool get _isEditingText {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  void _handleShortcut(VoidCallback action) {
+    if (_isEditingText) return;
+    action();
+  }
+
   Future<void> _onStartWheelScan() async {
     if (_isScanningWheels) return;
     _ensureModel();
@@ -956,6 +1084,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() => _scanStage = 3);
 
     // 1. Run AutoDetector in Dart FIRST (purges under-wheel mesh, aligns forward axis -Z, snaps to land Y=0)
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
     final detection = AutoDetector.detect(
       _parsedModel!,
       excludeRoofAntenna: _excludeRoofAntenna,
@@ -974,6 +1104,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     setState(() => _scanStage = 4);
 
     // 2. Call detectSketchfabWheels AFTER model is oriented and ground-snapped
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
     final jsResult = detectSketchfabWheels();
     _syncJsAndAutoWheels(jsResult, detection);
     _updateDetectedGroupsFromWheels(detection);
@@ -1572,7 +1704,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       );
     }
 
-    return Scaffold(
+    final workbench = Scaffold(
       body: LayoutBuilder(
         builder: (context, constraints) {
           final desktop = constraints.maxWidth >= 1120;
@@ -1701,6 +1833,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                                   centerOfMassY: _centerOfMass,
                                                   updateEpoch: _viewportUpdateEpoch,
                                                   highlightWheels: _highlightFoundWheels,
+                                                  turntableRequest: _turntableRequest,
+                                                  cameraResetRequest: _cameraResetRequest,
                                                   onTestDrive: _enterTestDrive,
                                                 ),
                                               ),
@@ -1749,6 +1883,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                                             centerOfMassY: _centerOfMass,
                                             updateEpoch: _viewportUpdateEpoch,
                                             highlightWheels: _highlightFoundWheels,
+                                            turntableRequest: _turntableRequest,
+                                            cameraResetRequest: _cameraResetRequest,
                                             onTestDrive: _enterTestDrive,
                                           ),
                                         )),
@@ -1763,6 +1899,40 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           );
         },
       ),
+    );
+
+    if (_isTestDriveMode) return workbench;
+
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.digit1): () =>
+            _handleShortcut(() => _selectStep(1)),
+        const SingleActivator(LogicalKeyboardKey.digit2): () =>
+            _handleShortcut(() => _selectStep(2)),
+        const SingleActivator(LogicalKeyboardKey.digit3): () =>
+            _handleShortcut(() => _selectStep(3)),
+        const SingleActivator(LogicalKeyboardKey.digit4): () =>
+            _handleShortcut(() => _selectStep(4)),
+        const SingleActivator(LogicalKeyboardKey.digit5): () =>
+            _handleShortcut(() => _selectStep(5)),
+        const SingleActivator(LogicalKeyboardKey.keyT): () =>
+            _handleShortcut(() {
+              if (_isTestDriveMode) {
+                _exitTestDrive();
+              } else {
+                _enterTestDrive();
+              }
+            }),
+        const SingleActivator(LogicalKeyboardKey.keyR): () =>
+            _handleShortcut(() => setState(() => _cameraResetRequest++)),
+        const SingleActivator(LogicalKeyboardKey.space): () =>
+            _handleShortcut(() => setState(() => _turntableRequest++)),
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () =>
+            _handleShortcut(_undoLastRigEdit),
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): () =>
+            _handleShortcut(_undoLastRigEdit),
+      },
+      child: Focus(autofocus: true, child: workbench),
     );
   }
 
@@ -1837,8 +2007,14 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           orElse: () => _audioSlots.first,
         );
         if (slot.isPlaying) {
-          playSketchfabAudioPreview(slotId, slot.pitchMultiplier);
-          _showMessage('Playing acoustic preview for $slotId');
+          playSketchfabAudioPreview(
+            slotId,
+            slot.pitchMultiplier,
+            bytes: slot.bytes,
+          );
+          _showMessage(slot.bytes != null
+              ? 'Playing ${slot.fileName}'
+              : 'Playing acoustic preview for $slotId');
         } else {
           stopSketchfabAudioPreview();
           _showMessage('Stopped acoustic preview for $slotId');

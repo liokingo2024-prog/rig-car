@@ -87,6 +87,8 @@ class WireframeViewer extends StatefulWidget {
     this.centerOfMassY = -0.18,
     this.updateEpoch = 0,
     this.highlightWheels = false,
+    this.turntableRequest = 0,
+    this.cameraResetRequest = 0,
     this.onTestDrive,
   });
 
@@ -104,6 +106,12 @@ class WireframeViewer extends StatefulWidget {
   final double centerOfMassY;
   final int updateEpoch;
   final bool highlightWheels;
+
+  /// Incrementing counter that asks the viewer to toggle its turntable.
+  final int turntableRequest;
+
+  /// Incrementing counter that asks the viewer to reset its 3D camera.
+  final int cameraResetRequest;
   final VoidCallback? onTestDrive;
 
   @override
@@ -169,6 +177,12 @@ class _WireframeViewerState extends State<WireframeViewer>
     }
     if (widget.highlightWheels != oldWidget.highlightWheels) {
       _showMarkers = widget.highlightWheels;
+    }
+    if (widget.turntableRequest != oldWidget.turntableRequest) {
+      _toggleTurntable();
+    }
+    if (widget.cameraResetRequest != oldWidget.cameraResetRequest) {
+      _resetCameraToModel();
     }
   }
 

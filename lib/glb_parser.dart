@@ -13,6 +13,32 @@ import 'model_data.dart';
 // mesh vertex positions, triangle edges, and bounding boxes.  The result is a
 // [ParsedModel] ready for auto-detection and wireframe rendering.
 
+/// A decoded glTF image kept at a usable resolution so each triangle can be
+/// tinted with the texel colour it actually samples through its UV coordinates.
+class _DecodedTexture {
+  _DecodedTexture(this.width, this.height, this.rgba, this.averageColor);
+
+  final int width;
+  final int height;
+  final Uint8List rgba;
+  final Color averageColor;
+
+  Color? sampleUv(double u, double v) {
+    if (width <= 0 || height <= 0 || rgba.isEmpty) return null;
+    var uu = u % 1.0;
+    var vv = v % 1.0;
+    if (uu < 0) uu += 1.0;
+    if (vv < 0) vv += 1.0;
+    final x = (uu * (width - 1)).round().clamp(0, width - 1);
+    final y = (vv * (height - 1)).round().clamp(0, height - 1);
+    final o = (y * width + x) * 4;
+    if (o + 4 > rgba.length) return averageColor;
+    final a = rgba[o + 3];
+    if (a <= 10) return averageColor;
+    return Color.fromARGB(a, rgba[o], rgba[o + 1], rgba[o + 2]);
+  }
+}
+
 class GlbParser {
   static const _glbMagic = 0x46546C67; // ASCII 'glTF'
   static const _chunkJson = 0x4E4F534A;
@@ -35,14 +61,7 @@ class GlbParser {
     if (_isGlb(bytes) || lower.endsWith('.glb')) {
       try {
         final (json, bin) = _unpackGlb(bytes);
-        final jsonImages = json['images'] as List<dynamic>? ?? [];
-        final jsonBufferViews = json['bufferViews'] as List<dynamic>? ?? [];
-        final textureColors = await _extractTextureColors(
-          jsonImages,
-          jsonBufferViews,
-          bin,
-        );
-        return _build(fileName, json, bin, textureColors: textureColors);
+        return await _buildGltfWithTextures(fileName, json, bin);
       } catch (_) {}
     }
 
@@ -66,7 +85,7 @@ class GlbParser {
       try {
         final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
         final bin = _extractEmbeddedGltfBin(json);
-        return _build(fileName, json, bin);
+        return await _buildGltfWithTextures(fileName, json, bin);
       } catch (_) {}
     }
 
@@ -411,6 +430,67 @@ class GlbParser {
   }
 
   static Future<ParsedModel> _parseZip(String fileName, Uint8List bytes) async {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      String? bestModelName;
+      Uint8List? bestModelBytes;
+      var bestScore = -1;
+      final fileMap = <String, Uint8List>{};
+
+      for (final file in archive) {
+        if (!file.isFile) continue;
+        final entryName = file.name;
+        final low = entryName.toLowerCase();
+        final Uint8List entryBytes = file.content;
+        if (entryBytes.isEmpty) continue;
+        fileMap[low] = entryBytes;
+        fileMap[low.split('/').last] = entryBytes;
+
+        var score = 0;
+        if (low.endsWith('.glb')) {
+          score = 10;
+        } else if (low.endsWith('.gltf')) {
+          score = 8;
+        } else if (low.endsWith('.obj')) {
+          score = 6;
+        } else if (low.endsWith('.stl')) {
+          score = 4;
+        } else if (low.endsWith('.fbx')) {
+          score = 2;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestModelName = entryName.split('/').last;
+          bestModelBytes = entryBytes;
+        }
+      }
+
+      if (bestModelBytes != null && bestModelName != null) {
+        if (bestModelName.toLowerCase().endsWith('.gltf')) {
+          // Resolve external .bin buffers and image URIs from the archive so
+          // textures survive zipped glTF imports.
+          final json =
+              jsonDecode(utf8.decode(bestModelBytes)) as Map<String, dynamic>;
+          Uint8List? bin = _extractEmbeddedGltfBin(json);
+          if (bin == null) {
+            final buffers = json['buffers'] as List<dynamic>?;
+            if (buffers != null && buffers.isNotEmpty) {
+              final uri =
+                  (buffers.first as Map)['uri']?.toString().toLowerCase() ?? '';
+              bin = fileMap[uri] ?? fileMap[uri.split('/').last];
+            }
+          }
+          return await _buildGltfWithTextures(
+            bestModelName,
+            json,
+            bin,
+            externalFiles: fileMap,
+          );
+        }
+        return await parse(bestModelName, bestModelBytes);
+      }
+    } catch (_) {}
     return _parseZipSync(fileName, bytes);
   }
 
@@ -674,12 +754,15 @@ class GlbParser {
 
   // ── Internal ────────────────────────────────────────────────────────────
 
-  static Future<Map<int, Color>> _extractTextureColors(
+  /// Decodes every embedded/external glTF image once at 128x128, keeping both
+  /// the full bitmap (for UV sampling) and its average colour (for fallbacks).
+  static Future<Map<int, _DecodedTexture>> _extractTextures(
     List<dynamic> jsonImages,
     List<dynamic> jsonBufferViews,
-    Uint8List? bin,
-  ) async {
-    final colors = <int, Color>{};
+    Uint8List? bin, {
+    Map<String, Uint8List>? externalFiles,
+  }) async {
+    final textures = <int, _DecodedTexture>{};
 
     for (var i = 0; i < jsonImages.length; i++) {
       try {
@@ -703,6 +786,10 @@ class GlbParser {
             if (comma != -1) {
               imageBytes = base64Decode(uri.substring(comma + 1));
             }
+          } else if (externalFiles != null) {
+            final key = uri.toLowerCase();
+            imageBytes =
+                externalFiles[key] ?? externalFiles[key.split('/').last];
           }
         }
 
@@ -712,8 +799,8 @@ class GlbParser {
         try {
           codec = await instantiateImageCodec(
             imageBytes,
-            targetWidth: 1,
-            targetHeight: 1,
+            targetWidth: 128,
+            targetHeight: 128,
           );
         } catch (_) {
           codec = await instantiateImageCodec(imageBytes);
@@ -727,51 +814,96 @@ class GlbParser {
         final w = uiImg.width;
         final h = uiImg.height;
         uiImg.dispose();
+        if (byteData == null || byteData.lengthInBytes < 4 || w <= 0 || h <= 0) {
+          continue;
+        }
 
-        if (byteData != null && byteData.lengthInBytes >= 4) {
-          final cx = w ~/ 2;
-          final cy = h ~/ 2;
-          final offset = (cy * w + cx) * 4;
-          if (offset + 4 <= byteData.lengthInBytes) {
-            final r = byteData.getUint8(offset);
-            final g = byteData.getUint8(offset + 1);
-            final b = byteData.getUint8(offset + 2);
-            final a = byteData.getUint8(offset + 3);
-            if (a > 10) {
-              colors[i] = Color.fromARGB(a, r, g, b);
+        final rgba = byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        );
+        var sr = 0, sg = 0, sb = 0, sa = 0, samples = 0;
+        for (var p = 0; p + 4 <= rgba.length; p += 4) {
+          final a = rgba[p + 3];
+          if (a <= 10) continue;
+          sr += rgba[p];
+          sg += rgba[p + 1];
+          sb += rgba[p + 2];
+          sa += a;
+          samples++;
+        }
+
+        Color average;
+        if (samples > 0) {
+          average = Color.fromARGB(
+            (sa / samples).round(),
+            (sr / samples).round(),
+            (sg / samples).round(),
+            (sb / samples).round(),
+          );
+        } else {
+          // Direct PNG PLTE palette fallback for images the codec cannot decode.
+          average = const Color(0xFFC8D1D7);
+          if (imageBytes.length > 20 &&
+              imageBytes[0] == 0x89 &&
+              imageBytes[1] == 0x50 &&
+              imageBytes[2] == 0x4E &&
+              imageBytes[3] == 0x47) {
+            for (var p = 8; p < imageBytes.length - 12;) {
+              final len =
+                  ByteData.sublistView(imageBytes).getUint32(p, Endian.big);
+              final name =
+                  String.fromCharCodes(imageBytes.sublist(p + 4, p + 8));
+              if (name == 'PLTE' && len >= 3) {
+                average = Color.fromARGB(
+                  255,
+                  imageBytes[p + 8],
+                  imageBytes[p + 9],
+                  imageBytes[p + 10],
+                );
+                break;
+              }
+              p += 12 + len;
             }
           }
         }
 
-        // Direct PNG PLTE palette fallback
-        if (!colors.containsKey(i) &&
-            imageBytes.length > 20 &&
-            imageBytes[0] == 0x89 &&
-            imageBytes[1] == 0x50 &&
-            imageBytes[2] == 0x4E &&
-            imageBytes[3] == 0x47) {
-          for (var p = 8; p < imageBytes.length - 12;) {
-            final len =
-                ByteData.sublistView(imageBytes).getUint32(p, Endian.big);
-            final name =
-                String.fromCharCodes(imageBytes.sublist(p + 4, p + 8));
-            if (name == 'PLTE' && len >= 3) {
-              colors[i] = Color.fromARGB(
-                255,
-                imageBytes[p + 8],
-                imageBytes[p + 9],
-                imageBytes[p + 10],
-              );
-              break;
-            }
-            p += 12 + len;
-          }
-        }
+        textures[i] = _DecodedTexture(w, h, rgba, average);
       } catch (_) {
-        // Continue if any image cannot be downscaled
+        // Continue if any image cannot be decoded
       }
     }
-    return colors;
+    return textures;
+  }
+
+  static Future<ParsedModel> _buildGltfWithTextures(
+    String fileName,
+    Map<String, dynamic> json,
+    Uint8List? bin, {
+    Map<String, Uint8List>? externalFiles,
+  }) async {
+    // Yield between the heavy stages so the import spinner keeps animating at
+    // 60 FPS while large GLB/GLTF archives are decoded.
+    await Future<void>.delayed(Duration.zero);
+    final images = json['images'] as List<dynamic>? ?? [];
+    final bufferViews = json['bufferViews'] as List<dynamic>? ?? [];
+    final decoded = await _extractTextures(
+      images,
+      bufferViews,
+      bin,
+      externalFiles: externalFiles,
+    );
+    await Future<void>.delayed(Duration.zero);
+    final colors = <int, Color>{
+      for (final entry in decoded.entries) entry.key: entry.value.averageColor,
+    };
+    return _build(
+      fileName,
+      json,
+      bin,
+      textureColors: colors,
+      decodedTextures: decoded,
+    );
   }
 
   static ParsedModel _build(
@@ -779,6 +911,7 @@ class GlbParser {
     Map<String, dynamic> gltf,
     Uint8List? bin, {
     Map<int, Color>? textureColors,
+    Map<int, _DecodedTexture>? decodedTextures,
   }) {
     final jsonNodes = gltf['nodes'] as List<dynamic>? ?? [];
     final jsonMeshes = gltf['meshes'] as List<dynamic>? ?? [];
@@ -834,43 +967,50 @@ class GlbParser {
     // ── Compute world transforms ────────────────────────────────────────
     _computeWorldTransforms(nodes);
 
-    // ── Parse meshes ────────────────────────────────────────────────────
+    // ── Parse meshes (splitting multi-primitive glTF meshes so each primitive
+    //    gets its own MeshData/SceneNode, matching Three.js GLTFLoader) ─────
     final jsonMaterials = gltf['materials'] as List<dynamic>? ?? [];
     final jsonTextures = gltf['textures'] as List<dynamic>? ?? [];
     final meshes = <MeshData>[];
+    final gltfMeshToMeshDataIndices = <int, List<int>>{};
     for (var mi = 0; mi < jsonMeshes.length; mi++) {
       final m = jsonMeshes[mi] as Map<String, dynamic>;
+      final baseMeshName = m['name'] as String? ?? 'Mesh_$mi';
       final prims = m['primitives'] as List<dynamic>? ?? [];
+      final primIndices = <int>[];
 
-      final allVerts = <Vec3>[];
-      final allEdges = <Edge>{};
-      final allTriangles = <Triangle>[];
-
-      for (final prim in prims) {
+      for (var pi = 0; pi < prims.length; pi++) {
+        final prim = prims[pi] as Map<String, dynamic>;
         final attrs = prim['attributes'] as Map<String, dynamic>?;
         if (attrs == null) continue;
         final posIdx = attrs['POSITION'] as int?;
         if (posIdx == null) continue;
 
         // Resolve a viewport colour from the primitive's material.
-        Color? materialColor;
+        Map<String, dynamic>? matMap;
+        String? matName;
         final matIdx = prim['material'] as int?;
-        final meshName = m['name'] as String?;
         if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
-          materialColor = _resolveMaterialColor(
-            jsonMaterials[matIdx] as Map<String, dynamic>?,
-            meshName: meshName,
-            textureColors: textureColors,
-            jsonTextures: jsonTextures,
-          );
-        } else {
-          materialColor = _resolveMaterialColor(
-            null,
-            meshName: meshName,
-            textureColors: textureColors,
-            jsonTextures: jsonTextures,
-          );
+          matMap = jsonMaterials[matIdx] as Map<String, dynamic>?;
+          matName = matMap?['name'] as String?;
         }
+        final primName = prims.length > 1
+            ? (matName != null && matName.isNotEmpty
+                ? '${baseMeshName}_$matName'
+                : '${baseMeshName}_prim_$pi')
+            : baseMeshName;
+
+        final materialColor = _resolveMaterialColor(
+          matMap,
+          meshName: primName,
+          textureColors: textureColors,
+          jsonTextures: jsonTextures,
+        );
+        final decodedTex = _resolveDecodedTexture(
+          matMap,
+          decodedTextures: decodedTextures,
+          jsonTextures: jsonTextures,
+        );
 
         List<Color>? vertexColors;
         final colorIdx = attrs['COLOR_0'] as int?;
@@ -884,17 +1024,30 @@ class GlbParser {
           );
         }
 
-        final vOffset = allVerts.length;
-        allVerts.addAll(
-          _readVec3Accessor(
-            jsonAccessors[posIdx] as Map<String, dynamic>,
+        List<Offset>? uvs;
+        final uvIdx = attrs['TEXCOORD_0'] as int?;
+        if (uvIdx != null &&
+            uvIdx >= 0 &&
+            uvIdx < jsonAccessors.length) {
+          uvs = _readVec2Accessor(
+            jsonAccessors[uvIdx] as Map<String, dynamic>,
             jsonBufferViews,
             bin,
-          ),
-        );
+          );
+        }
 
+        final primVerts = _readVec3Accessor(
+          jsonAccessors[posIdx] as Map<String, dynamic>,
+          jsonBufferViews,
+          bin,
+        );
+        if (primVerts.isEmpty) continue;
+
+        final primEdges = <Edge>{};
+        final primTriangles = <Triangle>[];
         final idxIdx = prim['indices'] as int?;
         final mode = prim['mode'] as int? ?? 4;
+
         if (idxIdx != null) {
           final indices = _readScalarAccessor(
             jsonAccessors[idxIdx] as Map<String, dynamic>,
@@ -903,71 +1056,110 @@ class GlbParser {
           );
           _appendTriangles(
             indices,
-            vOffset,
+            0,
             mode,
-            allTriangles,
-            allEdges,
+            primTriangles,
+            primEdges,
             materialColor: materialColor,
             vertexColors: vertexColors,
+            uvs: uvs,
+            decodedTexture: decodedTex,
           );
         } else {
           // glTF's default primitive mode is TRIANGLES.
-          final vertexCount = allVerts.length - vOffset;
           _appendTriangles(
-            List<int>.generate(vertexCount, (index) => index),
-            vOffset,
+            List<int>.generate(primVerts.length, (index) => index),
+            0,
             mode,
-            allTriangles,
-            allEdges,
+            primTriangles,
+            primEdges,
             materialColor: materialColor,
             vertexColors: vertexColors,
+            uvs: uvs,
+            decodedTexture: decodedTex,
           );
         }
-      }
 
-      meshes.add(
-        MeshData(
-          index: mi,
-          name: m['name'] as String? ?? 'Mesh_$mi',
-          vertices: allVerts,
-          edges: allEdges.toList(),
-          triangles: allTriangles,
-          bbox: BBox.fromPoints(allVerts),
-        ),
-      );
+        if (primTriangles.isEmpty) continue;
+        final newMeshIdx = meshes.length;
+        meshes.add(
+          MeshData(
+            index: newMeshIdx,
+            name: primName,
+            vertices: primVerts,
+            edges: primEdges.toList(),
+            triangles: primTriangles,
+            bbox: BBox.fromPoints(primVerts),
+          ),
+        );
+        primIndices.add(newMeshIdx);
+      }
+      gltfMeshToMeshDataIndices[mi] = primIndices;
     }
 
-    // ── Build mesh instances (world-space) ──────────────────────────────
+    // ── Build mesh instances (world-space), creating synthetic child nodes
+    //    when a glTF node's mesh had multiple primitives ───────────────────
     final instances = <MeshInstance>[];
-    for (final node in nodes) {
-      if (node.meshIndex == null) continue;
-      final mi = node.meshIndex!;
-      if (mi >= meshes.length) continue;
-      final mesh = meshes[mi];
+    final origNodeCount = nodes.length;
+    for (var ni = 0; ni < origNodeCount; ni++) {
+      final node = nodes[ni];
+      final origMi = node.meshIndex;
+      if (origMi == null) continue;
+      final mappedMeshes = gltfMeshToMeshDataIndices[origMi];
+      if (mappedMeshes == null || mappedMeshes.isEmpty) continue;
+
       final wt = node.worldTransform;
-
-      final worldVerts = mesh.vertices
-          .map((v) => wt.transformPoint(v))
-          .toList();
-
-      // Invert triangle winding in world space if transform is mirrored (negative scale)
       final isInverted = wt.determinant3x3 < 0;
-      final worldTriangles = isInverted
-          ? mesh.triangles
-              .map((t) => Triangle(t.a, t.c, t.b, t.color))
-              .toList()
-          : mesh.triangles;
 
-      instances.add(
-        MeshInstance(
-          nodeIndex: node.index,
-          meshIndex: mi,
-          worldVertices: worldVerts,
-          edges: mesh.edges,
-          triangles: worldTriangles,
-          worldBBox: BBox.fromPoints(worldVerts),
-        ),
-      );
+      for (var p = 0; p < mappedMeshes.length; p++) {
+        final mIdx = mappedMeshes[p];
+        final mesh = meshes[mIdx];
+        final worldVerts = mesh.vertices
+            .map((v) => wt.transformPoint(v))
+            .toList();
+        final worldTriangles = isInverted
+            ? mesh.triangles
+                .map((t) => Triangle(t.a, t.c, t.b, t.color))
+                .toList()
+            : mesh.triangles;
+
+        int targetNodeIdx = node.index;
+        if (p == 0) {
+          nodes[ni] = SceneNode(
+            index: node.index,
+            name: mappedMeshes.length > 1
+                ? '${node.name}_${mesh.name}'
+                : node.name,
+            localTransform: node.localTransform,
+            meshIndex: mIdx,
+            childIndices: node.childIndices,
+            parentIndex: node.parentIndex,
+          )..worldTransform = wt;
+        } else {
+          targetNodeIdx = nodes.length;
+          nodes.add(
+            SceneNode(
+              index: targetNodeIdx,
+              name: '${node.name}_${mesh.name}',
+              localTransform: Mat4.identity(),
+              meshIndex: mIdx,
+              childIndices: const [],
+              parentIndex: node.index,
+            )..worldTransform = wt,
+          );
+        }
+
+        instances.add(
+          MeshInstance(
+            nodeIndex: targetNodeIdx,
+            meshIndex: mIdx,
+            worldVertices: worldVerts,
+            edges: mesh.edges,
+            triangles: worldTriangles,
+            worldBBox: BBox.fromPoints(worldVerts),
+          ),
+        );
+      }
     }
 
     // ── Root nodes ──────────────────────────────────────────────────────
@@ -1058,13 +1250,7 @@ class GlbParser {
         if (baseColorTex != null) {
           final texIdx = baseColorTex['index'] as int?;
           if (texIdx != null) {
-            int imgIdx = texIdx;
-            if (jsonTextures != null &&
-                texIdx >= 0 &&
-                texIdx < jsonTextures.length) {
-              final texObj = jsonTextures[texIdx] as Map<String, dynamic>?;
-              imgIdx = texObj?['source'] as int? ?? texIdx;
-            }
+            final imgIdx = _textureImageIndex(jsonTextures, texIdx);
             if (textureColors.containsKey(imgIdx)) {
               texColor = textureColors[imgIdx];
             }
@@ -1143,6 +1329,40 @@ class GlbParser {
     return resolved;
   }
 
+  /// Resolves the actual image index of a glTF texture, including extensions
+  /// used by Sketchfab exports (WebP and KTX2/BasisU) that hide the source.
+  static int _textureImageIndex(List<dynamic>? jsonTextures, int texIdx) {
+    if (jsonTextures == null || texIdx < 0 || texIdx >= jsonTextures.length) {
+      return texIdx;
+    }
+    final texObj = jsonTextures[texIdx] as Map<String, dynamic>?;
+    final extensions = texObj?['extensions'] as Map<String, dynamic>?;
+    final extWebp =
+        extensions?['EXT_texture_webp'] as Map<String, dynamic>?;
+    final extBasis =
+        extensions?['KHR_texture_basisu'] as Map<String, dynamic>?;
+    return (texObj?['source'] as int?) ??
+        (extWebp?['source'] as int?) ??
+        (extBasis?['source'] as int?) ??
+        texIdx;
+  }
+
+  /// Returns the decoded base-colour texture for a material so triangle colors
+  /// can be sampled through TEXCOORD_0 instead of a single averaged pixel.
+  static _DecodedTexture? _resolveDecodedTexture(
+    Map<String, dynamic>? material, {
+    Map<int, _DecodedTexture>? decodedTextures,
+    List<dynamic>? jsonTextures,
+  }) {
+    if (material == null || decodedTextures == null) return null;
+    final pbr = material['pbrMetallicRoughness'] as Map<String, dynamic>?;
+    final baseColorTex = pbr?['baseColorTexture'] as Map<String, dynamic>?;
+    final texIdx = baseColorTex?['index'] as int?;
+    if (texIdx == null) return null;
+    final imgIdx = _textureImageIndex(jsonTextures, texIdx);
+    return decodedTextures[imgIdx];
+  }
+
   /// Picks a flat viewport colour for a glTF material. When textured materials
   /// lack custom vertex colors, well-known material and mesh names get authentic
   /// automotive tints so glass, tyres, rims, interior, and lights are properly
@@ -1202,19 +1422,36 @@ class GlbParser {
     Set<Edge> edges, {
     Color? materialColor,
     List<Color>? vertexColors,
+    List<Offset>? uvs,
+    _DecodedTexture? decodedTexture,
   }) {
-    Color? colorFor(int idx) {
+    Color? vertexColorFor(int idx) {
       if (vertexColors != null && idx >= 0 && idx < vertexColors.length) {
         return vertexColors[idx];
       }
-      return materialColor;
+      return null;
+    }
+
+    // Sample the base-colour atlas at the triangle's centroid UV so decals,
+    // hoods and body paint all resolve to their authored texel colors.
+    Color? sampledColorFor(int a, int b, int c) {
+      if (decodedTexture == null || uvs == null) return null;
+      if (a < 0 || b < 0 || c < 0) return null;
+      if (a >= uvs.length || b >= uvs.length || c >= uvs.length) return null;
+      final u = (uvs[a].dx + uvs[b].dx + uvs[c].dx) / 3.0;
+      final v = (uvs[a].dy + uvs[b].dy + uvs[c].dy) / 3.0;
+      return decodedTexture.sampleUv(u, v);
     }
 
     void addTriangle(int a, int b, int c) {
       final i0 = a + vertexOffset;
       final i1 = b + vertexOffset;
       final i2 = c + vertexOffset;
-      final triCol = colorFor(a) ?? colorFor(b) ?? colorFor(c);
+      final triCol = vertexColorFor(a) ??
+          vertexColorFor(b) ??
+          vertexColorFor(c) ??
+          sampledColorFor(a, b, c) ??
+          materialColor;
       triangles.add(Triangle(i0, i1, i2, triCol));
     }
 
@@ -1335,6 +1572,36 @@ class GlbParser {
           bd.getFloat32(o, Endian.little),
           bd.getFloat32(o + 4, Endian.little),
           bd.getFloat32(o + 8, Endian.little),
+        ),
+      );
+    }
+    return result;
+  }
+
+  static List<Offset> _readVec2Accessor(
+    Map<String, dynamic> accessor,
+    List<dynamic> bufferViews,
+    Uint8List? bin,
+  ) {
+    if (bin == null) return [];
+    final count = accessor['count'] as int? ?? 0;
+    final bvIdx = accessor['bufferView'] as int?;
+    if (bvIdx == null || bvIdx >= bufferViews.length) return [];
+
+    final bv = bufferViews[bvIdx] as Map<String, dynamic>;
+    final byteOffset =
+        (bv['byteOffset'] as int? ?? 0) + (accessor['byteOffset'] as int? ?? 0);
+    final byteStride = bv['byteStride'] as int? ?? 8;
+
+    final bd = ByteData.sublistView(bin);
+    final result = <Offset>[];
+    for (var i = 0; i < count; i++) {
+      final o = byteOffset + i * byteStride;
+      if (o + 8 > bin.length) break;
+      result.add(
+        Offset(
+          bd.getFloat32(o, Endian.little),
+          bd.getFloat32(o + 4, Endian.little),
         ),
       );
     }
