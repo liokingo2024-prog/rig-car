@@ -236,7 +236,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   CameraMode _cameraMode = CameraMode.chase;
   TestDriveLighting _lighting = TestDriveLighting.day;
   TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
-  TestDriveRenderMode _renderMode =
+  final TestDriveRenderMode _renderMode =
       kIsWeb ? TestDriveRenderMode.webgl : TestDriveRenderMode.solid;
   double _orbitAzimuth = 0.65;
   double _orbitElevation = 0.32;
@@ -246,13 +246,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   // to the car in polar coordinates so it can never lag behind or cut the
   // chord of a corner at speed.
   double _camYaw = 0.0;
-  double _camDist = 5.15;
-  double _camHeight = 1.68;
+  double _camDist = 5.60;
+  double _camHeight = 1.88;
   double _camLookAhead = 0.0;
   double _camSteerSwing = 0.0;
   double _camSlip = 0.0;
   double _camRoll = 0.0;
-  double _fovDeg = 55.0;
+  double _fovDeg = 56.0;
   double _gearShiftKick = 0.0;
   int _prevGear = 1;
   double _chaseUserYaw = 0.0;
@@ -260,7 +260,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   double _timeSinceChaseDrag = 10.0;
   bool _showTouchControls = false;
 
-  Vec3 _chaseCamPos = const Vec3(0, 1.68, 29.6);
+  Vec3 _chaseCamPos = const Vec3(0, 1.88, 30.0);
   Vec3 _chaseCamTarget = const Vec3(0, 0.72, 21.6);
 
   // Time tracking
@@ -398,7 +398,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     final speedFov = pow(speedNorm, 1.12) * 17.5;
     final gSurge = (_sim.longitudinalG * 3.8).clamp(-4.0, 5.0);
     final kickFov = _gearShiftKick * 2.4;
-    final targetFov = (52.0 + speedFov + gSurge + kickFov).clamp(48.0, 78.0);
+    final targetFov = (56.0 + speedFov + gSurge + kickFov).clamp(50.0, 78.0);
     _fovDeg += (targetFov - _fovDeg) * (1.0 - exp(-dt * 8.0));
 
     _updatePerformanceTelemetry(dt, throttle);
@@ -540,6 +540,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     if (_webglActive) return;
     if (enterSketchfabTestDrive()) {
       setState(() => _webglActive = true);
+      updateSketchfabTestDriveWorld(_lighting.name, _trackStyle.name);
       return;
     }
     if (_webglRetries < 6) {
@@ -601,18 +602,18 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     final pitchClamped = _chaseUserPitch.clamp(-0.25, 0.65);
     final smooth = 1.0 - exp(-dt * 9.0);
 
-    // Sit low (1.68m) and close (5.15m) at rest, easing back with speed. Throttle squat
+    // Sit low (1.88m) and close (5.60m) at rest, easing back with speed. Throttle squat
     // pulls the lens back; braking dive pushes it in; upshift kick gives an impulse kick!
     final speedT = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
     final squatSurge = (_sim.longitudinalG * 0.42).clamp(-0.45, 0.65);
     final kickDist = _gearShiftKick * 0.35;
-    final targetDist = (5.15 +
+    final targetDist = (5.60 +
             speedT * 1.5 +
             squatSurge +
             kickDist) *
         cos(pitchClamped);
     final targetHeight =
-        (1.68 + speedT * 0.38 - (_sim.pitch * 1.25)) + 5.0 * sin(pitchClamped);
+        (1.88 + speedT * 0.38 - (_sim.pitch * 1.25)) + 5.0 * sin(pitchClamped);
 
     _camDist += (targetDist - _camDist) * smooth;
     _camHeight += (targetHeight - _camHeight) * smooth;
@@ -659,8 +660,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   void _resetCar() {
     _sim.reset();
     _camYaw = _sim.yaw;
-    _camDist = 5.15;
-    _camHeight = 1.68;
+    _camDist = 5.60;
+    _camHeight = 1.88;
     _camLookAhead = 0.0;
     _camSteerSwing = 0.0;
     _camSlip = 0.0;
@@ -676,7 +677,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     _chaseUserYaw = 0.0;
     _chaseUserPitch = 0.0;
     _timeSinceChaseDrag = 10.0;
-    _chaseCamPos = _sim.position + const Vec3(0, 1.68, 5.15);
+    _chaseCamPos = _sim.position + const Vec3(0, 1.88, 5.60);
     _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.4);
   }
 
@@ -943,70 +944,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
                   const SizedBox(width: 12),
 
-                  // Right Cluster: Render Mode, Camera, Surface, Lighting, Fullscreen, Reset
+                  // Right Cluster: Camera, Surface, Lighting, Fullscreen, Reset
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Render Mode selector (Solid / Wireframe / Hybrid)
-                      PopupMenuButton<TestDriveRenderMode>(
-                        tooltip: 'Render View: ${_renderMode.label}',
-                        initialValue: _renderMode,
-                        onSelected: (mode) {
-                          setState(() => _renderMode = mode);
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            _syncWebglMode();
-                          });
-                        },
-                        color: const Color(0xFF111714),
-                        surfaceTintColor: Colors.transparent,
-                        elevation: 8,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: const BorderSide(color: Color(0xFF223127)),
-                        ),
-                        itemBuilder: (context) => TestDriveRenderMode.values.map((mode) {
-                          final isSel = mode == _renderMode;
-                          return PopupMenuItem<TestDriveRenderMode>(
-                            value: mode,
-                            height: 38,
-                            child: Row(
-                              children: [
-                                Icon(mode.icon, size: 16, color: isSel ? const Color(0xFF10B981) : const Color(0xFF86978C)),
-                                const SizedBox(width: 8),
-                                Text(mode.label, style: TextStyle(fontSize: 12, fontWeight: isSel ? FontWeight.w700 : FontWeight.w500, color: isSel ? const Color(0xFFF0FDF4) : const Color(0xFFC9D1D9))),
-                                if (isSel) ...[
-                                  const Spacer(),
-                                  const Icon(Icons.check, size: 14, color: Color(0xFF10B981)),
-                                ],
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1A231E),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(color: const Color(0xFF223127)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(_renderMode.icon, size: 13, color: const Color(0xFF10B981)),
-                              const SizedBox(width: 4),
-                              Text(
-                                _renderMode.label.toUpperCase(),
-                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF34D399), letterSpacing: 0.4),
-                              ),
-                              const SizedBox(width: 2),
-                              const Icon(Icons.arrow_drop_down, size: 13, color: Color(0xFF34D399)),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 6),
-
                       // Camera selector
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1055,8 +996,15 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                       PopupMenuButton<TrackSurfaceStyle>(
                         tooltip: 'Track Surface: ${_trackStyle.label}',
                         initialValue: _trackStyle,
-                        onSelected: (style) =>
-                            setState(() => _trackStyle = style),
+                        onSelected: (style) {
+                          setState(() => _trackStyle = style);
+                          if (_webglActive) {
+                            updateSketchfabTestDriveWorld(
+                              _lighting.name,
+                              style.name,
+                            );
+                          }
+                        },
                         color: const Color(0xFF111714),
                         surfaceTintColor: Colors.transparent,
                         elevation: 8,
@@ -1139,7 +1087,15 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                       PopupMenuButton<TestDriveLighting>(
                         tooltip: 'Environment Lighting: ${_lighting.label}',
                         initialValue: _lighting,
-                        onSelected: (l) => setState(() => _lighting = l),
+                        onSelected: (l) {
+                          setState(() => _lighting = l);
+                          if (_webglActive) {
+                            updateSketchfabTestDriveWorld(
+                              l.name,
+                              _trackStyle.name,
+                            );
+                          }
+                        },
                         color: const Color(0xFF111714),
                         surfaceTintColor: Colors.transparent,
                         elevation: 8,

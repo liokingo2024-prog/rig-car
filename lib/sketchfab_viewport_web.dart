@@ -522,6 +522,17 @@ void exitSketchfabTestDrive() {
   }
 }
 
+void updateSketchfabTestDriveWorld(String lighting, String trackStyle) {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('setTestDriveWorld', [lighting, trackStyle]);
+    }
+  } catch (e) {
+    debugPrint('updateSketchfabTestDriveWorld error: $e');
+  }
+}
+
 void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {
   try {
     final viewer = js.context['SketchfabViewer'];

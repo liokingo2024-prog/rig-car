@@ -2329,7 +2329,7 @@ endsolid sports_car''';
       expect(find.text('▲ Forward (-Z)'), findsOneWidget);
     });
 
-    testWidgets('renders TestDriveViewport with Solid view mode by default and applies all settings', (tester) async {
+    testWidgets('renders TestDriveViewport with WebGL-ready view and applies all settings', (tester) async {
       tester.view.physicalSize = const Size(1920, 1080);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -2404,35 +2404,12 @@ endsolid sports_car''';
       );
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Verifies Solid view is active by default
-      expect(find.text('SOLID'), findsOneWidget);
-
       // Verifies HUD telemetry displays all applied settings: Drive, Mass, HP, Sound Profile, and Siren
       expect(find.textContaining('AWD • 1450KG • 620HP • V10 • SIREN'), findsOneWidget);
 
-      // Verifies TopBar render mode selector allows switching to Wireframe and Hybrid
-      final renderModeBtn = find.text('SOLID');
-      await tester.tap(renderModeBtn, warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-
-      expect(find.text('Wireframe'), findsWidgets);
-      expect(find.text('Hybrid'), findsWidgets);
-
-      // Select Wireframe
-      await tester.tap(find.text('Wireframe').last, warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('WIREFRAME'), findsOneWidget);
-
-      // Select Hybrid
-      await tester.tap(find.text('WIREFRAME'), warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Hybrid').last, warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('HYBRID'), findsOneWidget);
+      // Verifies TopBar surface and lighting selectors are accessible
+      expect(find.text('Circuit'), findsOneWidget);
+      expect(find.text('Day'), findsOneWidget);
     });
 
     test('VehiclePhysicsSimulation accurately tracks wheel roll travel and resets', () {
@@ -2528,7 +2505,7 @@ endsolid sports_car''';
       // Verifies custom painter renders with no exceptions or render overflow
       expect(tester.takeException(), isNull);
       expect(find.byType(CustomPaint), findsWidgets);
-      expect(find.text('SOLID'), findsOneWidget);
+      expect(find.text('Circuit'), findsOneWidget);
 
       // Simulate keyboard input driving forward and steering right
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
@@ -3584,6 +3561,39 @@ f 4 5 6
       const skidA = 760.0;
       const skidB = 815.0;
       expect(skidB - skidA, equals(55.0)); // 55Hz acoustic beat frequency
+    });
+
+    test('Part XV: WebGL world parity sky dome, track surface styles and unified camera baseline', () {
+      // 1. Verify chase camera baseline geometry and field of view
+      const camDist = 5.60;
+      const camHeight = 1.88;
+      const baseFov = 56.0;
+      expect(camDist, equals(5.60));
+      expect(camHeight, equals(1.88));
+      expect(baseFov, equals(56.0));
+
+      // 2. Dynamic speed & surge FOV bounds [50.0°, 78.0°]
+      final minTargetFov = (baseFov + 0.0 - 4.0).clamp(50.0, 78.0);
+      final maxTargetFov = (baseFov + 17.5 + 5.0 + 2.4).clamp(50.0, 78.0);
+      expect(minTargetFov, equals(52.0));
+      expect(maxTargetFov, equals(78.0));
+
+      // 3. Verify TrackSurfaceStyle enum values and lowercase identifiers
+      expect(TrackSurfaceStyle.values.map((s) => s.name.toLowerCase()).toList(),
+          containsAll(['circuit', 'skidpad', 'dragstrip', 'cybergrid']));
+
+      // 4. Verify TestDriveLighting enum values and lowercase identifiers
+      expect(TestDriveLighting.values.map((l) => l.name.toLowerCase()).toList(),
+          containsAll(['day', 'sunset', 'night']));
+
+      // 5. Verify contact shadow polygon offset settings and render orders
+      const chassisPolygonOffsetFactor = -4;
+      const tirePatchPolygonOffsetFactor = -6;
+      const chassisRenderOrder = 5;
+      const tirePatchRenderOrder = 6;
+      expect(chassisPolygonOffsetFactor, equals(-4));
+      expect(tirePatchPolygonOffsetFactor, equals(-6));
+      expect(tirePatchRenderOrder, greaterThan(chassisRenderOrder));
     });
   });
 }

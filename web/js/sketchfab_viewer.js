@@ -2680,18 +2680,280 @@
     item.mesh.scale.copy(item.scale);
   }
 
+  // ── Procedural WebGL World Parity: Sky Dome, Fog & Dynamic Track Styles ──
+  let currentTestDriveLighting = 'day';
+  let currentTestDriveTrackStyle = 'circuit';
+  let testDriveSkyDome = null;
+
+  function createSkyDomeTexture(lighting) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    const horizY = h * 0.52;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const isSunset = (lighting === 'sunset');
+    const isNight = (lighting === 'night');
+    const isDay = !isSunset && !isNight;
+
+    // 1. Sky Gradient matching Solid View
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, horizY);
+    if (isDay) {
+      skyGrad.addColorStop(0.0, '#0369a1');
+      skyGrad.addColorStop(0.25, '#0284c7');
+      skyGrad.addColorStop(0.55, '#38bdf8');
+      skyGrad.addColorStop(0.82, '#bae6fd');
+      skyGrad.addColorStop(1.0, '#dbeafe');
+    } else if (isSunset) {
+      skyGrad.addColorStop(0.0, '#1e1b4b');
+      skyGrad.addColorStop(0.28, '#4c0519');
+      skyGrad.addColorStop(0.52, '#831843');
+      skyGrad.addColorStop(0.78, '#c2410c');
+      skyGrad.addColorStop(1.0, '#fde68a');
+    } else {
+      skyGrad.addColorStop(0.0, '#020403');
+      skyGrad.addColorStop(0.35, '#050b08');
+      skyGrad.addColorStop(0.70, '#09140e');
+      skyGrad.addColorStop(1.0, '#0e1f16');
+    }
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, w, horizY);
+
+    // 2. Below Horizon Ground / Atmospheric Fill
+    const groundGrad = ctx.createLinearGradient(0, horizY, 0, h);
+    if (isDay) {
+      groundGrad.addColorStop(0.0, '#dbeafe');
+      groundGrad.addColorStop(0.25, '#1e3a2b');
+      groundGrad.addColorStop(1.0, '#0d1d15');
+    } else if (isSunset) {
+      groundGrad.addColorStop(0.0, '#fde68a');
+      groundGrad.addColorStop(0.25, '#14281e');
+      groundGrad.addColorStop(1.0, '#0a1610');
+    } else {
+      groundGrad.addColorStop(0.0, '#0e1f16');
+      groundGrad.addColorStop(0.30, '#050b08');
+      groundGrad.addColorStop(1.0, '#020402');
+    }
+    ctx.fillStyle = groundGrad;
+    ctx.fillRect(0, horizY, w, h - horizY);
+
+    // 3. Stars in Night Mode
+    if (isNight) {
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 180; i++) {
+        const sx = ((i * 137.5) % w);
+        const sy = ((i * 73.1) % (horizY * 0.85));
+        const r = (i % 3 === 0) ? 1.4 : 0.8;
+        ctx.globalAlpha = 0.35 + (i % 5) * 0.15;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
+    // 4. Distant Layered Mountains on Horizon
+    function drawMountainRidge(color, heightScale, seedOffset) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(0, horizY);
+      for (let x = 0; x <= w; x += 16) {
+        const normX = (x + seedOffset) * 0.012;
+        const peak = Math.sin(normX) * 0.5 + Math.sin(normX * 2.3) * 0.3 + Math.sin(normX * 5.1) * 0.2;
+        const my = horizY - Math.max(0, peak) * heightScale;
+        ctx.lineTo(x, my);
+      }
+      ctx.lineTo(w, horizY);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    if (isDay) {
+      drawMountainRidge('rgba(71, 85, 105, 0.40)', 55, 0);
+      drawMountainRidge('rgba(100, 116, 139, 0.30)', 35, 120);
+    } else if (isSunset) {
+      drawMountainRidge('rgba(59, 7, 100, 0.55)', 60, 0);
+      drawMountainRidge('rgba(88, 28, 135, 0.40)', 40, 140);
+    } else {
+      drawMountainRidge('rgba(4, 7, 5, 0.80)', 50, 0);
+      drawMountainRidge('rgba(9, 16, 12, 0.60)', 30, 100);
+    }
+
+    // 5. Sun / Moon
+    if (isDay) {
+      const sunX = w * 0.35;
+      const sunY = horizY * 0.45;
+      const sunGlow = ctx.createRadialGradient(sunX, sunY, 15, sunX, sunY, 120);
+      sunGlow.addColorStop(0.0, 'rgba(255, 255, 255, 0.95)');
+      sunGlow.addColorStop(0.3, 'rgba(254, 240, 138, 0.60)');
+      sunGlow.addColorStop(0.7, 'rgba(253, 224, 71, 0.15)');
+      sunGlow.addColorStop(1.0, 'rgba(253, 224, 71, 0.0)');
+      ctx.fillStyle = sunGlow;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 120, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 20, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (isSunset) {
+      const sunX = w * 0.45;
+      const sunY = horizY * 0.78;
+      const sunGlow = ctx.createRadialGradient(sunX, sunY, 20, sunX, sunY, 160);
+      sunGlow.addColorStop(0.0, 'rgba(255, 247, 237, 0.95)');
+      sunGlow.addColorStop(0.4, 'rgba(249, 115, 22, 0.65)');
+      sunGlow.addColorStop(0.8, 'rgba(234, 88, 12, 0.20)');
+      sunGlow.addColorStop(1.0, 'rgba(194, 65, 12, 0.0)');
+      ctx.fillStyle = sunGlow;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 160, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#fffbeb';
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 24, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const moonX = w * 0.65;
+      const moonY = horizY * 0.35;
+      const moonGlow = ctx.createRadialGradient(moonX, moonY, 10, moonX, moonY, 65);
+      moonGlow.addColorStop(0.0, 'rgba(96, 165, 250, 0.45)');
+      moonGlow.addColorStop(0.6, 'rgba(56, 189, 248, 0.15)');
+      moonGlow.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+      ctx.fillStyle = moonGlow;
+      ctx.beginPath();
+      ctx.arc(moonX, moonY, 65, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.beginPath();
+      ctx.arc(moonX, moonY, 15, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#050b08';
+      ctx.beginPath();
+      ctx.arc(moonX + 4.5, moonY - 2.5, 13, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    return tex;
+  }
+
+  function buildSkyDome(lighting) {
+    if (testDriveSkyDome) {
+      scene.remove(testDriveSkyDome);
+      disposeObject(testDriveSkyDome);
+      testDriveSkyDome = null;
+    }
+    const skyTex = createSkyDomeTexture(lighting);
+    const skyGeo = new THREE.SphereGeometry(950, 32, 16);
+    const skyMat = new THREE.MeshBasicMaterial({
+      map: skyTex,
+      side: THREE.BackSide,
+      depthWrite: false
+    });
+    testDriveSkyDome = new THREE.Mesh(skyGeo, skyMat);
+    testDriveSkyDome.name = 'TestDriveSkyDome';
+    testDriveSkyDome.renderOrder = -100;
+    scene.add(testDriveSkyDome);
+  }
+
+  function updateTestDriveLightingAndFog(lighting) {
+    if (!scene) return;
+    const l = String(lighting || 'day').toLowerCase();
+    currentTestDriveLighting = l;
+
+    if (l === 'sunset') {
+      scene.fog = new THREE.FogExp2(0xfb923c, 0.0028);
+      if (dirLightKey) {
+        dirLightKey.color.set(0xff9944);
+        dirLightKey.intensity = 1.85;
+      }
+      if (dirLightFill) {
+        dirLightFill.color.set(0x831843);
+        dirLightFill.intensity = 0.55;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0xffddaa);
+        dirLightRim.intensity = 0.90;
+      }
+      if (hemiLight) {
+        hemiLight.color.set(0xfb923c);
+        hemiLight.groundColor.set(0x14281e);
+        hemiLight.intensity = 0.85;
+      }
+    } else if (l === 'night') {
+      scene.fog = new THREE.FogExp2(0x09140e, 0.0035);
+      if (dirLightKey) {
+        dirLightKey.color.set(0x60a5fa);
+        dirLightKey.intensity = 0.45;
+      }
+      if (dirLightFill) {
+        dirLightFill.color.set(0x1e293b);
+        dirLightFill.intensity = 0.35;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0x38bdf8);
+        dirLightRim.intensity = 0.40;
+      }
+      if (hemiLight) {
+        hemiLight.color.set(0x0e1f16);
+        hemiLight.groundColor.set(0x050b08);
+        hemiLight.intensity = 0.50;
+      }
+    } else {
+      scene.fog = new THREE.FogExp2(0xdbeafe, 0.0022);
+      if (dirLightKey) {
+        dirLightKey.color.set(0xfffaed);
+        dirLightKey.intensity = 1.65;
+      }
+      if (dirLightFill) {
+        dirLightFill.color.set(0xaad8e6);
+        dirLightFill.intensity = 0.65;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0xffeedd);
+        dirLightRim.intensity = 0.80;
+      }
+      if (hemiLight) {
+        hemiLight.color.set(0xffffff);
+        hemiLight.groundColor.set(0x1e3a2b);
+        hemiLight.intensity = 1.0;
+      }
+    }
+  }
+
   function buildTestDriveTrack() {
     if (testDriveTrackGroup) return;
     testDriveTrackGroup = new THREE.Group();
     testDriveTrackGroup.name = 'TestDriveTrack';
 
-    testDriveOrigFog = scene.fog;
-    scene.fog = new THREE.FogExp2(0x0c1410, 0.0035);
+    if (!testDriveOrigFog) {
+      testDriveOrigFog = scene.fog;
+    }
+
+    const isSunset = (currentTestDriveLighting === 'sunset');
+    const isNight = (currentTestDriveLighting === 'night');
+    const isCyber = (currentTestDriveTrackStyle === 'cybergrid');
+
+    // Turf color matching Solid view
+    let turfColor = 0x1E3A2B;
+    if (isCyber) turfColor = 0x050810;
+    else if (isNight) turfColor = 0x08150E;
+    else if (isSunset) turfColor = 0x14281E;
 
     // 1400m x 1400m static turf base pinned to scene
     const turfGeo = new THREE.PlaneGeometry(1400, 1400);
     const turfMat = new THREE.MeshStandardMaterial({
-      color: 0x0a1510,
+      color: turfColor,
       roughness: 0.98,
       metalness: 0.02
     });
@@ -2707,125 +2969,317 @@
 
     const spanLen = 720; // 30 intervals of 24m
 
-    // 38m gravel runoff shoulders
-    const gravelGeo = new THREE.PlaneGeometry(38, spanLen);
-    const gravelMat = new THREE.MeshStandardMaterial({
-      color: 0x222a24,
-      roughness: 0.95,
-      metalness: 0.05
-    });
-    const gravel = new THREE.Mesh(gravelGeo, gravelMat);
-    gravel.rotation.x = -Math.PI / 2;
-    gravel.position.set(0, -0.025, 0);
-    gravel.receiveShadow = true;
-    testDriveRoadAnchor.add(gravel);
+    // Gravel color matching Solid view
+    let gravelColor = 0x475569;
+    if (isCyber) gravelColor = 0x090d16;
+    else if (isNight) gravelColor = 0x1e293b;
+    else if (isSunset) gravelColor = 0x334155;
 
-    // 24m dark motorsport asphalt straight
-    const roadGeo = new THREE.PlaneGeometry(24, spanLen);
-    const roadMat = new THREE.MeshStandardMaterial({
-      color: 0x141b18,
-      roughness: 0.90,
-      metalness: 0.04
-    });
-    const road = new THREE.Mesh(roadGeo, roadMat);
-    road.rotation.x = -Math.PI / 2;
-    road.position.set(0, -0.015, 0);
-    road.receiveShadow = true;
-    testDriveRoadAnchor.add(road);
+    // Asphalt color matching Solid view
+    let asphaltColor = 0x1E293B;
+    if (isCyber) asphaltColor = 0x0b0f19;
 
-    // Subtle 2D asphalt grid for optical flow
-    const grid = new THREE.GridHelper(spanLen, spanLen / 4, 0x2dd4bf, 0x1e3a30);
-    grid.position.set(0, -0.012, 0);
-    if (grid.material) {
-      grid.material.transparent = true;
-      grid.material.opacity = 0.22;
-    }
-    testDriveRoadAnchor.add(grid);
+    if (currentTestDriveTrackStyle === 'skidpad') {
+      // ── Proving Skidpad ──────────────────────────────────────────────────
+      const gravelGeo = new THREE.PlaneGeometry(180, spanLen);
+      const gravelMat = new THREE.MeshStandardMaterial({ color: gravelColor, roughness: 0.95 });
+      const gravel = new THREE.Mesh(gravelGeo, gravelMat);
+      gravel.rotation.x = -Math.PI / 2;
+      gravel.position.set(0, -0.025, 0);
+      gravel.receiveShadow = true;
+      testDriveRoadAnchor.add(gravel);
 
-    // Crisp white boundary lines at x = ±11.6m
-    const whiteLineMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 });
-    [-11.6, 11.6].forEach(function (lx) {
-      const lineMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.20, spanLen), whiteLineMat);
-      lineMesh.rotation.x = -Math.PI / 2;
-      lineMesh.position.set(lx, -0.008, 0);
-      testDriveRoadAnchor.add(lineMesh);
-    });
+      const padGeo = new THREE.PlaneGeometry(140, spanLen);
+      const padMat = new THREE.MeshStandardMaterial({ color: asphaltColor, roughness: 0.88, metalness: 0.04 });
+      const pad = new THREE.Mesh(padGeo, padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(0, -0.015, 0);
+      pad.receiveShadow = true;
+      testDriveRoadAnchor.add(pad);
 
-    // Yellow center dashes (6m dash, 6m gap repeating every 12m along Z)
-    const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
-    for (let z = -spanLen / 2 + 6; z < spanLen / 2; z += 12) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 6.0), yellowMat);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, -0.008, z);
-      testDriveRoadAnchor.add(dash);
-    }
+      const grid = new THREE.GridHelper(140, 35, 0x38bdf8, 0x1e3a30);
+      grid.position.set(0, -0.012, 0);
+      if (grid.material) { grid.material.transparent = true; grid.material.opacity = 0.20; }
+      testDriveRoadAnchor.add(grid);
 
-    // Alternating red-and-white FIA curbs at x = ±12.35m (curb width 1.2m, 2m blocks)
-    const curbRedMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, roughness: 0.6 });
-    const curbWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 });
-    const curbGeo = new THREE.BoxGeometry(1.2, 0.06, 2.0);
-    for (let z = -spanLen / 2 + 1; z < spanLen / 2; z += 2.0) {
-      const isRed = (Math.round((z + 1000) / 2.0) % 2 === 0);
-      const mat = isRed ? curbRedMat : curbWhiteMat;
-      [-12.35, 12.35].forEach(function (cx) {
-        const curb = new THREE.Mesh(curbGeo, mat);
-        curb.position.set(cx, 0.01, z);
-        curb.receiveShadow = true;
-        testDriveRoadAnchor.add(curb);
+      // Concentric Drift Guide Rings at R = 18m, 32m, 48m, 64m
+      const whiteMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9, side: THREE.DoubleSide });
+      const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
+      [18, 32, 48, 64].forEach(function (radius, rIdx) {
+        const ringGeo = new THREE.RingGeometry(radius - 0.15, radius + 0.15, 64);
+        const ringMesh = new THREE.Mesh(ringGeo, (rIdx % 2 === 0) ? whiteMat : yellowMat);
+        ringMesh.rotation.x = -Math.PI / 2;
+        ringMesh.position.set(0, -0.008, 0);
+        testDriveRoadAnchor.add(ringMesh);
       });
-    }
 
-    // 3D roadside light poles every 24m at x = ±15.2m
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 });
-    const lightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
-    const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 7.5, 8);
-    const armGeo = new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8);
-    const lampGeo = new THREE.BoxGeometry(0.35, 0.15, 0.5);
+      // Ringing cones at outer perimeter
+      const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
+      const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
+      for (let a = 0; a < Math.PI * 2; a += Math.PI / 12) {
+        const cx = Math.sin(a) * 68;
+        const cz = Math.cos(a) * 68;
+        const cone = new THREE.Mesh(coneGeo, coneMat);
+        cone.position.set(cx, 0.325, cz);
+        testDriveRoadAnchor.add(cone);
+      }
 
-    for (let z = -spanLen / 2 + 12; z < spanLen / 2; z += 24) {
-      [-15.2, 15.2].forEach(function (px) {
-        const sign = px > 0 ? 1 : -1;
-        const pole = new THREE.Mesh(poleGeo, poleMat);
-        pole.position.set(px, 3.75, z);
-        testDriveRoadAnchor.add(pole);
-
-        const arm = new THREE.Mesh(armGeo, poleMat);
-        arm.rotation.z = -sign * Math.PI / 2.4;
-        arm.position.set(px - sign * 1.2, 7.2, z);
-        testDriveRoadAnchor.add(arm);
-
+      // 4 High-mast floodlight towers
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 });
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+      const towerGeo = new THREE.CylinderGeometry(0.2, 0.35, 14, 8);
+      const lampGeo = new THREE.BoxGeometry(1.2, 0.5, 0.8);
+      [[-65, -65], [65, -65], [-65, 65], [65, 65]].forEach(function (coords) {
+        const tower = new THREE.Mesh(towerGeo, poleMat);
+        tower.position.set(coords[0], 7.0, coords[1]);
+        testDriveRoadAnchor.add(tower);
         const lamp = new THREE.Mesh(lampGeo, lightMat);
-        lamp.position.set(px - sign * 2.4, 7.6, z);
+        lamp.position.set(coords[0], 14.0, coords[1]);
         testDriveRoadAnchor.add(lamp);
       });
-    }
 
-    // Overhead circuit gantries every 72m spanning from x = -15.2 to +15.2 at y = 6.8
-    const gantryMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.4 });
-    const beamGeo = new THREE.BoxGeometry(31.2, 0.45, 0.6);
-    const boardMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
-    const boardGeo = new THREE.BoxGeometry(7.0, 1.4, 0.1);
-    for (let z = -spanLen / 2 + 36; z < spanLen / 2; z += 72) {
-      const beam = new THREE.Mesh(beamGeo, gantryMat);
-      beam.position.set(0, 6.8, z);
-      testDriveRoadAnchor.add(beam);
+    } else if (currentTestDriveTrackStyle === 'dragstrip') {
+      // ── Runway Drag Strip ────────────────────────────────────────────────
+      const gravelGeo = new THREE.PlaneGeometry(38, spanLen);
+      const gravelMat = new THREE.MeshStandardMaterial({ color: gravelColor, roughness: 0.95 });
+      const gravel = new THREE.Mesh(gravelGeo, gravelMat);
+      gravel.rotation.x = -Math.PI / 2;
+      gravel.position.set(0, -0.025, 0);
+      gravel.receiveShadow = true;
+      testDriveRoadAnchor.add(gravel);
 
-      const signBoard = new THREE.Mesh(boardGeo, boardMat);
-      signBoard.position.set(0, 6.8, z - 0.35);
-      testDriveRoadAnchor.add(signBoard);
-    }
+      const roadGeo = new THREE.PlaneGeometry(24, spanLen);
+      const roadMat = new THREE.MeshStandardMaterial({ color: asphaltColor, roughness: 0.88, metalness: 0.04 });
+      const road = new THREE.Mesh(roadGeo, roadMat);
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(0, -0.015, 0);
+      road.receiveShadow = true;
+      testDriveRoadAnchor.add(road);
 
-    // Slalom cones placed along the track
-    const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
-    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
-    for (let z = 12; z >= -180; z -= 10) {
-      const cone = new THREE.Mesh(coneGeo, coneMat);
-      cone.position.set((z % 20 === 0) ? -2.6 : 2.6, 0.325, z);
-      testDriveRoadAnchor.add(cone);
+      // Light concrete launch pad at start (z = -30 to +30)
+      const padGeo = new THREE.PlaneGeometry(24, 60);
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.85, metalness: 0.05 });
+      const padMesh = new THREE.Mesh(padGeo, padMat);
+      padMesh.rotation.x = -Math.PI / 2;
+      padMesh.position.set(0, -0.012, 0);
+      padMesh.receiveShadow = true;
+      testDriveRoadAnchor.add(padMesh);
+
+      // Center concrete divider jersey barriers along Z
+      const barrierMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.75 });
+      const barrierGeo = new THREE.BoxGeometry(0.5, 0.8, 4.0);
+      for (let z = -spanLen / 2 + 10; z < spanLen / 2; z += 6.0) {
+        const barrier = new THREE.Mesh(barrierGeo, barrierMat);
+        barrier.position.set(0, 0.40, z);
+        testDriveRoadAnchor.add(barrier);
+      }
+
+      // Christmas tree staging lights gantry at z = 12m
+      const gantryMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7, roughness: 0.3 });
+      const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 5.5, 8);
+      const post = new THREE.Mesh(postGeo, gantryMat);
+      post.position.set(0, 2.75, 12);
+      testDriveRoadAnchor.add(post);
+
+      const treeGeo = new THREE.BoxGeometry(0.8, 2.4, 0.2);
+      const tree = new THREE.Mesh(treeGeo, gantryMat);
+      tree.position.set(0, 3.8, 12);
+      testDriveRoadAnchor.add(tree);
+
+      const amberLight = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+      const greenLight = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+      const redLight = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+      const bulbGeo = new THREE.SphereGeometry(0.10, 8, 8);
+      [0.8, 0.4, 0.0].forEach(function (dy) {
+        [-0.25, 0.25].forEach(function (dx) {
+          const b = new THREE.Mesh(bulbGeo, amberLight);
+          b.position.set(dx, 3.8 + dy, 12.12);
+          testDriveRoadAnchor.add(b);
+        });
+      });
+      [-0.25, 0.25].forEach(function (dx) {
+        const bg = new THREE.Mesh(bulbGeo, greenLight);
+        bg.position.set(dx, 3.4, 12.12);
+        testDriveRoadAnchor.add(bg);
+        const br = new THREE.Mesh(bulbGeo, redLight);
+        br.position.set(dx, 3.0, 12.12);
+        testDriveRoadAnchor.add(br);
+      });
+
+    } else if (currentTestDriveTrackStyle === 'cybergrid') {
+      // ── Cyber Matrix ─────────────────────────────────────────────────────
+      const roadGeo = new THREE.PlaneGeometry(24, spanLen);
+      const roadMat = new THREE.MeshStandardMaterial({ color: asphaltColor, roughness: 0.45, metalness: 0.65 });
+      const road = new THREE.Mesh(roadGeo, roadMat);
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(0, -0.015, 0);
+      road.receiveShadow = true;
+      testDriveRoadAnchor.add(road);
+
+      const grid = new THREE.GridHelper(spanLen, spanLen / 4, 0x00f0ff, 0xff007f);
+      grid.position.set(0, -0.012, 0);
+      if (grid.material) { grid.material.transparent = true; grid.material.opacity = 0.65; }
+      testDriveRoadAnchor.add(grid);
+
+      // Glowing cyan rails at x = ±11.6m
+      const cyanMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+      [-11.6, 11.6].forEach(function (lx) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.45, spanLen), cyanMat);
+        rail.position.set(lx, 0.22, 0);
+        testDriveRoadAnchor.add(rail);
+      });
+
+      // Magenta cyber pylons every 24m at x = ±14.5m
+      const pylonMat = new THREE.MeshStandardMaterial({ color: 0x1e1b4b, metalness: 0.8, roughness: 0.2 });
+      const neonMat = new THREE.MeshBasicMaterial({ color: 0xff007f });
+      const pylonGeo = new THREE.BoxGeometry(0.4, 6.0, 0.4);
+      const headGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+      for (let z = -spanLen / 2 + 12; z < spanLen / 2; z += 24) {
+        [-14.5, 14.5].forEach(function (px) {
+          const pylon = new THREE.Mesh(pylonGeo, pylonMat);
+          pylon.position.set(px, 3.0, z);
+          testDriveRoadAnchor.add(pylon);
+          const head = new THREE.Mesh(headGeo, neonMat);
+          head.position.set(px, 6.2, z);
+          testDriveRoadAnchor.add(head);
+        });
+      }
+
+    } else {
+      // ── Circuit Asphalt (Default) ────────────────────────────────────────
+      const gravelGeo = new THREE.PlaneGeometry(38, spanLen);
+      const gravelMat = new THREE.MeshStandardMaterial({
+        color: gravelColor,
+        roughness: 0.95,
+        metalness: 0.05
+      });
+      const gravel = new THREE.Mesh(gravelGeo, gravelMat);
+      gravel.rotation.x = -Math.PI / 2;
+      gravel.position.set(0, -0.025, 0);
+      gravel.receiveShadow = true;
+      testDriveRoadAnchor.add(gravel);
+
+      const roadGeo = new THREE.PlaneGeometry(24, spanLen);
+      const roadMat = new THREE.MeshStandardMaterial({
+        color: asphaltColor,
+        roughness: 0.88,
+        metalness: 0.04
+      });
+      const road = new THREE.Mesh(roadGeo, roadMat);
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(0, -0.015, 0);
+      road.receiveShadow = true;
+      testDriveRoadAnchor.add(road);
+
+      const grid = new THREE.GridHelper(spanLen, spanLen / 4, 0x2dd4bf, 0x1e3a30);
+      grid.position.set(0, -0.012, 0);
+      if (grid.material) {
+        grid.material.transparent = true;
+        grid.material.opacity = 0.22;
+      }
+      testDriveRoadAnchor.add(grid);
+
+      // Boundary lines at x = ±11.6m
+      const whiteLineMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 });
+      [-11.6, 11.6].forEach(function (lx) {
+        const lineMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.20, spanLen), whiteLineMat);
+        lineMesh.rotation.x = -Math.PI / 2;
+        lineMesh.position.set(lx, -0.008, 0);
+        testDriveRoadAnchor.add(lineMesh);
+      });
+
+      // Yellow center dashes
+      const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+      for (let z = -spanLen / 2 + 6; z < spanLen / 2; z += 12) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 6.0), yellowMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(0, -0.008, z);
+        testDriveRoadAnchor.add(dash);
+      }
+
+      // Alternating red/white FIA curbs at x = ±12.35m
+      const curbRedMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, roughness: 0.6 });
+      const curbWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 });
+      const curbGeo = new THREE.BoxGeometry(1.2, 0.06, 2.0);
+      for (let z = -spanLen / 2 + 1; z < spanLen / 2; z += 2.0) {
+        const isRed = (Math.round((z + 1000) / 2.0) % 2 === 0);
+        const mat = isRed ? curbRedMat : curbWhiteMat;
+        [-12.35, 12.35].forEach(function (cx) {
+          const curb = new THREE.Mesh(curbGeo, mat);
+          curb.position.set(cx, 0.01, z);
+          curb.receiveShadow = true;
+          testDriveRoadAnchor.add(curb);
+        });
+      }
+
+      // Roadside light poles every 24m at x = ±15.2m
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 });
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+      const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 7.5, 8);
+      const armGeo = new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8);
+      const lampGeo = new THREE.BoxGeometry(0.35, 0.15, 0.5);
+
+      for (let z = -spanLen / 2 + 12; z < spanLen / 2; z += 24) {
+        [-15.2, 15.2].forEach(function (px) {
+          const sign = px > 0 ? 1 : -1;
+          const pole = new THREE.Mesh(poleGeo, poleMat);
+          pole.position.set(px, 3.75, z);
+          testDriveRoadAnchor.add(pole);
+
+          const arm = new THREE.Mesh(armGeo, poleMat);
+          arm.rotation.z = -sign * Math.PI / 2.4;
+          arm.position.set(px - sign * 1.2, 7.2, z);
+          testDriveRoadAnchor.add(arm);
+
+          const lamp = new THREE.Mesh(lampGeo, lightMat);
+          lamp.position.set(px - sign * 2.4, 7.6, z);
+          testDriveRoadAnchor.add(lamp);
+        });
+      }
+
+      // Overhead circuit gantries every 72m
+      const gantryMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.4 });
+      const beamGeo = new THREE.BoxGeometry(31.2, 0.45, 0.6);
+      const boardMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+      const boardGeo = new THREE.BoxGeometry(7.0, 1.4, 0.1);
+      for (let z = -spanLen / 2 + 36; z < spanLen / 2; z += 72) {
+        const beam = new THREE.Mesh(beamGeo, gantryMat);
+        beam.position.set(0, 6.8, z);
+        testDriveRoadAnchor.add(beam);
+
+        const signBoard = new THREE.Mesh(boardGeo, boardMat);
+        signBoard.position.set(0, 6.8, z - 0.35);
+        testDriveRoadAnchor.add(signBoard);
+      }
+
+      // Slalom cones
+      const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
+      const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
+      for (let z = 12; z >= -180; z -= 10) {
+        const cone = new THREE.Mesh(coneGeo, coneMat);
+        cone.position.set((z % 20 === 0) ? -2.6 : 2.6, 0.325, z);
+        testDriveRoadAnchor.add(cone);
+      }
     }
 
     testDriveTrackGroup.add(testDriveRoadAnchor);
     scene.add(testDriveTrackGroup);
+  }
+
+  function setTestDriveWorld(lighting, trackStyle) {
+    if (lighting) currentTestDriveLighting = String(lighting).toLowerCase();
+    if (trackStyle) currentTestDriveTrackStyle = String(trackStyle).toLowerCase();
+    if (testDriveActive) {
+      buildSkyDome(currentTestDriveLighting);
+      updateTestDriveLightingAndFog(currentTestDriveLighting);
+      if (testDriveTrackGroup) {
+        disposeObject(testDriveTrackGroup);
+        scene.remove(testDriveTrackGroup);
+        testDriveTrackGroup = null;
+        testDriveRoadAnchor = null;
+      }
+      buildTestDriveTrack();
+    }
   }
 
   // ── Procedural Under-Chassis AO Contact Shadow & Tire Contact Patches ─────
@@ -2869,7 +3323,10 @@
       map: tex,
       transparent: true,
       depthWrite: false,
-      opacity: 0.65
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+      opacity: 0.85
     });
   }
 
@@ -2881,9 +3338,9 @@
     ctx.clearRect(0, 0, 128, 128);
 
     const grad = ctx.createRadialGradient(64, 64, 8, 64, 64, 56);
-    grad.addColorStop(0, 'rgba(0, 0, 0, 0.92)');
-    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.68)');
-    grad.addColorStop(0.85, 'rgba(0, 0, 0, 0.22)');
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.98)');
+    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.80)');
+    grad.addColorStop(0.85, 'rgba(0, 0, 0, 0.28)');
     grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
 
     ctx.save();
@@ -2899,7 +3356,10 @@
       map: tex,
       transparent: true,
       depthWrite: false,
-      opacity: 0.85
+      polygonOffset: true,
+      polygonOffsetFactor: -6,
+      polygonOffsetUnits: -6,
+      opacity: 0.92
     });
   }
 
@@ -2925,6 +3385,7 @@
     const chassisMesh = new THREE.Mesh(chassisGeo, chassisMat);
     chassisMesh.rotation.x = -Math.PI / 2;
     chassisMesh.position.set(centerX, 0.003, centerZ);
+    chassisMesh.renderOrder = 5;
     group.add(chassisMesh);
 
     // 2. Four Tire Contact Patches at asphalt surface (y = 0.004)
@@ -2949,6 +3410,7 @@
       const patch = new THREE.Mesh(tireGeo, tireMat);
       patch.rotation.x = -Math.PI / 2;
       patch.position.set(coord[0], 0.004, coord[1]);
+      patch.renderOrder = 6;
       group.add(patch);
       if (corner === 'FL' || corner === 'FR') {
         frontPatches.push(patch);
@@ -2995,13 +3457,20 @@
     testDriveModelSnapshot = snapshotTransform(vehicleChassis);
     testDriveBodyGroup.attach(vehicleChassis);
 
+    // Guaranteed visible real-time shadows: enable castShadow & receiveShadow on all child meshes
+    vehicleChassis.traverse(function (child) {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
     // Procedural Under-Chassis AO Contact Shadow & 4 Tire Contact Patches
     const wheels = detectedWheelData && detectedWheelData.wheels;
     testDriveContactShadow = buildTestDriveContactShadow(wheels);
     testDriveGroup.add(testDriveContactShadow.group);
 
     testDriveWheelPivots = {};
-    const wheels = detectedWheelData && detectedWheelData.wheels;
     if (wheels) {
       ['FL', 'FR', 'RL', 'RR'].forEach(function (corner) {
         const w = wheels[corner];
@@ -3039,6 +3508,8 @@
       });
     }
 
+    buildSkyDome(currentTestDriveLighting);
+    updateTestDriveLightingAndFog(currentTestDriveLighting);
     buildTestDriveTrack();
     return true;
   }
@@ -3100,6 +3571,9 @@
     });
 
     if (camera) {
+      if (testDriveSkyDome) {
+        testDriveSkyDome.position.copy(camera.position);
+      }
       if (state.camX !== undefined) {
         camera.position.set(state.camX, state.camY, state.camZ);
         const target = new THREE.Vector3(state.targetX || 0, state.targetY || 0.8, state.targetZ || 0);
@@ -3146,6 +3620,12 @@
         testDriveGroup.remove(testDriveContactShadow.group);
       }
       testDriveContactShadow = null;
+    }
+
+    if (testDriveSkyDome) {
+      scene.remove(testDriveSkyDome);
+      disposeObject(testDriveSkyDome);
+      testDriveSkyDome = null;
     }
 
     if (testDriveGroup) {
@@ -3219,6 +3699,7 @@
     enterTestDriveMode: enterTestDriveMode,
     updateTestDriveState: updateTestDriveState,
     exitTestDriveMode: exitTestDriveMode,
+    setTestDriveWorld: setTestDriveWorld,
     isTestDriveActive: function() { return testDriveActive; },
     isInitialized: function() { return isInitialized; }
   };
