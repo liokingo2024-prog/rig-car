@@ -595,8 +595,8 @@
       6, 7, 9,   6, 9, 8,   8, 9, 11,  8, 11, 10,
       10, 11, 13, 10, 13, 12, 12, 13, 15, 12, 15, 14,
       14, 15, 2,  14, 2, 3,  0, 4, 6,   0, 6, 3,
-      6, 8, 10,  6, 10, 12, 3, 12, 14, 1, 7, 5,
-      1, 2, 7,   7, 11, 9,  7, 13, 11, 2, 15, 13,
+      6, 8, 10,  6, 10, 12, 3, 6, 12,  3, 12, 14, 1, 7, 5,
+      1, 2, 7,   2, 13, 7,  7, 11, 9,  7, 13, 11, 2, 15, 13,
       0, 1, 2,   0, 2, 3
     ];
 
@@ -2437,6 +2437,7 @@
   // keeping full PBR materials, decals and the exact wheel meshes.
   let testDriveActive = false;
   let testDriveGroup = null;
+  let testDriveBodyGroup = null;
   let testDriveTrackGroup = null;
   let testDriveWheelPivots = {};
   let testDriveModelSnapshot = null;
@@ -2519,16 +2520,24 @@
       highlightWheelMeshes(null);
       highlightMeshesCyan(null);
     } catch (e) {}
-    if (wheelMarkersGroup) wheelMarkersGroup.visible = false;
+    if (markersGroup) markersGroup.visible = false;
     if (forwardArrowGroup) forwardArrowGroup.visible = false;
     if (gridGroup) gridGroup.visible = false;
     if (controls) controls.enabled = false;
 
+    scene.updateMatrixWorld(true);
+
     testDriveGroup = new THREE.Group();
     testDriveGroup.name = 'TestDriveVehicleRoot';
     scene.add(testDriveGroup);
-    testDriveModelSnapshot = snapshotTransform(currentModel);
-    testDriveGroup.add(currentModel);
+
+    testDriveBodyGroup = new THREE.Group();
+    testDriveBodyGroup.name = 'TestDriveBodyGroup';
+    testDriveGroup.add(testDriveBodyGroup);
+
+    const vehicleChassis = modelPivotGroup || currentModel;
+    testDriveModelSnapshot = snapshotTransform(vehicleChassis);
+    testDriveBodyGroup.attach(vehicleChassis);
 
     testDriveWheelPivots = {};
     const wheels = detectedWheelData && detectedWheelData.wheels;
@@ -2577,10 +2586,14 @@
     if (!testDriveActive || !testDriveGroup || !state) return;
 
     // Keep testDriveGroup yaw-only so the 4 wheel steerGroups stay planted flat
-    // on the asphalt (Y = 0), and apply suspension pitch & roll to currentModel!
+    // on the asphalt (Y = 0), and apply suspension pitch & roll to testDriveBodyGroup!
     testDriveGroup.position.set(state.x || 0, state.y || 0, state.z || 0);
     testDriveGroup.rotation.set(0, state.yaw || 0, 0);
-    if (currentModel) {
+    if (testDriveBodyGroup) {
+      testDriveBodyGroup.rotation.order = 'YXZ';
+      testDriveBodyGroup.rotation.x = state.pitch || 0;
+      testDriveBodyGroup.rotation.z = state.roll || 0;
+    } else if (currentModel) {
       currentModel.rotation.order = 'YXZ';
       currentModel.rotation.x = state.pitch || 0;
       currentModel.rotation.z = state.roll || 0;
@@ -2619,16 +2632,21 @@
     });
     testDriveWheelPivots = {};
 
-    if (testDriveGroup && currentModel) {
+    const vehicleChassis = modelPivotGroup || currentModel;
+    if (testDriveBodyGroup && vehicleChassis) {
       if (testDriveModelSnapshot) {
         restoreTransform(testDriveModelSnapshot);
       } else {
-        scene.attach(currentModel);
+        scene.attach(vehicleChassis);
       }
+    }
+    testDriveModelSnapshot = null;
+    testDriveBodyGroup = null;
+
+    if (testDriveGroup) {
       scene.remove(testDriveGroup);
       testDriveGroup = null;
     }
-    testDriveModelSnapshot = null;
 
     if (testDriveTrackGroup) {
       disposeObject(testDriveTrackGroup);
@@ -2636,7 +2654,7 @@
       testDriveTrackGroup = null;
     }
 
-    if (wheelMarkersGroup) wheelMarkersGroup.visible = true;
+    if (markersGroup) markersGroup.visible = true;
     if (forwardArrowGroup) forwardArrowGroup.visible = true;
     if (gridGroup) gridGroup.visible = true;
     if (controls) controls.enabled = true;

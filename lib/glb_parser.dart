@@ -1468,15 +1468,33 @@ class GlbParser {
       return null;
     }
 
-    // Sample the base-colour atlas at the triangle's centroid UV so decals,
-    // hoods and body paint all resolve to their authored texel colors.
+    // Sample the base-colour atlas across the triangle (centroid + 3 corners)
+    // and average the texels so decals, hoods and body paint resolve smoothly
+    // without harsh single-pixel aliasing.
     Color? sampledColorFor(int a, int b, int c) {
       if (decodedTexture == null || uvs == null) return null;
       if (a < 0 || b < 0 || c < 0) return null;
       if (a >= uvs.length || b >= uvs.length || c >= uvs.length) return null;
-      final u = (uvs[a].dx + uvs[b].dx + uvs[c].dx) / 3.0;
-      final v = (uvs[a].dy + uvs[b].dy + uvs[c].dy) / 3.0;
-      return decodedTexture.sampleUv(u, v, baseColorFactor: baseColorFactor);
+      final c0 = decodedTexture.sampleUv(
+        (uvs[a].dx + uvs[b].dx + uvs[c].dx) / 3.0,
+        (uvs[a].dy + uvs[b].dy + uvs[c].dy) / 3.0,
+        baseColorFactor: baseColorFactor,
+      );
+      final cA = decodedTexture.sampleUv(uvs[a].dx, uvs[a].dy, baseColorFactor: baseColorFactor);
+      final cB = decodedTexture.sampleUv(uvs[b].dx, uvs[b].dy, baseColorFactor: baseColorFactor);
+      final cC = decodedTexture.sampleUv(uvs[c].dx, uvs[c].dy, baseColorFactor: baseColorFactor);
+      final samples = [c0, cA, cB, cC].whereType<Color>().toList();
+      if (samples.isEmpty) return null;
+      if (samples.length == 1) return samples.first;
+      var r = 0, g = 0, bCol = 0, aCol = 0;
+      for (final s in samples) {
+        r += (s.r * 255.0).round().clamp(0, 255);
+        g += (s.g * 255.0).round().clamp(0, 255);
+        bCol += (s.b * 255.0).round().clamp(0, 255);
+        aCol += (s.a * 255.0).round().clamp(0, 255);
+      }
+      final n = samples.length;
+      return Color.fromARGB(aCol ~/ n, r ~/ n, g ~/ n, bCol ~/ n);
     }
 
     void addTriangle(int a, int b, int c) {

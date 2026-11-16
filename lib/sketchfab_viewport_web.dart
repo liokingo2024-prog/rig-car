@@ -240,10 +240,6 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.attachOnly &&
-        (widget.bytes == null || widget.bytes!.isEmpty)) {
-      return widget.fallbackWidget ?? const SizedBox.shrink();
-    }
     return HtmlElementView(viewType: _viewType);
   }
 }

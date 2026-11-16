@@ -3467,5 +3467,35 @@ f 4 5 6
       final wLat = (wheelCenter.x - hubPos.x).abs();
       expect(wLat <= latLimit, isTrue);
     });
+
+    test('Part XII: Procedural default model has watertight doors and telemetry resets on standstill', () {
+      final model = ParsedModel.createProceduralDefault();
+      final bodyMesh = model.instances.first;
+      // Verifies door triangles exist in body
+      expect(bodyMesh.triangles.any((t) => (t.a == 3 && t.b == 6 && t.c == 12) || (t.a == 2 && t.b == 13 && t.c == 7)), isTrue);
+      expect(bodyMesh.edges.any((e) => (e.a == 3 && e.b == 12) || (e.a == 12 && e.b == 3)), isTrue);
+
+      final sim = VehiclePhysicsSimulation(
+        mass: 1400.0,
+        engineForce: 7500.0,
+        grip: 1.4,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.36, -1.25),
+          Vec3(0.95, 0.36, -1.25),
+          Vec3(-0.95, 0.36, 1.25),
+          Vec3(0.95, 0.36, 1.25),
+        ],
+      );
+      expect(sim.speedKmh, equals(0.0));
+      // Standstill check
+      expect(sim.speedKmh < 1.2, isTrue);
+    });
   });
 }

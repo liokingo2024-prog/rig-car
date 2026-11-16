@@ -444,9 +444,21 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
                           : (b.center.z - expectedPos.z))
                       .abs();
                   final dUp = (b.center.y - expectedPos.y).abs();
-                  return dLong <= r * 1.08 &&
-                      dUp <= r * 1.08 &&
-                      dLat <= latLimit;
+                  if (dLong > r * 1.08 || dUp > r * 1.08 || dLat > latLimit) {
+                    return false;
+                  }
+                  if (model.instances.length > 1) {
+                    final minLong = (fAxisIsZ ? (b.lo.z - expectedPos.z) : (b.lo.x - expectedPos.x)).abs();
+                    final maxLong = (fAxisIsZ ? (b.hi.z - expectedPos.z) : (b.hi.x - expectedPos.x)).abs();
+                    if (max(minLong, maxLong) > r * 1.25) return false;
+                    final minUp = (b.lo.y - expectedPos.y).abs();
+                    final maxUp = (b.hi.y - expectedPos.y).abs();
+                    if (max(minUp, maxUp) > r * 1.25) return false;
+                    final minLat = (fAxisIsZ ? (b.lo.x - expectedPos.x) : (b.lo.z - expectedPos.z)).abs();
+                    final maxLat = (fAxisIsZ ? (b.hi.x - expectedPos.x) : (b.hi.z - expectedPos.z)).abs();
+                    if (max(minLat, maxLat) > latLimit * 1.35) return false;
+                  }
+                  return true;
                 }
 
                 bool matchesJsBox(MeshInstance inst, dynamic boxObj) {
@@ -899,11 +911,36 @@ handle_brake=${action(key(32))}
 ''';
   }
 
-  void _enterTestDrive() {
+  Future<void> _enterTestDrive() async {
+    _ensureModel();
+    if (_parsedModel != null && (!_scanCompleted || _assignedWheels.length < 4)) {
+      final detection = AutoDetector.detect(
+        _parsedModel!,
+        excludeRoofAntenna: _excludeRoofAntenna,
+      );
+      SolidScene.invalidate(_parsedModel!);
+      if (detection.autoAxisResult != null &&
+          detection.autoAxisResult!.yawRotatedRadians.abs() > 0.001) {
+        rotateSketchfabModel(detection.autoAxisResult!.yawRotatedRadians);
+      }
+      purgeSketchfabUnderWheelObjects();
+      snapSketchfabModelToGround();
+      final jsResult = detectSketchfabWheels();
+      _syncJsAndAutoWheels(jsResult, detection);
+      _updateDetectedGroupsFromWheels(detection);
+      _detection = detection;
+      _selectedBodyNodeIndex = detection.body?.nodeIndex;
+      _drive = detection.suggestedDrive;
+      _frontTraction = _drive == 'AWD' || _drive == 'FWD';
+      _rearTraction = _drive == 'AWD' || _drive == 'RWD';
+      _scanCompleted = true;
+    }
     _prepareTestDriveRig();
-    setState(() {
-      _isTestDriveMode = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isTestDriveMode = true;
+      });
+    }
   }
 
   /// Builds a Test-Drive-only copy of the model ONLY when the car is a single

@@ -1213,9 +1213,11 @@ class ParsedModel {
       const Triangle(0, 6, 3),
       const Triangle(6, 8, 10),
       const Triangle(6, 10, 12),
+      const Triangle(3, 6, 12),
       const Triangle(3, 12, 14),
       const Triangle(1, 7, 5),
       const Triangle(1, 2, 7),
+      const Triangle(2, 13, 7),
       const Triangle(7, 11, 9),
       const Triangle(7, 13, 11),
       const Triangle(2, 15, 13),
@@ -1231,6 +1233,7 @@ class ParsedModel {
       Edge(10, 12), Edge(12, 14), Edge(14, 3),
       Edge(1, 5), Edge(5, 7), Edge(7, 9), Edge(9, 11),
       Edge(11, 13), Edge(13, 15), Edge(15, 2),
+      Edge(3, 12), Edge(6, 12), Edge(2, 13), Edge(7, 13),
     ];
 
     final chassisMesh = MeshData(

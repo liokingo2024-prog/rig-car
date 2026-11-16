@@ -492,9 +492,36 @@ class AutoDetector {
       final maxLat = fAxisIsZ ? coreWheelBox.hi.x : coreWheelBox.hi.z;
       final hubCenter = coreWheelBox.center;
 
+      bool wholeNodeFitsWheel(int nodeIdx) {
+        if (model.instances.length <= 1) return true;
+        final rBound = tireRadius * 1.15;
+        final wBound = max(tireWidth * 0.95, rBound * 0.85);
+        final hubLat = fAxisIsZ ? hubCenter.x : hubCenter.z;
+        for (final inst in model.instances) {
+          if (inst.nodeIndex == nodeIdx) {
+            final b = inst.worldBBox;
+            final instLongLo = fAxisIsZ ? b.lo.z : b.lo.x;
+            final instLongHi = fAxisIsZ ? b.hi.z : b.hi.x;
+            final instLatLo = fAxisIsZ ? b.lo.x : b.lo.z;
+            final instLatHi = fAxisIsZ ? b.hi.x : b.hi.z;
+            if (instLongLo < hubFLong - rBound ||
+                instLongHi > hubFLong + rBound ||
+                b.lo.y < hubY - rBound ||
+                b.hi.y > hubY + rBound ||
+                instLatLo < hubLat - wBound ||
+                instLatHi > hubLat + wBound) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+
       final cornerParts = <_WheelPart>[...cluster.rings];
       final cornerPartIds = cluster.rings.map((r) => r.partId).toSet();
-      final spinPartNodes = <int>{...cluster.rings.map((r) => r.nodeIndex)};
+      final spinPartNodes = <int>{
+        ...cluster.rings.map((r) => r.nodeIndex).where(wholeNodeFitsWheel),
+      };
       final caliperHubPartNodes = <int>{};
 
       // Step 3B: Two-Zone Capture across all loose parts
@@ -553,14 +580,16 @@ class AutoDetector {
           cornerParts.add(part);
           cornerPartIds.add(part.partId);
 
-          // Step 4: Sub-classify spinMeshes vs caliperHubMeshes
-          final isCoaxial = (partCenterLong - hubFLong).abs() < 0.10 * tireRadius &&
-              (part.center.y - hubY).abs() < 0.10 * tireRadius;
+          if (wholeNodeFitsWheel(part.nodeIndex)) {
+            // Step 4: Sub-classify spinMeshes vs caliperHubMeshes
+            final isCoaxial = (partCenterLong - hubFLong).abs() < 0.10 * tireRadius &&
+                (part.center.y - hubY).abs() < 0.10 * tireRadius;
 
-          if (!isCoaxial || (isZone2 && part.circularity < 0.78)) {
-            caliperHubPartNodes.add(part.nodeIndex); // Brake Caliper / Hub Frame
-          } else {
-            spinPartNodes.add(part.nodeIndex); // Tire, Rim, Spokes, Brake Rotor
+            if (!isCoaxial || (isZone2 && part.circularity < 0.78)) {
+              caliperHubPartNodes.add(part.nodeIndex); // Brake Caliper / Hub Frame
+            } else {
+              spinPartNodes.add(part.nodeIndex); // Tire, Rim, Spokes, Brake Rotor
+            }
           }
         }
       }

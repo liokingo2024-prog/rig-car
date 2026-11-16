@@ -1,6 +1,6 @@
 import 'dart:math';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -236,7 +236,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   CameraMode _cameraMode = CameraMode.chase;
   TestDriveLighting _lighting = TestDriveLighting.day;
   TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
-  TestDriveRenderMode _renderMode = TestDriveRenderMode.solid;
+  TestDriveRenderMode _renderMode =
+      kIsWeb ? TestDriveRenderMode.webgl : TestDriveRenderMode.solid;
   double _orbitAzimuth = 0.65;
   double _orbitElevation = 0.32;
   double _orbitDistance = 7.2;
@@ -411,6 +412,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   void _updatePerformanceTelemetry(double dt, double throttle) {
     if (_sim.speedKmh > _topSpeedKmh) _topSpeedKmh = _sim.speedKmh;
 
+    // Reset 0-100 run when parked or stopped at idle
+    if (_sim.speedKmh < 1.2 && throttle <= 0.05) {
+      _accelRunActive = false;
+      _accelRunTime = 0.0;
+      _accelRunDone = false;
+    }
+
     // 0-100 km/h: arm from a standstill on throttle, capture the best run.
     if (!_accelRunActive && !_accelRunDone && throttle > 0.1 && _sim.speedKmh < 1.0) {
       _accelRunActive = true;
@@ -418,7 +426,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     }
     if (_accelRunActive) {
       _accelRunTime += dt;
-      if (_sim.speedKmh >= 100.0) {
+      if (_accelRunTime > 45.0) {
+        _accelRunActive = false;
+        _accelRunTime = 0.0;
+      } else if (_sim.speedKmh >= 100.0) {
         _accelRunActive = false;
         _accelRunDone = true;
         if (_best0to100 <= 0 || _accelRunTime < _best0to100) {
