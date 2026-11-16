@@ -444,6 +444,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   void _pushWebglState() {
     final (eye, target) = _testDriveEyeTarget();
     final r = _sim.wheelSuspensionCompressions;
+    final flR = widget.assignedWheels['FL']?.radius ?? 0.34;
+    final effR = flR > 0.05 ? flR : 0.34;
     updateSketchfabTestDriveState(
       x: _sim.position.x,
       y: _sim.position.y,
@@ -453,7 +455,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       roll: _sim.roll,
       steerAngle: _sim.frontSteering ? _sim.steerAngle : 0.0,
       rearSteerAngle: _sim.rearSteering ? -_sim.steerAngle * 0.5 : 0.0,
-      wheelRollRad: -_sim.wheelRoll / 0.34,
+      wheelRollRad: -_sim.wheelRoll / effR,
       compressions: r,
       camX: eye.x,
       camY: eye.y,
@@ -2229,25 +2231,35 @@ class _TestDriveScenePainter extends CustomPainter {
 
       for (final entry in result.entries.toList()) {
         final w = entry.value;
-        final hasNonWheelPart = w.partNodeIndices.any(nonWheel.contains);
         final isBodyNode = nonWheel.contains(w.nodeIndex);
 
-        var safeParts = w.partNodeIndices.where((n) => !nonWheel.contains(n)).toList();
-        var safeSpin = w.spinNodeIndices.where((n) => !nonWheel.contains(n)).toList();
+        var safeParts =
+            w.partNodeIndices.where((n) => !nonWheel.contains(n)).toList();
+        var safeSpin =
+            w.spinNodeIndices.where((n) => !nonWheel.contains(n)).toList();
         final safeCaliper = w.caliperHubNodeIndices
             .where((n) => !nonWheel.contains(n))
             .toList();
 
-        if (safeParts.isEmpty || hasNonWheelPart || isBodyNode) {
+        // Only run spatial fallback if BOTH safeSpin and safeParts are completely
+        // empty (and always check all 3 axes X, Y, Z + wheel size!).
+        if (safeSpin.isEmpty && safeParts.isEmpty && isBodyNode) {
           final hub = w.worldPosition;
           final r = w.radius > 0.05 ? w.radius : 0.34;
+          final wWidth = w.width > 0.05 ? w.width : 0.25;
+          final latLimit = max(wWidth * 0.78, r * 0.62);
           final matchedParts = <int>{};
           for (final inst in model!.instances) {
             if (nonWheel.contains(inst.nodeIndex)) continue;
             final b = inst.worldBBox;
-            final dLong = (fAxisIsZ ? (b.center.z - hub.z) : (b.center.x - hub.x)).abs();
+            final s = b.size;
+            if (max(s.x.abs(), max(s.y.abs(), s.z.abs())) > r * 2.25) continue;
+            final dLong =
+                (fAxisIsZ ? (b.center.z - hub.z) : (b.center.x - hub.x)).abs();
+            final dLat =
+                (fAxisIsZ ? (b.center.x - hub.x) : (b.center.z - hub.z)).abs();
             final dUp = (b.center.y - hub.y).abs();
-            if (dLong <= r * 1.10 && dUp <= r * 1.10) {
+            if (dLong <= r * 1.06 && dUp <= r * 1.06 && dLat <= latLimit) {
               matchedParts.add(inst.nodeIndex);
             }
           }
@@ -4316,9 +4328,11 @@ class _TestDriveScenePainter extends CustomPainter {
         }
       }
 
-      // Per-triangle cylinder fallback only for corners without a dedicated
-      // wheel node (single-mesh STL/OBJ), and never on body/glass/interior.
+      // Per-triangle cylinder fallback ONLY when the entire model is a single
+      // un-split mesh (`nodeToTransform.isEmpty`). When dedicated wheel nodes
+      // are assigned from Scan, ONLY those exact nodes spin/steer!
       if (k == 8 &&
+          nodeToTransform.isEmpty &&
           kind != solidKindBody &&
           kind != solidKindGlass &&
           kind != solidKindInterior &&

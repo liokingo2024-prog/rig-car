@@ -170,4 +170,106 @@ void main() {
     expect(result.wheelNodeIndices, isEmpty);
     expect(identical(result.model, model), isTrue);
   });
+
+  test('multi-node car with dedicated wheel nodes leaves body mesh untouched', () {
+    const hubs = <String, Vec3>{
+      'FL': Vec3(-0.9, 0.35, -1.35),
+      'FR': Vec3(0.9, 0.35, -1.35),
+      'RL': Vec3(-0.9, 0.35, 1.35),
+      'RR': Vec3(0.9, 0.35, 1.35),
+    };
+
+    // Body mesh with some triangles near wheel hubs (e.g. inner fender liner)
+    final bodyVerts = <Vec3>[
+      const Vec3(0, 1.4, 0),
+      const Vec3(0.2, 1.4, 0),
+      const Vec3(0, 1.4, 0.2),
+      // Fender liner near FL hub
+      const Vec3(-0.9, 0.40, -1.35),
+      const Vec3(-0.88, 0.42, -1.35),
+      const Vec3(-0.9, 0.45, -1.33),
+    ];
+    final bodyTris = [
+      Triangle(0, 1, 2),
+      Triangle(3, 4, 5),
+    ];
+
+    // Dedicated wheel meshes in separate nodes (nodes 1..4)
+    final nodes = <SceneNode>[
+      SceneNode(
+        index: 0,
+        name: 'Car_Body',
+        localTransform: Mat4.identity(),
+        meshIndex: 0,
+        childIndices: const [1, 2, 3, 4],
+        parentIndex: null,
+      ),
+    ];
+    final instances = <MeshInstance>[
+      MeshInstance(
+        nodeIndex: 0,
+        meshIndex: 0,
+        worldVertices: bodyVerts,
+        edges: const [],
+        triangles: bodyTris,
+        worldBBox: BBox.fromPoints(bodyVerts),
+      ),
+    ];
+
+    var nIdx = 1;
+    final wheels = <String, DetectedWheel>{};
+    hubs.forEach((corner, hub) {
+      final wVerts = [
+        hub,
+        Vec3(hub.x + 0.1, hub.y + 0.1, hub.z),
+        Vec3(hub.x, hub.y + 0.1, hub.z + 0.1),
+      ];
+      nodes.add(
+        SceneNode(
+          index: nIdx,
+          name: 'Dedicated_Wheel_$corner',
+          localTransform: Mat4.identity(),
+          meshIndex: nIdx,
+          childIndices: const [],
+          parentIndex: 0,
+        ),
+      );
+      instances.add(
+        MeshInstance(
+          nodeIndex: nIdx,
+          meshIndex: nIdx,
+          worldVertices: wVerts,
+          edges: const [],
+          triangles: [Triangle(0, 1, 2)],
+          worldBBox: BBox.fromPoints(wVerts),
+        ),
+      );
+      wheels[corner] = DetectedWheel(
+        nodeIndex: nIdx,
+        nodeName: 'Dedicated_Wheel_$corner',
+        worldPosition: hub,
+        confidence: 1.0,
+        axle: corner.startsWith('F') ? 'front' : 'rear',
+        side: corner.endsWith('L') ? 'left' : 'right',
+        spinNodeIndices: [nIdx],
+        partNodeIndices: [nIdx],
+      );
+      nIdx++;
+    });
+
+    final model = ParsedModel(
+      fileName: 'multinode.glb',
+      nodes: nodes,
+      meshes: const [],
+      instances: instances,
+      rootNodeIndices: const [0],
+      worldBBox: BBox.fromPoints(bodyVerts),
+    );
+
+    // splitWheelIslands should detect that all 4 wheels live in dedicated nodes (1..4)
+    // and NOT slice the fender liner (Triangle 3,4,5) out of body node 0!
+    final result = model.splitWheelIslands(wheels);
+    expect(result.wheelNodeIndices, isEmpty);
+    expect(identical(result.model, model), isTrue);
+  });
 }

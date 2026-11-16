@@ -400,72 +400,144 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
               final jsPartNames = (cornerData['partNames'] as List<dynamic>?)
                   ?.map((e) => e.toString().toLowerCase())
+                  .where((s) => s.isNotEmpty)
                   .toSet() ?? const <String>{};
               final jsSpinNames = (cornerData['spinPartNames'] as List<dynamic>?)
                   ?.map((e) => e.toString().toLowerCase())
+                  .where((s) => s.isNotEmpty)
                   .toSet() ?? const <String>{};
               final jsCaliperNames = (cornerData['caliperHubPartNames'] as List<dynamic>?)
                   ?.map((e) => e.toString().toLowerCase())
+                  .where((s) => s.isNotEmpty)
                   .toSet() ?? const <String>{};
+
+              final rawSpinBoxes = (cornerData['spinMeshBoxes'] as List<dynamic>?) ?? const [];
+              final rawCalBoxes = (cornerData['caliperMeshBoxes'] as List<dynamic>?) ?? const [];
 
               final resolvedPartNodes = <int>{};
               final resolvedSpinNodes = <int>{};
               final resolvedCaliperNodes = <int>{};
 
-              if (existing != null) {
-                resolvedPartNodes.addAll(existing.partNodeIndices);
-                resolvedSpinNodes.addAll(existing.spinNodeIndices);
-                resolvedCaliperNodes.addAll(existing.caliperHubNodeIndices);
-              }
-
-              final expectedPos = existing?.worldPosition ?? (hubPos != Vec3.zero ? hubPos : null);
+              final expectedPos = (hubPos != Vec3.zero)
+                  ? hubPos
+                  : existing?.worldPosition;
 
               if (model != null) {
-                for (final node in model.nodes) {
-                  if (nonWheelNodes.contains(node.index)) continue;
-                  final nName = node.name.toLowerCase();
-                  final isSpinMatch = jsSpinNames.contains(nName);
-                  final isCaliperMatch = jsCaliperNames.contains(nName);
-                  final isPartMatch = jsPartNames.contains(nName);
+                final carBox = model.worldBBox;
+                final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
+                final latLimit = max(w * 0.78, r * 0.62);
 
-                  if (isSpinMatch || isCaliperMatch || isPartMatch) {
-                    bool inQuadrant = true;
-                    if (expectedPos != null) {
-                      final nodeInsts = model.instances.where((i) => i.nodeIndex == node.index);
-                      if (nodeInsts.isNotEmpty) {
-                        final nodeCenter = nodeInsts.first.worldBBox.center;
-                        final dist = (nodeCenter - expectedPos).length;
-                        // Wheel-local radius: a quadrant test measured in rad, not
-                        // body length, so matching parts from adjacent corners
-                        // never get pulled into this wheel.
-                        if (dist > max(r * 1.45, 0.45)) {
-                          inQuadrant = false;
-                        }
-                      }
+                bool isStrictlyInsideWheelEnvelope(MeshInstance inst) {
+                  if (nonWheelNodes.contains(inst.nodeIndex)) return false;
+                  final b = inst.worldBBox;
+                  final s = b.size;
+                  final maxInstDim = max(s.x.abs(), max(s.y.abs(), s.z.abs()));
+                  // A genuine wheel sub-mesh can never be larger than 2.25 * radius
+                  if (maxInstDim > r * 2.25) return false;
+                  if (expectedPos == null) return true;
+                  final dLong = (fAxisIsZ
+                          ? (b.center.z - expectedPos.z)
+                          : (b.center.x - expectedPos.x))
+                      .abs();
+                  final dLat = (fAxisIsZ
+                          ? (b.center.x - expectedPos.x)
+                          : (b.center.z - expectedPos.z))
+                      .abs();
+                  final dUp = (b.center.y - expectedPos.y).abs();
+                  return dLong <= r * 1.08 &&
+                      dUp <= r * 1.08 &&
+                      dLat <= latLimit;
+                }
+
+                bool matchesJsBox(MeshInstance inst, dynamic boxObj) {
+                  if (boxObj == null) return false;
+                  final bx = (boxObj['cx'] as num?)?.toDouble();
+                  final by = (boxObj['cy'] as num?)?.toDouble();
+                  final bz = (boxObj['cz'] as num?)?.toDouble();
+                  final bsx = (boxObj['sx'] as num?)?.toDouble();
+                  final bsy = (boxObj['sy'] as num?)?.toDouble();
+                  final bsz = (boxObj['sz'] as num?)?.toDouble();
+                  if (bx == null || by == null || bz == null) return false;
+                  final ic = inst.worldBBox.center;
+                  final isz = inst.worldBBox.size;
+                  final centerDist =
+                      (ic - Vec3(bx, by, bz)).length;
+                  if (centerDist > max(r * 0.35, 0.12)) return false;
+                  if (bsx != null && bsy != null && bsz != null) {
+                    final sizeDiff = max(
+                      (isz.x.abs() - bsx.abs()).abs(),
+                      max(
+                        (isz.y.abs() - bsy.abs()).abs(),
+                        (isz.z.abs() - bsz.abs()).abs(),
+                      ),
+                    );
+                    if (sizeDiff > max(r * 0.45, 0.15)) return false;
+                  }
+                  return true;
+                }
+
+                bool matchesJsName(String nodeName, Set<String> targetNames) {
+                  if (nodeName.isEmpty || targetNames.isEmpty) return false;
+                  if (targetNames.contains(nodeName)) return true;
+                  // Handle multi-primitive split names (`${node.name}_${mesh.name}`)
+                  for (final t in targetNames) {
+                    if (t.isEmpty) continue;
+                    if (nodeName.endsWith('_$t') || nodeName.startsWith('${t}_')) {
+                      return true;
                     }
-                    if (inQuadrant) {
-                      if (isSpinMatch) {
-                        resolvedSpinNodes.add(node.index);
-                        resolvedPartNodes.add(node.index);
-                      } else if (isCaliperMatch) {
-                        resolvedCaliperNodes.add(node.index);
-                        resolvedPartNodes.add(node.index);
-                      } else {
-                        resolvedPartNodes.add(node.index);
-                      }
+                  }
+                  return false;
+                }
+
+                // 1. Authoritative 1:1 match against Three.js highlighted mesh boxes & names
+                for (final inst in model.instances) {
+                  if (!isStrictlyInsideWheelEnvelope(inst)) continue;
+                  final nName = (inst.nodeIndex >= 0 && inst.nodeIndex < model.nodes.length)
+                      ? model.nodes[inst.nodeIndex].name.toLowerCase()
+                      : '';
+
+                  final boxSpinMatch =
+                      rawSpinBoxes.any((b) => matchesJsBox(inst, b));
+                  final boxCalMatch =
+                      rawCalBoxes.any((b) => matchesJsBox(inst, b));
+                  final nameSpinMatch = matchesJsName(nName, jsSpinNames);
+                  final nameCalMatch = matchesJsName(nName, jsCaliperNames);
+                  final namePartMatch = matchesJsName(nName, jsPartNames);
+
+                  if (boxSpinMatch || nameSpinMatch) {
+                    resolvedSpinNodes.add(inst.nodeIndex);
+                    resolvedPartNodes.add(inst.nodeIndex);
+                  } else if (boxCalMatch || nameCalMatch) {
+                    resolvedCaliperNodes.add(inst.nodeIndex);
+                    resolvedPartNodes.add(inst.nodeIndex);
+                  } else if (namePartMatch) {
+                    resolvedPartNodes.add(inst.nodeIndex);
+                    resolvedSpinNodes.add(inst.nodeIndex);
+                  }
+                }
+
+                // 2. If name/box matching found nothing (e.g. coordinate scaling diff),
+                // filter existing AutoDetector nodes strictly by the 3D wheel envelope
+                if (resolvedPartNodes.isEmpty && existing != null) {
+                  for (final inst in model.instances) {
+                    if (!isStrictlyInsideWheelEnvelope(inst)) continue;
+                    if (existing.spinNodeIndices.contains(inst.nodeIndex)) {
+                      resolvedSpinNodes.add(inst.nodeIndex);
+                      resolvedPartNodes.add(inst.nodeIndex);
+                    } else if (existing.caliperHubNodeIndices.contains(inst.nodeIndex)) {
+                      resolvedCaliperNodes.add(inst.nodeIndex);
+                      resolvedPartNodes.add(inst.nodeIndex);
+                    } else if (existing.partNodeIndices.contains(inst.nodeIndex)) {
+                      resolvedPartNodes.add(inst.nodeIndex);
+                      resolvedSpinNodes.add(inst.nodeIndex);
                     }
                   }
                 }
 
+                // 3. Last-resort 3D (X + Y + Z + size) envelope match around hubPos
                 if (resolvedPartNodes.isEmpty && hubPos != Vec3.zero) {
-                  final carBox = model.worldBBox;
-                  final fAxisIsZ = carBox.size.z.abs() >= carBox.size.x.abs();
                   for (final inst in model.instances) {
-                    if (nonWheelNodes.contains(inst.nodeIndex)) continue;
-                    final b = inst.worldBBox;
-                    final dLong = (fAxisIsZ ? (b.center.z - hubPos.z) : (b.center.x - hubPos.x)).abs();
-                    final dUp = (b.center.y - hubPos.y).abs();
-                    if (dLong <= r * 1.08 && dUp <= r * 1.08) {
+                    if (isStrictlyInsideWheelEnvelope(inst)) {
                       resolvedPartNodes.add(inst.nodeIndex);
                       resolvedSpinNodes.add(inst.nodeIndex);
                     }
@@ -834,21 +906,52 @@ handle_brake=${action(key(32))}
     });
   }
 
-  /// Builds a Test-Drive-only copy of the model whose wheel triangles live in
-  /// their own scene nodes, so merged-mesh cars spin their wheels individually.
-  /// The workbench model is left untouched.
+  /// Builds a Test-Drive-only copy of the model ONLY when the car is a single
+  /// merged mesh whose wheels have no dedicated scene nodes. When Scan & Organize
+  /// has already assigned dedicated wheel nodes, keep `_assignedWheels` 100%
+  /// untouched so no body/fender triangles are ever merged into the wheels!
   void _prepareTestDriveRig() {
     _testDriveModel = _parsedModel;
     _testDriveWheels = Map.of(_assignedWheels);
+
+    final model = _parsedModel;
+    if (model == null || model.instances.isEmpty) return;
 
     final wheels = <String, DetectedWheel>{};
     for (final corner in const ['FL', 'FR', 'RL', 'RR']) {
       final w = _assignedWheels[corner];
       if (w != null) wheels[corner] = w;
     }
-    if (_parsedModel == null || wheels.length < 4) return;
+    if (wheels.length < 4) return;
 
-    final split = _parsedModel!.splitWheelIslands(wheels);
+    // Identify large body/shared nodes (span > 42% of car length)
+    final carBox = model.worldBBox;
+    final carLen = max(carBox.size.z.abs(), carBox.size.x.abs());
+    final sharedOrBodyNodes = <int>{
+      if (_detection?.body != null) _detection!.body!.nodeIndex,
+    };
+    for (final inst in model.instances) {
+      final s = inst.worldBBox.size;
+      if (max(s.x.abs(), s.z.abs()) > carLen * 0.42) {
+        sharedOrBodyNodes.add(inst.nodeIndex);
+      }
+    }
+
+    // Check if every corner ALREADY has at least one dedicated non-body wheel node
+    final allCornersHaveDedicatedNodes = wheels.values.every((w) {
+      final nodes = <int>{
+        ...w.spinNodeIndices,
+        ...w.partNodeIndices,
+        w.nodeIndex,
+      };
+      return nodes.any((n) => n >= 0 && !sharedOrBodyNodes.contains(n));
+    });
+
+    // If all 4 wheels already have dedicated wheel nodes from Scan, do NOT call
+    // splitWheelIslands (which would slice fender-arch triangles out of the body)!
+    if (allCornersHaveDedicatedNodes) return;
+
+    final split = model.splitWheelIslands(wheels);
     if (split.wheelNodeIndices.isEmpty) return;
     _testDriveModel = split.model;
 

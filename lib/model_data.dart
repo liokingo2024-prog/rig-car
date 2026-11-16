@@ -406,6 +406,23 @@ class ParsedModel {
       return (model: this, wheelNodeIndices: const {});
     }
 
+    // Only split wheel triangles out of `shared` if at least one wheel is
+    // actually assigned to `shared.nodeIndex` (a merged body+wheels mesh).
+    // When all 4 wheels already have their own dedicated non-body nodes,
+    // leave the body mesh untouched so inner fender-arch triangles are never
+    // carved out of the body and mistaken for wheels.
+    final sharedNodeIdx = shared.nodeIndex;
+    final wheelsLiveInShared = wheels.values.any(
+      (w) =>
+          w.nodeIndex == sharedNodeIdx ||
+          w.spinNodeIndices.contains(sharedNodeIdx) ||
+          (w.spinNodeIndices.isEmpty &&
+              w.partNodeIndices.contains(sharedNodeIdx)),
+    );
+    if (!wheelsLiveInShared) {
+      return (model: this, wheelNodeIndices: const {});
+    }
+
     const corners = ['FL', 'FR', 'RL', 'RR'];
     final buckets = <String, List<Triangle>>{for (final c in corners) c: []};
     final remaining = <Triangle>[];

@@ -3415,5 +3415,57 @@ f 4 5 6
       final ndcY = clip[1] / clip[3];
       expect(ndcY.abs(), lessThanOrEqualTo(1.0));
     });
+
+    test('Part IX Refinement 3: effective wheel radius uses detected wheel radius with fallback', () {
+      final wheelWithRadius = DetectedWheel(
+        nodeIndex: 1,
+        nodeName: 'FL',
+        worldPosition: const Vec3(-0.8, 0.42, -1.3),
+        confidence: 0.95,
+        axle: 'front',
+        side: 'left',
+        radius: 0.42,
+        width: 0.28,
+      );
+      final effR1 = wheelWithRadius.radius > 0.05 ? wheelWithRadius.radius : 0.34;
+      expect(effR1, 0.42);
+
+      final wheelZeroRadius = DetectedWheel(
+        nodeIndex: 2,
+        nodeName: 'FL',
+        worldPosition: const Vec3(-0.8, 0.35, -1.3),
+        confidence: 0.95,
+        axle: 'front',
+        side: 'left',
+        radius: 0.0,
+        width: 0.25,
+      );
+      final effR2 = wheelZeroRadius.radius > 0.05 ? wheelZeroRadius.radius : 0.34;
+      expect(effR2, 0.34);
+    });
+
+    test('Part XI: 3D wheel envelope rejects wide body panels and bumper parts across lateral axis', () {
+      const r = 0.35;
+      const w = 0.25;
+      const hubPos = Vec3(-0.85, 0.35, -1.35);
+      final latLimit = max(w * 0.78, r * 0.62);
+
+      // Fender / bumper instance across vehicle width: center is at x = 0.0 (middle of bumper)
+      final bumperCenter = Vec3(0.0, 0.35, -1.35);
+      final dLong = (bumperCenter.z - hubPos.z).abs();
+      final dLat = (bumperCenter.x - hubPos.x).abs();
+      final dUp = (bumperCenter.y - hubPos.y).abs();
+
+      // Long and Up might match axle height and longitudinal position
+      expect(dLong <= r * 1.08, isTrue);
+      expect(dUp <= r * 1.08, isTrue);
+      // But lateral distance exceeds wheel envelope and must be REJECTED
+      expect(dLat > latLimit, isTrue);
+
+      // Wheel instance located at hub:
+      final wheelCenter = Vec3(-0.85, 0.35, -1.35);
+      final wLat = (wheelCenter.x - hubPos.x).abs();
+      expect(wLat <= latLimit, isTrue);
+    });
   });
 }

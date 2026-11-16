@@ -2042,10 +2042,30 @@
     // Auto-delete any under-wheel shadow planes/floors and snap tire contact to Y = 0.0m
     purgeUnderWheelMeshesAndSnapToGround(wheelsResult);
 
-    // Re-synchronize wheel hub coordinates after ground snap
+    function buildHighlightedMeshBox(m) {
+      m.updateWorldMatrix(true, false);
+      const b = new THREE.Box3().setFromObject(m);
+      const c = b.getCenter(new THREE.Vector3());
+      const s = b.getSize(new THREE.Vector3());
+      return {
+        name: (m.name || '').toLowerCase(),
+        parentName: (m.parent && m.parent.name ? m.parent.name : '').toLowerCase(),
+        cx: c.x,
+        cy: c.y,
+        cz: c.z,
+        sx: s.x,
+        sy: s.y,
+        sz: s.z
+      };
+    }
+
+    // Re-synchronize wheel hub coordinates and record exact 3D boxes of every
+    // highlighted wheel mesh so Dart maps the exact same parts in Test Drive.
     Object.keys(wheelsResult).forEach(corner => {
       const w = wheelsResult[corner];
-      const targetMeshes = (w.spinMeshes && w.spinMeshes.length) ? w.spinMeshes : (w.meshes || []);
+      const spinList = (w.spinMeshes && w.spinMeshes.length) ? w.spinMeshes : (w.meshes || []);
+      const calList = w.caliperHubMeshes || [];
+      const targetMeshes = spinList.length > 0 ? spinList : (w.meshes || []);
       if (targetMeshes.length > 0) {
         const b = new THREE.Box3();
         targetMeshes.forEach(m => {
@@ -2064,6 +2084,8 @@
         w.y = c.y;
         w.z = c.z;
       }
+      w.spinMeshBoxes = spinList.map(buildHighlightedMeshBox);
+      w.caliperMeshBoxes = calList.map(buildHighlightedMeshBox);
     });
 
     // Staggered check (2+2 vs 4x)
@@ -2455,6 +2477,14 @@
     road.position.set(0, -0.015, -220);
     testDriveTrackGroup.add(road);
 
+    const grid = new THREE.GridHelper(700, 175, 0x2dd4bf, 0x26352f);
+    grid.position.set(0, -0.012, -220);
+    if (grid.material) {
+      grid.material.transparent = true;
+      grid.material.opacity = 0.28;
+    }
+    testDriveTrackGroup.add(grid);
+
     const lineMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
     [-14, 14].forEach(function (x) {
       const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 700), lineMat);
@@ -2546,11 +2576,15 @@
   function updateTestDriveState(state) {
     if (!testDriveActive || !testDriveGroup || !state) return;
 
+    // Keep testDriveGroup yaw-only so the 4 wheel steerGroups stay planted flat
+    // on the asphalt (Y = 0), and apply suspension pitch & roll to currentModel!
     testDriveGroup.position.set(state.x || 0, state.y || 0, state.z || 0);
-    testDriveGroup.rotation.order = 'YXZ';
-    testDriveGroup.rotation.y = state.yaw || 0;
-    testDriveGroup.rotation.x = state.pitch || 0;
-    testDriveGroup.rotation.z = state.roll || 0;
+    testDriveGroup.rotation.set(0, state.yaw || 0, 0);
+    if (currentModel) {
+      currentModel.rotation.order = 'YXZ';
+      currentModel.rotation.x = state.pitch || 0;
+      currentModel.rotation.z = state.roll || 0;
+    }
 
     const steer = state.steerAngle || 0;
     const rearSteer = state.rearSteerAngle || 0;
