@@ -3059,9 +3059,12 @@
   }
 
   function setTestDriveWorld(lighting, trackStyle) {
-    if (lighting) testDriveLighting = String(lighting).toLowerCase();
-    if (trackStyle) testDriveTrackStyle = String(trackStyle).toLowerCase();
-    if (testDriveActive) {
+    const l = lighting ? String(lighting).toLowerCase() : testDriveLighting;
+    const t = trackStyle ? String(trackStyle).toLowerCase() : testDriveTrackStyle;
+    const changed = (!testDriveTrackGroup || l !== testDriveLighting || t !== testDriveTrackStyle);
+    testDriveLighting = l;
+    testDriveTrackStyle = t;
+    if (testDriveActive && changed) {
       buildTestDriveTrack(testDriveLighting, testDriveTrackStyle);
     }
   }
