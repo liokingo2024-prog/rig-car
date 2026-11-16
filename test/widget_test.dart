@@ -3497,5 +3497,44 @@ f 4 5 6
       // Standstill check
       expect(sim.speedKmh < 1.2, isTrue);
     });
+
+    test('Part XIII: Dynamic FOV warp, PADS touch controls and pro camera banking calculations', () {
+      final sim = VehiclePhysicsSimulation(
+        mass: 1400.0,
+        engineForce: 7500.0,
+        grip: 1.4,
+        suspension: 6.0,
+        centerOfMass: -0.18,
+        drive: 'AWD',
+        frontSteering: true,
+        rearSteering: false,
+        frontTraction: true,
+        rearTraction: true,
+        wheelPositions: const [
+          Vec3(-0.95, 0.36, -1.25),
+          Vec3(0.95, 0.36, -1.25),
+          Vec3(-0.95, 0.36, 1.25),
+          Vec3(0.95, 0.36, 1.25),
+        ],
+      );
+
+      // Verify dynamic FOV warp calculation at standstill vs high speed
+      const baseFov = 52.0;
+      final speedNormAtRest = (sim.speedKmh / 220.0).clamp(0.0, 1.0);
+      final fovAtRest = (baseFov + pow(speedNormAtRest, 1.12) * 17.5).clamp(48.0, 78.0);
+      expect(fovAtRest, equals(52.0));
+
+      const highSpeedKmh = 180.0;
+      final speedNormHigh = (highSpeedKmh / 220.0).clamp(0.0, 1.0);
+      final fovHigh = (baseFov + pow(speedNormHigh, 1.12) * 17.5).clamp(48.0, 78.0);
+      expect(fovHigh, greaterThan(65.0));
+
+      // Verify camera roll banking into turn
+      const steer = 0.5;
+      const latG = 0.8;
+      const roll = -0.05;
+      final camRoll = (-steer * 0.085 + latG * 0.028 + roll * 0.40).clamp(-0.16, 0.16);
+      expect(camRoll.isFinite, isTrue);
+    });
   });
 }

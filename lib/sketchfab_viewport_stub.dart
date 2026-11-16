@@ -85,5 +85,7 @@ void updateSketchfabTestDriveState({
   required double targetX,
   required double targetY,
   required double targetZ,
+  double fovDeg = 55.0,
+  double camRoll = 0.0,
 }) {}
 void exitSketchfabTestDrive() {}

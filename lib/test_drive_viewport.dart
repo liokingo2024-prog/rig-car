@@ -246,17 +246,22 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   // to the car in polar coordinates so it can never lag behind or cut the
   // chord of a corner at speed.
   double _camYaw = 0.0;
-  double _camDist = 5.8;
-  double _camHeight = 2.10;
+  double _camDist = 5.15;
+  double _camHeight = 1.68;
   double _camLookAhead = 0.0;
+  double _camSteerSwing = 0.0;
   double _camSlip = 0.0;
   double _camRoll = 0.0;
+  double _fovDeg = 55.0;
+  double _gearShiftKick = 0.0;
+  int _prevGear = 1;
   double _chaseUserYaw = 0.0;
   double _chaseUserPitch = 0.0;
   double _timeSinceChaseDrag = 10.0;
+  bool _showTouchControls = false;
 
-  Vec3 _chaseCamPos = const Vec3(0, 1.88, 29.6);
-  Vec3 _chaseCamTarget = const Vec3(0, 0.78, 21.6);
+  Vec3 _chaseCamPos = const Vec3(0, 1.68, 29.6);
+  Vec3 _chaseCamTarget = const Vec3(0, 0.72, 21.6);
 
   // Time tracking
   Duration _lastTick = Duration.zero;
@@ -380,6 +385,21 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       handbrake: handbrake,
     );
 
+    // Upshift impulse kick
+    if (_sim.currentGear > _prevGear && _prevGear > 0) {
+      _gearShiftKick = 1.0;
+    }
+    _prevGear = _sim.currentGear;
+    _gearShiftKick = max(0.0, _gearShiftKick - dt * 4.0);
+
+    // Dynamic FOV warp: non-linear speed warp + G surge + upshift kick
+    final speedNorm = (_sim.speedKmh / 220.0).clamp(0.0, 1.0);
+    final speedFov = pow(speedNorm, 1.12) * 17.5;
+    final gSurge = (_sim.longitudinalG * 3.8).clamp(-4.0, 5.0);
+    final kickFov = _gearShiftKick * 2.4;
+    final targetFov = (52.0 + speedFov + gSurge + kickFov).clamp(48.0, 78.0);
+    _fovDeg += (targetFov - _fovDeg) * (1.0 - exp(-dt * 8.0));
+
     _updatePerformanceTelemetry(dt, throttle);
     updateSketchfabSkidAudio(_sim.isDrifting, widget.tireSkidAudioEnabled);
     updateSketchfabEngineAudio(
@@ -474,6 +494,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       targetX: target.x,
       targetY: target.y,
       targetZ: target.z,
+      fovDeg: _fovDeg,
+      camRoll: _camRoll,
     );
   }
 
@@ -578,23 +600,30 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     final pitchClamped = _chaseUserPitch.clamp(-0.25, 0.65);
     final smooth = 1.0 - exp(-dt * 9.0);
 
-    // Sit low and close at rest, easing back and up with speed. Acceleration
-    // pushes the lens out slightly; braking pulls it in.
+    // Sit low (1.68m) and close (5.15m) at rest, easing back with speed. Throttle squat
+    // pulls the lens back; braking dive pushes it in; upshift kick gives an impulse kick!
     final speedT = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
-    final targetDist = (5.6 +
-            speedT * 1.4 +
-            (_sim.longitudinalG * 0.30).clamp(-0.35, 0.45)) *
+    final squatSurge = (_sim.longitudinalG * 0.42).clamp(-0.45, 0.65);
+    final kickDist = _gearShiftKick * 0.35;
+    final targetDist = (5.15 +
+            speedT * 1.5 +
+            squatSurge +
+            kickDist) *
         cos(pitchClamped);
     final targetHeight =
-        (1.88 + speedT * 0.34 - (_sim.pitch * 1.1)) + 5.0 * sin(pitchClamped);
+        (1.68 + speedT * 0.38 - (_sim.pitch * 1.25)) + 5.0 * sin(pitchClamped);
 
     _camDist += (targetDist - _camDist) * smooth;
     _camHeight += (targetHeight - _camHeight) * smooth;
 
     // Pan the target into the corner apex.
-    final targetLookAhead = (-_sim.steerAngle * 1.35).clamp(-1.0, 1.0);
+    final targetLookAhead = (-_sim.steerAngle * 2.15).clamp(-1.8, 1.8);
     _camLookAhead +=
-        (targetLookAhead - _camLookAhead) * (1.0 - exp(-dt * 8.0));
+        (targetLookAhead - _camLookAhead) * (1.0 - exp(-dt * 9.0));
+
+    // Outer camera swing: camera swings slightly to the outside of the turn (+steerAngle * 0.55m)
+    final targetSteerSwing = (_sim.steerAngle * 0.55).clamp(-0.65, 0.65);
+    _camSteerSwing += (targetSteerSwing - _camSteerSwing) * (1.0 - exp(-dt * 8.0));
 
     // During a slide, step the camera to the outside of the car so the slip
     // angle stays visible instead of the car hiding its own rear axle.
@@ -602,17 +631,23 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         (slipDiff * (_sim.isDrifting ? 1.5 : 0.4)).clamp(-1.3, 1.3);
     _camSlip += (targetSlip - _camSlip) * (1.0 - exp(-dt * 5.0));
 
-    // A touch of the body's lean in the horizon makes cornering feel loaded
-    // without the motion-sickness of full chassis roll.
-    final targetRoll = (_sim.roll * 0.45).clamp(-0.10, 0.10);
-    _camRoll += (targetRoll - _camRoll) * (1.0 - exp(-dt * 6.0));
+    // Horizon corner banking:
+    // Smoothly tilts into turns (-steerAngle * 0.085 + lateralG * 0.028 + roll * 0.40)
+    final targetRoll = (-_sim.steerAngle * 0.085 + _sim.lateralG * 0.028 + _sim.roll * 0.40).clamp(-0.16, 0.16);
+    _camRoll += (targetRoll - _camRoll) * (1.0 - exp(-dt * 7.0));
+
+    // High-speed road micro-vibration above 50 km/h
+    final vibAmp = (_sim.speedKmh > 50.0)
+        ? min(0.015, (_sim.speedKmh - 50.0) / 200.0 * 0.020)
+        : 0.0;
+    final vibY = vibAmp * sin(_uiPulse * 16.0);
 
     // Tethered directly to the car so it never trails metres behind or drifts
     // laterally across the frame.
     final camPos = _sim.position -
         (camFwd * _camDist) +
-        (camRight * _camSlip) +
-        (up * _camHeight.clamp(0.55, 5.5));
+        (camRight * (_camSlip + _camSteerSwing)) +
+        (up * (_camHeight.clamp(0.55, 5.5) + vibY));
     _chaseCamPos = Vec3(camPos.x, max(camPos.y, 0.65), camPos.z);
     _chaseCamTarget = _sim.position +
         (camFwd * 2.4) +
@@ -623,22 +658,25 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   void _resetCar() {
     _sim.reset();
     _camYaw = _sim.yaw;
-    _camDist = 5.8;
-    _camHeight = 2.10;
+    _camDist = 5.15;
+    _camHeight = 1.68;
+    _camLookAhead = 0.0;
+    _camSteerSwing = 0.0;
+    _camSlip = 0.0;
+    _camRoll = 0.0;
+    _gearShiftKick = 0.0;
+    _prevGear = 1;
     _accelRunActive = false;
     _accelRunDone = false;
     _accelRunTime = 0.0;
     _topSpeedKmh = 0.0;
     _slalomGates = 0;
     _passedCones.clear();
-    _camLookAhead = 0.0;
-    _camSlip = 0.0;
-    _camRoll = 0.0;
     _chaseUserYaw = 0.0;
     _chaseUserPitch = 0.0;
     _timeSinceChaseDrag = 10.0;
-    _chaseCamPos = _sim.position + const Vec3(0, 1.88, 5.6);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.78, -2.4);
+    _chaseCamPos = _sim.position + const Vec3(0, 1.68, 5.15);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.4);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -769,17 +807,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 child: _buildBottomHud(),
               ),
 
-              // Keyboard Helper Badge
-              Positioned(
-                top: 72,
-                left: 16,
-                child: _buildControlsHint(),
-              ),
-
               // Live in-drive tuning drawer
               if (_showLiveTuning)
                 Positioned(
-                  top: 108,
+                  top: 72,
                   right: 16,
                   child: _buildLiveTuningPanel(),
                 ),
@@ -794,9 +825,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xF0111714),
+        color: const Color(0xB80B120E),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF223127)),
+        border: Border.all(color: const Color(0xFF1E2D23)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -864,6 +895,27 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           letterSpacing: 0.8,
                         ),
                       ),
+                      if (constraints.maxWidth >= 940) ...[
+                        const SizedBox(width: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0x661A231E),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF223127)),
+                          ),
+                          child: const Text(
+                            'WASD: Drive · SPACE: Drift · C: Cam · R: Reset',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF86978C),
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                      ],
                       if (showSpecBadge) ...[
                         const SizedBox(width: 8),
                         Container(
@@ -1212,6 +1264,52 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
                       const SizedBox(width: 6),
 
+                      // Touch controls toggle button
+                      InkWell(
+                        onTap: () => setState(() => _showTouchControls = !_showTouchControls),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _showTouchControls
+                                ? const Color(0xFF10B981)
+                                : const Color(0xFF1A231E),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: _showTouchControls
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFF223127),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.sports_esports,
+                                size: 14,
+                                color: _showTouchControls
+                                    ? const Color(0xFF041D14)
+                                    : const Color(0xFFC9D1D9),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'PADS',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _showTouchControls
+                                      ? const Color(0xFF041D14)
+                                      : const Color(0xFFC9D1D9),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 6),
+
                       // Fullscreen toggle button
                       InkWell(
                         onTap: _toggleFullscreen,
@@ -1298,33 +1396,6 @@ class _TestDriveViewportState extends State<TestDriveViewport>
             ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildControlsHint() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xE0111714),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFF223127)),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.keyboard, size: 13, color: Color(0xFF86978C)),
-          SizedBox(width: 6),
-          Text(
-            'WASD / ARROWS: Drive  •  SPACE: Handbrake  •  C: Camera  •  F: Fullscreen  •  R: Reset  •  ESC: Exit',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF86978C),
-              letterSpacing: 0.3,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1548,6 +1619,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   Widget _buildBottomHud() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final showTouch = _showTouchControls || constraints.maxWidth < 860;
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: ConstrainedBox(
@@ -1556,37 +1628,39 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Touch Left Controls: Steering & Handbrake
+                // Left HUD: (Optional touch steering) + Vehicle Telemetry Pill
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    _buildTouchSteeringCluster(),
-                    const SizedBox(width: 14),
+                    if (showTouch) ...[
+                      _buildTouchSteeringCluster(),
+                      const SizedBox(width: 8),
+                    ],
                     _buildVehicleTelemetryCluster(),
                   ],
                 ),
 
-                const SizedBox(width: 14),
+                const SizedBox(width: 8),
 
-                // Right HUD: Drift, Speedometer & Touch Pedals
+                // Right HUD: Drift, Speedometer & (Optional touch pedals)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     if (_sim.isDrifting) ...[
                       Container(
-                        margin: const EdgeInsets.only(bottom: 24),
+                        margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
+                            horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
                           color: const Color(0xE010B981),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                           boxShadow: const [
                             BoxShadow(
                               color: Color(0x6610B981),
-                              blurRadius: 18,
-                              spreadRadius: 2,
+                              blurRadius: 12,
+                              spreadRadius: 1,
                             ),
                           ],
                         ),
@@ -1594,25 +1668,27 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.local_fire_department,
-                                color: Color(0xFF041D14), size: 18),
-                            SizedBox(width: 6),
+                                color: Color(0xFF041D14), size: 14),
+                            SizedBox(width: 4),
                             Text(
-                              'DRIFTING',
+                              'DRIFT',
                               style: TextStyle(
-                                fontSize: 13,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w900,
                                 color: Color(0xFF041D14),
-                                letterSpacing: 1.4,
+                                letterSpacing: 1.0,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 8),
                     ],
                     _buildSpeedometerCluster(),
-                    const SizedBox(width: 14),
-                    _buildTouchPedalCluster(),
+                    if (showTouch) ...[
+                      const SizedBox(width: 8),
+                      _buildTouchPedalCluster(),
+                    ],
                   ],
                 ),
               ],
@@ -1747,11 +1823,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   Widget _buildVehicleTelemetryCluster() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xE6111714),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF223127)),
+        color: const Color(0xB80B120E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF1E2D23)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1763,25 +1839,25 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               const Text(
                 'G-METER',
                 style: TextStyle(
-                  fontSize: 9,
+                  fontSize: 8,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFF86978C),
                   letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 3),
               CustomPaint(
-                size: const Size(64, 64),
+                size: const Size(38, 38),
                 painter: _GMeterPainter(
                   latG: _sim.lateralG,
                   longG: _sim.longitudinalG,
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text(
                 '${_sim.lateralG.abs().toStringAsFixed(2)}G',
                 style: const TextStyle(
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFFF0FDF4),
                 ),
@@ -1789,9 +1865,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
             ],
           ),
 
-          const SizedBox(width: 14),
-          Container(width: 1, height: 68, color: const Color(0xFF223127)),
-          const SizedBox(width: 14),
+          const SizedBox(width: 10),
+          Container(width: 1, height: 42, color: const Color(0xFF1E2D23)),
+          const SizedBox(width: 10),
 
           // 4-Wheel Slip & Suspension Telemetry
           Column(
@@ -1801,25 +1877,25 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               const Text(
                 'TIRE SLIP & SUSPENSION',
                 style: TextStyle(
-                  fontSize: 9,
+                  fontSize: 8,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFF86978C),
                   letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _buildWheelBar('FL', _sim.wheelSlips[0],
                       _sim.wheelSuspensionCompressions[0]),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   _buildWheelBar('FR', _sim.wheelSlips[1],
                       _sim.wheelSuspensionCompressions[1]),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   _buildWheelBar('RL', _sim.wheelSlips[2],
                       _sim.wheelSuspensionCompressions[2]),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   _buildWheelBar('RR', _sim.wheelSlips[3],
                       _sim.wheelSuspensionCompressions[3]),
                 ],
@@ -1827,9 +1903,9 @@ class _TestDriveViewportState extends State<TestDriveViewport>
             ],
           ),
 
-          const SizedBox(width: 14),
-          Container(width: 1, height: 68, color: const Color(0xFF223127)),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          Container(width: 1, height: 42, color: const Color(0xFF1E2D23)),
+          const SizedBox(width: 8),
 
           // Drag-strip performance telemetry
           Column(
@@ -1839,13 +1915,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               const Text(
                 'PERFORMANCE',
                 style: TextStyle(
-                  fontSize: 9,
+                  fontSize: 8,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFF86978C),
                   letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 3),
               _buildPerfRow(
                 '0-100',
                 _best0to100 > 0
@@ -1874,16 +1950,16 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   Widget _buildPerfRow(String label, String value, Color valueColor) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
+      padding: const EdgeInsets.only(bottom: 1.5),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
-            width: 38,
+            width: 34,
             child: Text(
               label,
               style: const TextStyle(
-                fontSize: 8,
+                fontSize: 7.5,
                 fontWeight: FontWeight.w800,
                 color: Color(0xFF86978C),
                 letterSpacing: 0.4,
@@ -1893,7 +1969,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
           Text(
             value,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: FontWeight.w700,
               color: valueColor,
               fontFamily: 'monospace',
@@ -1920,34 +1996,34 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         Text(
           name,
           style: const TextStyle(
-            fontSize: 8,
+            fontSize: 7.5,
             fontWeight: FontWeight.w700,
             color: Color(0xFF86978C),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Container(
-          width: 10,
-          height: 38,
+          width: 9,
+          height: 22,
           decoration: BoxDecoration(
             color: const Color(0xFF1A231E),
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(2),
           ),
           alignment: Alignment.bottomCenter,
           child: Container(
-            width: 10,
-            height: (slip.clamp(0.05, 1.0)) * 38,
+            width: 9,
+            height: (slip.clamp(0.05, 1.0)) * 22,
             decoration: BoxDecoration(
               color: barColor,
-              borderRadius: BorderRadius.circular(3),
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Text(
           '${(slip * 100).toInt()}%',
           style: TextStyle(
-            fontSize: 7,
+            fontSize: 6.5,
             fontWeight: FontWeight.w700,
             color: barColor,
           ),
@@ -1962,11 +2038,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
         : (_sim.currentGear == 0 ? 'N' : '${_sim.currentGear}');
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xE6111714),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF223127)),
+        color: const Color(0xB80B120E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF1E2D23)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1981,32 +2057,32 @@ class _TestDriveViewportState extends State<TestDriveViewport>
               Text(
                 '${_sim.speedKmh.toInt()}',
                 style: const TextStyle(
-                  fontSize: 48,
+                  fontSize: 32,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFFF0FDF4),
                   letterSpacing: -1.0,
                   height: 1.0,
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               const Text(
                 'KM/H',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 9.5,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF86978C),
                   letterSpacing: 0.6,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
 
               // Gear badge
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A231E),
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(5),
                   border: Border.all(
                     color: const Color(0xFF223127),
                   ),
@@ -2014,7 +2090,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 child: Text(
                   gearStr,
                   style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
                     color: _sim.currentGear == -1
                         ? const Color(0xFFF85149)
@@ -2025,11 +2101,11 @@ class _TestDriveViewportState extends State<TestDriveViewport>
             ],
           ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
 
           // RPM Tachometer Bar
           SizedBox(
-            width: 195,
+            width: 152,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2039,7 +2115,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                     Text(
                       '${_sim.engineRpm.toInt()} RPM',
                       style: const TextStyle(
-                        fontSize: 9,
+                        fontSize: 8,
                         fontWeight: FontWeight.w700,
                         color: Color(0xFF86978C),
                       ),
@@ -2047,19 +2123,19 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                     const Text(
                       'REDLINE 7.5K',
                       style: TextStyle(
-                        fontSize: 8,
+                        fontSize: 7.5,
                         fontWeight: FontWeight.w700,
                         color: Color(0xFFFF5252),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
+                  borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
                     value: (_sim.engineRpm / 7800.0).clamp(0.0, 1.0),
-                    minHeight: 6,
+                    minHeight: 4,
                     backgroundColor: const Color(0xFF16201B),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       _sim.engineRpm > 6500
@@ -2361,7 +2437,12 @@ class _TestDriveScenePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
-    if (overlayOnly) return;
+    if (overlayOnly) {
+      if (sim.speedKmh > 68.0) {
+        _drawSpeedLinesOverlay(canvas, size);
+      }
+      return;
+    }
 
     // 1. Determine Camera Matrix
     Vec3 eye;
@@ -2436,6 +2517,38 @@ class _TestDriveScenePainter extends CustomPainter {
 
     // 7. Draw Vehicle
     _drawVehicle(canvas, size, viewProj, eye, projectPoint);
+
+    // 8. High-speed wind streaks overlay
+    if (sim.speedKmh > 68.0) {
+      _drawSpeedLinesOverlay(canvas, size);
+    }
+  }
+
+  void _drawSpeedLinesOverlay(Canvas canvas, Size size) {
+    final speedFactor = ((sim.speedKmh - 68.0) / 130.0).clamp(0.0, 1.0);
+    final alpha = (speedFactor * 0.28).clamp(0.0, 0.35);
+    final linePaint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, alpha)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+
+    final cy = size.height * 0.52;
+    final rngSeed = (uiPulse * 12.0).toInt();
+    for (var i = 0; i < 7; i++) {
+      final hash = ((rngSeed + i * 17) % 100) / 100.0;
+      final y = size.height * (0.15 + hash * 0.70);
+      final len = 40.0 + speedFactor * 80.0 + hash * 30.0;
+      final dy = (cy - y) * 0.15;
+
+      // Left edge streak
+      canvas.drawLine(Offset(0.0, y), Offset(len, y + dy), linePaint);
+      // Right edge streak
+      canvas.drawLine(
+        Offset(size.width, y),
+        Offset(size.width - len, y + dy),
+        linePaint,
+      );
+    }
   }
 
   void _drawAtmosphere(

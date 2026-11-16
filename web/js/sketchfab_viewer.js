@@ -2439,6 +2439,8 @@
   let testDriveGroup = null;
   let testDriveBodyGroup = null;
   let testDriveTrackGroup = null;
+  let testDriveRoadAnchor = null;
+  let testDriveOrigFog = null;
   let testDriveWheelPivots = {};
   let testDriveModelSnapshot = null;
 
@@ -2467,41 +2469,142 @@
     testDriveTrackGroup = new THREE.Group();
     testDriveTrackGroup.name = 'TestDriveTrack';
 
-    const roadGeo = new THREE.PlaneGeometry(30, 700);
+    testDriveOrigFog = scene.fog;
+    scene.fog = new THREE.FogExp2(0x0c1410, 0.0035);
+
+    // 1400m x 1400m static turf base pinned to scene
+    const turfGeo = new THREE.PlaneGeometry(1400, 1400);
+    const turfMat = new THREE.MeshStandardMaterial({
+      color: 0x0a1510,
+      roughness: 0.98,
+      metalness: 0.02
+    });
+    const turf = new THREE.Mesh(turfGeo, turfMat);
+    turf.rotation.x = -Math.PI / 2;
+    turf.position.set(0, -0.04, 0);
+    testDriveTrackGroup.add(turf);
+
+    // Dynamic anchor that snaps along vehicle Z in 24m increments
+    testDriveRoadAnchor = new THREE.Group();
+    testDriveRoadAnchor.name = 'TestDriveRoadAnchor';
+
+    const spanLen = 720; // 30 intervals of 24m
+
+    // 38m gravel runoff shoulders
+    const gravelGeo = new THREE.PlaneGeometry(38, spanLen);
+    const gravelMat = new THREE.MeshStandardMaterial({
+      color: 0x222a24,
+      roughness: 0.95,
+      metalness: 0.05
+    });
+    const gravel = new THREE.Mesh(gravelGeo, gravelMat);
+    gravel.rotation.x = -Math.PI / 2;
+    gravel.position.set(0, -0.025, 0);
+    testDriveRoadAnchor.add(gravel);
+
+    // 24m dark motorsport asphalt straight
+    const roadGeo = new THREE.PlaneGeometry(24, spanLen);
     const roadMat = new THREE.MeshStandardMaterial({
-      color: 0x1a221e,
-      roughness: 0.92,
+      color: 0x141b18,
+      roughness: 0.90,
       metalness: 0.04
     });
     const road = new THREE.Mesh(roadGeo, roadMat);
     road.rotation.x = -Math.PI / 2;
-    road.position.set(0, -0.015, -220);
-    testDriveTrackGroup.add(road);
+    road.position.set(0, -0.015, 0);
+    testDriveRoadAnchor.add(road);
 
-    const grid = new THREE.GridHelper(700, 175, 0x2dd4bf, 0x26352f);
-    grid.position.set(0, -0.012, -220);
+    // Subtle 2D asphalt grid for optical flow
+    const grid = new THREE.GridHelper(spanLen, spanLen / 4, 0x2dd4bf, 0x1e3a30);
+    grid.position.set(0, -0.012, 0);
     if (grid.material) {
       grid.material.transparent = true;
-      grid.material.opacity = 0.28;
+      grid.material.opacity = 0.22;
     }
-    testDriveTrackGroup.add(grid);
+    testDriveRoadAnchor.add(grid);
 
-    const lineMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
-    [-14, 14].forEach(function (x) {
-      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 700), lineMat);
-      edge.rotation.x = -Math.PI / 2;
-      edge.position.set(x, 0.0, -220);
-      testDriveTrackGroup.add(edge);
+    // Crisp white boundary lines at x = ±11.6m
+    const whiteLineMat = new THREE.MeshBasicMaterial({ color: 0xf1f5f9 });
+    [-11.6, 11.6].forEach(function (lx) {
+      const lineMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.20, spanLen), whiteLineMat);
+      lineMesh.rotation.x = -Math.PI / 2;
+      lineMesh.position.set(lx, -0.008, 0);
+      testDriveRoadAnchor.add(lineMesh);
     });
 
-    const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
-    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
-    for (let z = 12; z >= -120; z -= 10) {
-      const cone = new THREE.Mesh(coneGeo, coneMat);
-      cone.position.set((z % 20 === 0) ? -2.6 : 2.6, 0.325, z);
-      testDriveTrackGroup.add(cone);
+    // Yellow center dashes (6m dash, 6m gap repeating every 12m along Z)
+    const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+    for (let z = -spanLen / 2 + 6; z < spanLen / 2; z += 12) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 6.0), yellowMat);
+      dash.rotation.x = -Math.PI / 2;
+      dash.position.set(0, -0.008, z);
+      testDriveRoadAnchor.add(dash);
     }
 
+    // Alternating red-and-white FIA curbs at x = ±12.35m (curb width 1.2m, 2m blocks)
+    const curbRedMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, roughness: 0.6 });
+    const curbWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 });
+    const curbGeo = new THREE.BoxGeometry(1.2, 0.06, 2.0);
+    for (let z = -spanLen / 2 + 1; z < spanLen / 2; z += 2.0) {
+      const isRed = (Math.round((z + 1000) / 2.0) % 2 === 0);
+      const mat = isRed ? curbRedMat : curbWhiteMat;
+      [-12.35, 12.35].forEach(function (cx) {
+        const curb = new THREE.Mesh(curbGeo, mat);
+        curb.position.set(cx, 0.01, z);
+        testDriveRoadAnchor.add(curb);
+      });
+    }
+
+    // 3D roadside light poles every 24m at x = ±15.2m
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 });
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+    const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 7.5, 8);
+    const armGeo = new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8);
+    const lampGeo = new THREE.BoxGeometry(0.35, 0.15, 0.5);
+
+    for (let z = -spanLen / 2 + 12; z < spanLen / 2; z += 24) {
+      [-15.2, 15.2].forEach(function (px) {
+        const sign = px > 0 ? 1 : -1;
+        const pole = new THREE.Mesh(poleGeo, poleMat);
+        pole.position.set(px, 3.75, z);
+        testDriveRoadAnchor.add(pole);
+
+        const arm = new THREE.Mesh(armGeo, poleMat);
+        arm.rotation.z = -sign * Math.PI / 2.4;
+        arm.position.set(px - sign * 1.2, 7.2, z);
+        testDriveRoadAnchor.add(arm);
+
+        const lamp = new THREE.Mesh(lampGeo, lightMat);
+        lamp.position.set(px - sign * 2.4, 7.6, z);
+        testDriveRoadAnchor.add(lamp);
+      });
+    }
+
+    // Overhead circuit gantries every 72m spanning from x = -15.2 to +15.2 at y = 6.8
+    const gantryMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.4 });
+    const beamGeo = new THREE.BoxGeometry(31.2, 0.45, 0.6);
+    const boardMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+    const boardGeo = new THREE.BoxGeometry(7.0, 1.4, 0.1);
+    for (let z = -spanLen / 2 + 36; z < spanLen / 2; z += 72) {
+      const beam = new THREE.Mesh(beamGeo, gantryMat);
+      beam.position.set(0, 6.8, z);
+      testDriveRoadAnchor.add(beam);
+
+      const signBoard = new THREE.Mesh(boardGeo, boardMat);
+      signBoard.position.set(0, 6.8, z - 0.35);
+      testDriveRoadAnchor.add(signBoard);
+    }
+
+    // Slalom cones placed along the track
+    const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 14);
+    const coneMat = new THREE.MeshStandardMaterial({ color: 0xff5722, roughness: 0.42 });
+    for (let z = 12; z >= -180; z -= 10) {
+      const cone = new THREE.Mesh(coneGeo, coneMat);
+      cone.position.set((z % 20 === 0) ? -2.6 : 2.6, 0.325, z);
+      testDriveRoadAnchor.add(cone);
+    }
+
+    testDriveTrackGroup.add(testDriveRoadAnchor);
     scene.add(testDriveTrackGroup);
   }
 
@@ -2599,6 +2702,12 @@
       currentModel.rotation.z = state.roll || 0;
     }
 
+    // Infinite scrolling 3D track anchor snaps in 24m increments along car Z
+    if (testDriveRoadAnchor && state.z !== undefined) {
+      const snapZ = Math.round(state.z / 24) * 24;
+      testDriveRoadAnchor.position.z = snapZ;
+    }
+
     const steer = state.steerAngle || 0;
     const rearSteer = state.rearSteerAngle || 0;
     const rollRad = state.wheelRollRad || 0;
@@ -2617,9 +2726,21 @@
       );
     });
 
-    if (camera && state.camX !== undefined) {
-      camera.position.set(state.camX, state.camY, state.camZ);
-      camera.lookAt(state.targetX || 0, state.targetY || 0.8, state.targetZ || 0);
+    if (camera) {
+      if (state.camX !== undefined) {
+        camera.position.set(state.camX, state.camY, state.camZ);
+        const target = new THREE.Vector3(state.targetX || 0, state.targetY || 0.8, state.targetZ || 0);
+        const roll = state.camRoll || 0;
+        const dir = target.clone().sub(camera.position).normalize();
+        const defaultUp = new THREE.Vector3(0, 1, 0);
+        const camUp = defaultUp.applyAxisAngle(dir, roll);
+        camera.up.copy(camUp);
+        camera.lookAt(target);
+      }
+      if (state.fov !== undefined && Math.abs(camera.fov - state.fov) > 0.05) {
+        camera.fov = state.fov;
+        camera.updateProjectionMatrix();
+      }
     }
   }
 
@@ -2652,6 +2773,18 @@
       disposeObject(testDriveTrackGroup);
       scene.remove(testDriveTrackGroup);
       testDriveTrackGroup = null;
+      testDriveRoadAnchor = null;
+    }
+
+    if (scene) {
+      scene.fog = testDriveOrigFog;
+    }
+    testDriveOrigFog = null;
+
+    if (camera) {
+      camera.up.set(0, 1, 0);
+      camera.fov = 45;
+      camera.updateProjectionMatrix();
     }
 
     if (markersGroup) markersGroup.visible = true;

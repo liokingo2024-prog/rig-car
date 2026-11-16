@@ -1989,7 +1989,7 @@ handle_brake=${action(key(32))}
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeInOut,
-                        width: _showLeftPanel ? 250 : 0,
+                        width: (_showLeftPanel && !_isTestDriveMode) ? 250 : 0,
                         clipBehavior: Clip.antiAlias,
                         decoration: const BoxDecoration(
                           color: Color(0xFF111714),
@@ -2052,12 +2052,7 @@ handle_brake=${action(key(32))}
                           Expanded(
                             child: _isTestDriveMode
                                 ? Padding(
-                                    padding: EdgeInsets.fromLTRB(
-                                      desktop ? 24 : 16,
-                                      desktop ? 20 : 16,
-                                      desktop ? 24 : 16,
-                                      desktop ? 20 : 24,
-                                    ),
+                                    padding: const EdgeInsets.all(8.0),
                                     child: _buildTestDriveViewport(),
                                   )
                                 : (tablet && desktop
