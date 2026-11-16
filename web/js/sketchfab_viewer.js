@@ -2684,6 +2684,7 @@
 
   // ── Procedural WebGL World Parity: Sky Dome, Fog & Dynamic Track Styles ──
   let testDriveSkyDome = null;
+  let testDriveMountainRing = null;
   let testDriveEnvRT = null;
   let testDriveOrigEnv = null;
   let testDriveOrigFog = null;
@@ -2763,252 +2764,186 @@
 
   function createSkyDomeMaterial(lightingName) {
     const l = String(lightingName || 'sunset').toLowerCase();
-    const c = document.createElement('canvas');
-    c.width = 2048;
-    c.height = 1024;
-    const ctx = c.getContext('2d');
 
-    // Horizon line in equirectangular projection is at y = 512 (equator of sphere)
-    const horizY = 512;
-
-    // 1. Upper Sky Gradient (300 to horizY)
-    const skyGrad = ctx.createLinearGradient(0, 300, 0, horizY);
+    let zenithColor, midColor, horizonColor, sunColor, sunDir, cloudTint, cloudHighlight, isNight;
     if (l === 'sunset') {
-      // Exact stops from Solid View (Color(0xFF1E1B4B), 0xFF4C0519, 0xFF831843, 0xFFC2410C, 0xFFFDE68A)
-      skyGrad.addColorStop(0.00, '#1E1B4B'); // Deep indigo dusk zenith
-      skyGrad.addColorStop(0.28, '#4C0519'); // Midnight crimson
-      skyGrad.addColorStop(0.52, '#831843'); // Rich magenta
-      skyGrad.addColorStop(0.78, '#C2410C'); // Deep amber
-      skyGrad.addColorStop(1.00, '#FDE68A'); // Glowing golden horizon
+      zenithColor    = new THREE.Color(0x0f1738); // Deep twilight indigo
+      midColor       = new THREE.Color(0x6b2748); // Rich dusk magenta-plum
+      horizonColor   = new THREE.Color(0xf59e0b); // Molten golden-amber horizon
+      sunColor       = new THREE.Color(0xfff7ed);
+      sunDir         = new THREE.Vector3(0.32, 0.11, -0.94).normalize();
+      cloudTint      = new THREE.Color(0x4a1d36);
+      cloudHighlight = new THREE.Color(0xfdba74);
+      isNight        = 0.0;
     } else if (l === 'night') {
-      // Exact stops from Solid View (Color(0xFF020403), 0xFF050B08, 0xFF09140E, 0xFF0E1F16)
-      skyGrad.addColorStop(0.00, '#020403'); // Pure obsidian zenith
-      skyGrad.addColorStop(0.35, '#050B08');
-      skyGrad.addColorStop(0.70, '#09140E');
-      skyGrad.addColorStop(1.00, '#0E1F16'); // Horizon starlight rim
+      zenithColor    = new THREE.Color(0x020409); // Deep obsidian
+      midColor       = new THREE.Color(0x071121); // Midnight navy
+      horizonColor   = new THREE.Color(0x13243a); // Subtle starlight horizon
+      sunColor       = new THREE.Color(0xe2e8f0); // Silver moon
+      sunDir         = new THREE.Vector3(-0.35, 0.28, -0.89).normalize();
+      cloudTint      = new THREE.Color(0x09111e);
+      cloudHighlight = new THREE.Color(0x334155);
+      isNight        = 1.0;
     } else {
-      // Exact stops from Solid View (Color(0xFF0369A1), 0xFF0284C7, 0xFF38BDF8, 0xFFBAE6FD, 0xFFF1F5F9)
-      skyGrad.addColorStop(0.00, '#0369A1'); // Deep azure zenith
-      skyGrad.addColorStop(0.25, '#0284C7');
-      skyGrad.addColorStop(0.55, '#38BDF8'); // Bright daytime sky
-      skyGrad.addColorStop(0.82, '#BAE6FD'); // Atmosphere haze
-      skyGrad.addColorStop(1.00, '#F1F5F9'); // Horizon line
-    }
-    ctx.fillStyle = skyGrad;
-    ctx.fillRect(0, 0, 2048, horizY);
-
-    // 2. Lower Ground Gradient (horizY to 1024) blending into terrain distance
-    const groundGrad = ctx.createLinearGradient(0, horizY, 0, 1024);
-    if (l === 'sunset') {
-      groundGrad.addColorStop(0.00, '#FDE68A'); // Golden horizon match
-      groundGrad.addColorStop(0.18, '#7C2D12'); // Amber ground haze
-      groundGrad.addColorStop(0.40, '#262B1B'); // Dark grass boundary
-      groundGrad.addColorStop(1.00, '#0F1710');
-    } else if (l === 'night') {
-      groundGrad.addColorStop(0.00, '#0E1F16');
-      groundGrad.addColorStop(0.25, '#060A08');
-      groundGrad.addColorStop(1.00, '#020403');
-    } else {
-      groundGrad.addColorStop(0.00, '#F1F5F9');
-      groundGrad.addColorStop(0.20, '#64748B');
-      groundGrad.addColorStop(0.45, '#233D27');
-      groundGrad.addColorStop(1.00, '#0D1D15');
-    }
-    ctx.fillStyle = groundGrad;
-    ctx.fillRect(0, horizY, 2048, 1024 - horizY);
-
-    // 3. Stars for Night Mode (280 stars with natural brightness variation)
-    if (l === 'night') {
-      ctx.save();
-      let seed = 42;
-      function rnd() {
-        seed = (seed * 9301 + 49297) % 233280;
-        return seed / 233280;
-      }
-      for (let i = 0; i < 280; i++) {
-        const sx = rnd() * 2048;
-        const sy = rnd() * 470; // Above the horizon
-        const sr = 0.6 + rnd() * 1.4;
-        const alpha = 0.35 + rnd() * 0.60;
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
-        ctx.beginPath();
-        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
+      zenithColor    = new THREE.Color(0x025aa0); // Deep photographic azure
+      midColor       = new THREE.Color(0x2d9be8); // Crisp daytime blue
+      horizonColor   = new THREE.Color(0xdbeafe); // Soft atmospheric horizon
+      sunColor       = new THREE.Color(0xfffbeb);
+      sunDir         = new THREE.Vector3(0.35, 0.42, -0.84).normalize();
+      cloudTint      = new THREE.Color(0xcbd5e1);
+      cloudHighlight = new THREE.Color(0xffffff);
+      isNight        = 0.0;
     }
 
-    // 4. Distant Parallax Mountain Silhouettes along the Horizon (Exact Solid View Colors & 4-Harmonic Profile)
-    function drawSeamlessMountainRidge(color, scale, phase) {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(0, horizY + 30);
-      for (let x = 0; x <= 2048; x += 8) {
-        const th = (x / 2048) * Math.PI * 2;
-        // Integer harmonic multiples ensure the 360° panorama matches at x = 0 and x = 2048 seamlessly
-        const h = (Math.abs(
-          Math.sin(th * 2 + phase) * 44.0 +
-          Math.sin(th * 5 + phase * 1.5) * 26.0 +
-          Math.sin(th * 11 - phase) * 14.0 +
-          Math.sin(th * 19) * 7.0
-        ) + 24.0) * scale;
-        ctx.lineTo(x, horizY - h);
-      }
-      ctx.lineTo(2048, horizY + 30);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    if (l === 'sunset') {
-      // Solid View Dusk mountain range:
-      // Back ridge: const Color(0x55581C87) -> rgba(88, 28, 135, 0.40)
-      drawSeamlessMountainRidge('rgba(88, 28, 135, 0.40)', 1.25, 1.4);
-      // Front ridge: const Color(0x803B0764) -> rgba(59, 7, 100, 0.65)
-      drawSeamlessMountainRidge('rgba(59, 7, 100, 0.65)', 0.82, 0.0);
-    } else if (l === 'night') {
-      // Solid View Night mountain range:
-      // Back ridge: const Color(0x7009100C) -> rgba(9, 16, 12, 0.44)
-      drawSeamlessMountainRidge('rgba(9, 16, 12, 0.44)', 1.20, 1.4);
-      // Front ridge: const Color(0xA0040705) -> rgba(4, 7, 5, 0.63)
-      drawSeamlessMountainRidge('rgba(4, 7, 5, 0.63)', 0.80, 0.0);
-    } else {
-      // Solid View Day mountain range:
-      // Back ridge: const Color(0x3064748B) -> rgba(100, 116, 139, 0.25)
-      drawSeamlessMountainRidge('rgba(100, 116, 139, 0.25)', 1.25, 1.4);
-      // Front ridge: const Color(0x50475569) -> rgba(71, 85, 105, 0.42)
-      drawSeamlessMountainRidge('rgba(71, 85, 105, 0.42)', 0.82, 0.0);
-    }
-
-    // 5. Cumulus Cloud Wisps for Day (Exact Solid View: Color(0x24FFFFFF))
-    if (l === 'day') {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
-      ctx.beginPath();
-      ctx.ellipse(512, horizY - 78, 380, 22, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(1536, horizY - 62, 450, 26, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // 6. Celestial Body (Sun / Moon) with Exact Solid View Corona, Core, Disk & Flare Streaks
-    if (l === 'sunset') {
-      const sunX = 1024;
-      const sunY = 468; // Just above the mountain line and horizon
-
-      // Broad sunset halo: Color(0x95FFF7ED), Color(0x75F97316), Color(0x20EA580C), Color(0x00C2410C)
-      const halo = ctx.createRadialGradient(sunX, sunY, 12, sunX, sunY, 170);
-      halo.addColorStop(0.00, 'rgba(255, 247, 237, 0.58)');
-      halo.addColorStop(0.30, 'rgba(249, 115, 22, 0.46)');
-      halo.addColorStop(0.65, 'rgba(234, 88, 12, 0.13)');
-      halo.addColorStop(1.00, 'rgba(194, 65, 12, 0.0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 170, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Intense inner glow: Color(0xF5FFFBEB), Color(0x85F59E0B), Color(0x00F59E0B)
-      const inner = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 65);
-      inner.addColorStop(0.00, 'rgba(255, 251, 235, 0.96)');
-      inner.addColorStop(0.50, 'rgba(245, 158, 11, 0.52)');
-      inner.addColorStop(1.00, 'rgba(245, 158, 11, 0.0)');
-      ctx.fillStyle = inner;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 65, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Golden sun disk: Color(0xFFFFFBEB)
-      ctx.fillStyle = '#FFFBEB';
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 22, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Horizontal golden flare streak: Color(0x55F97316)
-      const streakGrad = ctx.createLinearGradient(sunX - 750, sunY, sunX + 750, sunY);
-      streakGrad.addColorStop(0.0, 'rgba(249, 115, 22, 0.0)');
-      streakGrad.addColorStop(0.5, 'rgba(249, 115, 22, 0.33)');
-      streakGrad.addColorStop(1.0, 'rgba(249, 115, 22, 0.0)');
-      ctx.fillStyle = streakGrad;
-      ctx.fillRect(sunX - 750, sunY - 3, 1500, 6);
-
-    } else if (l === 'day') {
-      const sunX = 720;
-      const sunY = 425;
-
-      // Corona glow: Color(0x60FFFBEB), Color(0x28FDE047), Color(0x00FDE047)
-      const corona = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 130);
-      corona.addColorStop(0.00, 'rgba(255, 251, 235, 0.38)');
-      corona.addColorStop(0.35, 'rgba(253, 224, 71, 0.16)');
-      corona.addColorStop(1.00, 'rgba(253, 224, 71, 0.0)');
-      ctx.fillStyle = corona;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 130, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Core glow: Color(0xF0FFFFFF), Color(0x80FEF08A), Color(0x00FEF08A)
-      const core = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 50);
-      core.addColorStop(0.00, 'rgba(255, 255, 255, 0.94)');
-      core.addColorStop(0.50, 'rgba(254, 240, 138, 0.50)');
-      core.addColorStop(1.00, 'rgba(254, 240, 138, 0.0)');
-      ctx.fillStyle = core;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 50, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Solid sun disk
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 18, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Horizontal lens flare streak: Color(0x40FFFFFF)
-      const streakGrad = ctx.createLinearGradient(sunX - 600, sunY, sunX + 600, sunY);
-      streakGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
-      streakGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
-      streakGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
-      ctx.fillStyle = streakGrad;
-      ctx.fillRect(sunX - 600, sunY - 2, 1200, 4);
-
-    } else {
-      // Night Moon: Color(0x4560A5FA), Color(0x1538BDF8), Color(0xFFE2E8F0)
-      const moonX = 1400;
-      const moonY = 425;
-
-      const moonGlow = ctx.createRadialGradient(moonX, moonY, 12, moonX, moonY, 60);
-      moonGlow.addColorStop(0.00, 'rgba(96, 165, 250, 0.27)');
-      moonGlow.addColorStop(0.45, 'rgba(56, 189, 248, 0.08)');
-      moonGlow.addColorStop(1.00, 'rgba(0, 0, 0, 0.0)');
-      ctx.fillStyle = moonGlow;
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, 60, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Moon disk
-      ctx.fillStyle = '#E2E8F0';
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, 15, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Crescent shadow cutout: Color(0xFF060B08)
-      ctx.fillStyle = '#060B08';
-      ctx.beginPath();
-      ctx.arc(moonX + 4.5, moonY - 2.5, 12.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.encoding = THREE.sRGBEncoding;
-    return new THREE.MeshBasicMaterial({
-      map: tex,
+    return new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
-      fog: false
+      fog: false,
+      uniforms: {
+        uZenith:         { value: zenithColor },
+        uMid:            { value: midColor },
+        uHorizon:        { value: horizonColor },
+        uSunColor:       { value: sunColor },
+        uSunDir:         { value: sunDir },
+        uCloudTint:      { value: cloudTint },
+        uCloudHighlight: { value: cloudHighlight },
+        uIsNight:        { value: isNight }
+      },
+      vertexShader: [
+        'varying vec3 vWorldDir;',
+        'void main() {',
+        '  vWorldDir = normalize(position);',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'varying vec3 vWorldDir;',
+        'uniform vec3 uZenith;',
+        'uniform vec3 uMid;',
+        'uniform vec3 uHorizon;',
+        'uniform vec3 uSunColor;',
+        'uniform vec3 uSunDir;',
+        'uniform vec3 uCloudTint;',
+        'uniform vec3 uCloudHighlight;',
+        'uniform float uIsNight;',
+        '',
+        'float hash(vec2 p) {',
+        '  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);',
+        '}',
+        'float noise(vec2 p) {',
+        '  vec2 i = floor(p);',
+        '  vec2 f = fract(p);',
+        '  f = f * f * (3.0 - 2.0 * f);',
+        '  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),',
+        '             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);',
+        '}',
+        'float fbm(vec2 p) {',
+        '  float v = 0.0;',
+        '  float a = 0.5;',
+        '  for (int i = 0; i < 4; i++) {',
+        '    v += a * noise(p);',
+        '    p *= 2.07;',
+        '    a *= 0.5;',
+        '  }',
+        '  return v;',
+        '}',
+        '',
+        'void main() {',
+        '  vec3 dir = normalize(vWorldDir);',
+        '  float h = clamp(dir.y, 0.0, 1.0);',
+        '',
+        '  vec3 sky = mix(uHorizon, uMid, pow(h, 0.38));',
+        '  sky = mix(sky, uZenith, smoothstep(0.14, 0.72, h));',
+        '',
+        '  float sunCos = max(dot(dir, normalize(uSunDir)), 0.0);',
+        '  if (uIsNight < 0.5) {',
+        '    float halo = pow(sunCos, 6.0) * 0.42 + pow(sunCos, 48.0) * 0.55;',
+        '    float disc = smoothstep(0.9988, 0.9995, sunCos);',
+        '    sky += uHorizon * pow(sunCos, 3.0) * 0.35;',
+        '    sky += uSunColor * (halo + disc * 1.4);',
+        '  } else {',
+        '    vec2 starUv = floor(dir.xz / max(dir.y + 0.15, 0.15) * 140.0);',
+        '    float starVal = hash(starUv);',
+        '    if (starVal > 0.992 && dir.y > 0.04) {',
+        '      sky += vec3(0.85, 0.92, 1.0) * ((starVal - 0.992) * 110.0) * smoothstep(0.04, 0.25, dir.y);',
+        '    }',
+        '    float moonDisc = smoothstep(0.9991, 0.9995, sunCos);',
+        '    float moonGlow = pow(sunCos, 24.0) * 0.35;',
+        '    sky += uSunColor * (moonDisc + moonGlow);',
+        '  }',
+        '',
+        '  if (dir.y > 0.025) {',
+        '    vec2 cloudUv = dir.xz / (dir.y + 0.14) * 0.95;',
+        '    float c = fbm(cloudUv + vec2(1.7, 3.2));',
+        '    float cloudMask = smoothstep(0.46, 0.78, c) * smoothstep(0.025, 0.18, dir.y);',
+        '    vec3 cCol = mix(uCloudTint, uCloudHighlight, 0.35 + 0.65 * pow(sunCos, 2.5));',
+        '    sky = mix(sky, cCol, cloudMask * (uIsNight > 0.5 ? 0.35 : 0.72));',
+        '  }',
+        '',
+        '  if (dir.y < 0.0) {',
+        '    sky = mix(uHorizon, uHorizon * 0.35, clamp(-dir.y * 6.0, 0.0, 1.0));',
+        '  }',
+        '',
+        '  gl_FragColor = vec4(sky, 1.0);',
+        '}'
+      ].join('\n')
     });
+  }
+
+  function buildMountainHorizonRing(lightingName) {
+    const l = String(lightingName || 'sunset').toLowerCase();
+    const grp = new THREE.Group();
+    grp.name = 'TestDriveMountains';
+
+    const layers = l === 'sunset'
+      ? [
+          { r: 1380, maxH: 135, baseH: 22, color: 0x6b2c4e, phase: 0.4 },
+          { r: 1120, maxH: 92,  baseH: 10, color: 0x3b182e, phase: 2.1 }
+        ]
+      : (l === 'night'
+          ? [
+              { r: 1380, maxH: 125, baseH: 20, color: 0x0b1626, phase: 0.4 },
+              { r: 1120, maxH: 85,  baseH: 10, color: 0x050a12, phase: 2.1 }
+            ]
+          : [
+              { r: 1380, maxH: 130, baseH: 20, color: 0x64748b, phase: 0.4 },
+              { r: 1120, maxH: 88,  baseH: 10, color: 0x475569, phase: 2.1 }
+            ]);
+
+    layers.forEach(function (layer) {
+      const segs = 160;
+      const positions = [];
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2;
+        const a1 = ((i + 1) / segs) * Math.PI * 2;
+        const h0 = layer.baseH + Math.abs(Math.sin(a0 * 3 + layer.phase) * 0.55 + Math.sin(a0 * 7 - layer.phase) * 0.30 + Math.sin(a0 * 13) * 0.15) * layer.maxH;
+        const h1 = layer.baseH + Math.abs(Math.sin(a1 * 3 + layer.phase) * 0.55 + Math.sin(a1 * 7 - layer.phase) * 0.30 + Math.sin(a1 * 13) * 0.15) * layer.maxH;
+        const x0 = Math.cos(a0) * layer.r, z0 = Math.sin(a0) * layer.r;
+        const x1 = Math.cos(a1) * layer.r, z1 = Math.sin(a1) * layer.r;
+
+        positions.push(x0, -8, z0,  x1, -8, z1,  x1, h1, z1);
+        positions.push(x0, -8, z0,  x1, h1, z1,  x0, h0, z0);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const mat = new THREE.MeshBasicMaterial({
+        color: layer.color,
+        side: THREE.DoubleSide,
+        fog: true
+      });
+      grp.add(new THREE.Mesh(geo, mat));
+    });
+    return grp;
   }
 
   function applyTestDriveAtmosphere(lightingName) {
     if (!scene) return;
     const l = String(lightingName || 'sunset').toLowerCase();
+
+    if (camera && camera.far < 4000) {
+      camera.far = 4000;
+      camera.updateProjectionMatrix();
+    }
 
     if (testDriveSkyDome) {
       disposeObject(testDriveSkyDome);
@@ -3016,10 +2951,20 @@
       testDriveSkyDome = null;
     }
 
+    if (testDriveMountainRing) {
+      disposeObject(testDriveMountainRing);
+      scene.remove(testDriveMountainRing);
+      testDriveMountainRing = null;
+    }
+
     const skyMat = createSkyDomeMaterial(l);
-    testDriveSkyDome = new THREE.Mesh(new THREE.SphereGeometry(1200, 48, 24), skyMat);
+    testDriveSkyDome = new THREE.Mesh(new THREE.SphereGeometry(1800, 48, 32), skyMat);
     testDriveSkyDome.name = 'TestDriveSkyDome';
+    testDriveSkyDome.frustumCulled = false;
     scene.add(testDriveSkyDome);
+
+    testDriveMountainRing = buildMountainHorizonRing(l);
+    scene.add(testDriveMountainRing);
 
     // Generate PBR environment reflection map from the sky dome for realistic car paint reflections
     if (renderer && THREE.PMREMGenerator) {
@@ -3027,7 +2972,7 @@
         if (testDriveEnvRT) testDriveEnvRT.dispose();
         const pmrem = new THREE.PMREMGenerator(renderer);
         const envScene = new THREE.Scene();
-        envScene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), skyMat.clone()));
+        envScene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), createSkyDomeMaterial(l)));
         testDriveEnvRT = pmrem.fromScene(envScene, 0.04);
         scene.environment = testDriveEnvRT.texture;
         pmrem.dispose();
@@ -3514,6 +3459,11 @@
     if (!scene || !currentModel || !renderer) return false;
     if (testDriveActive) return true;
 
+    if (camera && camera.far < 4000) {
+      camera.far = 4000;
+      camera.updateProjectionMatrix();
+    }
+
     if (!detectedWheelData) {
       try {
         detectWheels({});
@@ -3605,12 +3555,18 @@
     // synchronously so the very first visible frame is already the WebGL test drive
     // with zero glimpse/flash of the previous workbench solid orbit view.
     if (camera) {
+      if (camera.far < 4000) {
+        camera.far = 4000;
+      }
       camera.position.set(0, 1.82, 5.45);
       camera.lookAt(0, 0.72, -2.6);
       camera.fov = 54.0;
       camera.updateProjectionMatrix();
       if (testDriveSkyDome) {
         testDriveSkyDome.position.copy(camera.position);
+      }
+      if (testDriveMountainRing) {
+        testDriveMountainRing.position.set(camera.position.x, 0, camera.position.z);
       }
     }
     if (renderer && scene && camera) {
@@ -3689,6 +3645,9 @@
       if (testDriveSkyDome) {
         testDriveSkyDome.position.copy(camera.position);
       }
+      if (testDriveMountainRing) {
+        testDriveMountainRing.position.set(camera.position.x, 0, camera.position.z);
+      }
       if (state.fov !== undefined && Math.abs(camera.fov - state.fov) > 0.05) {
         camera.fov = state.fov;
         camera.updateProjectionMatrix();
@@ -3738,6 +3697,12 @@
       scene.remove(testDriveSkyDome);
       disposeObject(testDriveSkyDome);
       testDriveSkyDome = null;
+    }
+
+    if (testDriveMountainRing) {
+      scene.remove(testDriveMountainRing);
+      disposeObject(testDriveMountainRing);
+      testDriveMountainRing = null;
     }
 
     if (testDriveGroup) {
