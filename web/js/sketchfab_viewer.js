@@ -2765,86 +2765,231 @@
     c.height = 1024;
     const ctx = c.getContext('2d');
 
-    const grad = ctx.createLinearGradient(0, 0, 0, 1024);
+    // Horizon line in equirectangular projection is at y = 512 (equator of sphere)
+    const horizY = 512;
+
+    // 1. Upper Sky Gradient (0 to horizY)
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, horizY);
     if (l === 'sunset') {
-      grad.addColorStop(0.00, '#141b38');
-      grad.addColorStop(0.20, '#3b2454');
-      grad.addColorStop(0.36, '#8f3b4a');
-      grad.addColorStop(0.47, '#e06d3b');
-      grad.addColorStop(0.53, '#fbbf24');
-      grad.addColorStop(0.57, '#fde68a');
-      grad.addColorStop(1.00, '#262b1b');
+      // Exact stops from Solid View (Color(0xFF1E1B4B), 0xFF4C0519, 0xFF831843, 0xFFC2410C, 0xFFFDE68A)
+      skyGrad.addColorStop(0.00, '#1E1B4B'); // Deep indigo dusk zenith
+      skyGrad.addColorStop(0.28, '#4C0519'); // Midnight crimson
+      skyGrad.addColorStop(0.52, '#831843'); // Rich magenta
+      skyGrad.addColorStop(0.78, '#C2410C'); // Deep amber
+      skyGrad.addColorStop(1.00, '#FDE68A'); // Glowing golden horizon
     } else if (l === 'night') {
-      grad.addColorStop(0.00, '#020408');
-      grad.addColorStop(0.35, '#070f1a');
-      grad.addColorStop(0.53, '#0e1d2f');
-      grad.addColorStop(1.00, '#060a08');
+      // Exact stops from Solid View (Color(0xFF020403), 0xFF050B08, 0xFF09140E, 0xFF0E1F16)
+      skyGrad.addColorStop(0.00, '#020403'); // Pure obsidian zenith
+      skyGrad.addColorStop(0.35, '#050B08');
+      skyGrad.addColorStop(0.70, '#09140E');
+      skyGrad.addColorStop(1.00, '#0E1F16'); // Horizon starlight rim
     } else {
-      grad.addColorStop(0.00, '#0369a1');
-      grad.addColorStop(0.24, '#0284c7');
-      grad.addColorStop(0.42, '#38bdf8');
-      grad.addColorStop(0.52, '#bae6fd');
-      grad.addColorStop(0.56, '#f8fafc');
-      grad.addColorStop(1.00, '#233d27');
+      // Exact stops from Solid View (Color(0xFF0369A1), 0xFF0284C7, 0xFF38BDF8, 0xFFBAE6FD, 0xFFF1F5F9)
+      skyGrad.addColorStop(0.00, '#0369A1'); // Deep azure zenith
+      skyGrad.addColorStop(0.25, '#0284C7');
+      skyGrad.addColorStop(0.55, '#38BDF8'); // Bright daytime sky
+      skyGrad.addColorStop(0.82, '#BAE6FD'); // Atmosphere haze
+      skyGrad.addColorStop(1.00, '#F1F5F9'); // Horizon line
     }
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 2048, 1024);
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, 2048, horizY);
 
-    // Sun / Moon + Horizon Glow
+    // 2. Lower Ground Gradient (horizY to 1024) blending into terrain distance
+    const groundGrad = ctx.createLinearGradient(0, horizY, 0, 1024);
     if (l === 'sunset') {
-      const sunX = 1024, sunY = 515;
-      const glow = ctx.createRadialGradient(sunX, sunY, 14, sunX, sunY, 260);
-      glow.addColorStop(0.00, 'rgba(255, 251, 235, 1.0)');
-      glow.addColorStop(0.14, 'rgba(253, 224, 71, 0.85)');
-      glow.addColorStop(0.40, 'rgba(249, 115, 22, 0.40)');
-      glow.addColorStop(1.00, 'rgba(224, 109, 59, 0.0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, 260, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (l === 'day') {
-      const glow = ctx.createRadialGradient(720, 300, 12, 720, 300, 160);
-      glow.addColorStop(0, 'rgba(255,255,255,0.98)');
-      glow.addColorStop(0.3, 'rgba(254,240,138,0.55)');
-      glow.addColorStop(1, 'rgba(253,224,71,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(720, 300, 160, 0, Math.PI * 2);
-      ctx.fill();
+      groundGrad.addColorStop(0.00, '#FDE68A'); // Golden horizon match
+      groundGrad.addColorStop(0.18, '#7C2D12'); // Amber ground haze
+      groundGrad.addColorStop(0.40, '#262B1B'); // Dark grass boundary
+      groundGrad.addColorStop(1.00, '#0F1710');
+    } else if (l === 'night') {
+      groundGrad.addColorStop(0.00, '#0E1F16');
+      groundGrad.addColorStop(0.25, '#060A08');
+      groundGrad.addColorStop(1.00, '#020403');
     } else {
-      ctx.fillStyle = '#e2e8f0';
-      ctx.beginPath();
-      ctx.arc(1400, 260, 22, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#070f1a';
-      ctx.beginPath();
-      ctx.arc(1410, 254, 19, 0, Math.PI * 2);
-      ctx.fill();
+      groundGrad.addColorStop(0.00, '#F1F5F9');
+      groundGrad.addColorStop(0.20, '#64748B');
+      groundGrad.addColorStop(0.45, '#233D27');
+      groundGrad.addColorStop(1.00, '#0D1D15');
+    }
+    ctx.fillStyle = groundGrad;
+    ctx.fillRect(0, horizY, 2048, 1024 - horizY);
+
+    // 3. Stars for Night Mode (280 stars with natural brightness variation)
+    if (l === 'night') {
+      ctx.save();
+      let seed = 42;
+      function rnd() {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+      }
+      for (let i = 0; i < 280; i++) {
+        const sx = rnd() * 2048;
+        const sy = rnd() * 470; // Above the horizon
+        const sr = 0.6 + rnd() * 1.4;
+        const alpha = 0.35 + rnd() * 0.60;
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
-    // Distant Layered Mountains along horizon (y = 550)
-    function drawRidge(color, amp, f1, f2, base) {
+    // 4. Distant Parallax Mountain Silhouettes along the Horizon (Exact Solid View Colors & 4-Harmonic Profile)
+    function drawSeamlessMountainRidge(color, scale, phase) {
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.moveTo(0, 580);
-      for (let x = 0; x <= 2048; x += 12) {
+      ctx.moveTo(0, horizY + 30);
+      for (let x = 0; x <= 2048; x += 8) {
         const th = (x / 2048) * Math.PI * 2;
-        const h = Math.abs(Math.sin(th * f1) * 0.5 + Math.sin(th * f2 + 1.1) * 0.35 + Math.sin(th * 13) * 0.15) * amp + base;
-        ctx.lineTo(x, 550 - h);
+        // Integer harmonic multiples ensure the 360° panorama matches at x = 0 and x = 2048 seamlessly
+        const h = (Math.abs(
+          Math.sin(th * 2 + phase) * 36.0 +
+          Math.sin(th * 5 + phase * 1.5) * 22.0 +
+          Math.sin(th * 11 - phase) * 12.0 +
+          Math.sin(th * 19) * 6.0
+        ) + 12.0) * scale;
+        ctx.lineTo(x, horizY - h);
       }
-      ctx.lineTo(2048, 580);
+      ctx.lineTo(2048, horizY + 30);
       ctx.closePath();
       ctx.fill();
     }
+
     if (l === 'sunset') {
-      drawRidge('rgba(92, 43, 72, 0.45)', 70, 3, 7, 16);
-      drawRidge('rgba(56, 27, 46, 0.72)', 44, 4, 9, 6);
+      // Solid View Dusk mountain range:
+      // Back ridge: const Color(0x55581C87) -> rgba(88, 28, 135, 0.40)
+      drawSeamlessMountainRidge('rgba(88, 28, 135, 0.40)', 1.25, 1.4);
+      // Front ridge: const Color(0x803B0764) -> rgba(59, 7, 100, 0.65)
+      drawSeamlessMountainRidge('rgba(59, 7, 100, 0.65)', 0.82, 0.0);
     } else if (l === 'night') {
-      drawRidge('rgba(10, 18, 28, 0.80)', 64, 3, 7, 14);
-      drawRidge('rgba(5, 9, 14, 0.92)', 38, 4, 9, 6);
+      // Solid View Night mountain range:
+      // Back ridge: const Color(0x7009100C) -> rgba(9, 16, 12, 0.44)
+      drawSeamlessMountainRidge('rgba(9, 16, 12, 0.44)', 1.20, 1.4);
+      // Front ridge: const Color(0xA0040705) -> rgba(4, 7, 5, 0.63)
+      drawSeamlessMountainRidge('rgba(4, 7, 5, 0.63)', 0.80, 0.0);
     } else {
-      drawRidge('rgba(100, 116, 139, 0.35)', 72, 3, 7, 16);
-      drawRidge('rgba(71, 85, 105, 0.50)', 46, 4, 9, 6);
+      // Solid View Day mountain range:
+      // Back ridge: const Color(0x3064748B) -> rgba(100, 116, 139, 0.25)
+      drawSeamlessMountainRidge('rgba(100, 116, 139, 0.25)', 1.25, 1.4);
+      // Front ridge: const Color(0x50475569) -> rgba(71, 85, 105, 0.42)
+      drawSeamlessMountainRidge('rgba(71, 85, 105, 0.42)', 0.82, 0.0);
+    }
+
+    // 5. Cumulus Cloud Wisps for Day (Exact Solid View: Color(0x24FFFFFF))
+    if (l === 'day') {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.beginPath();
+      ctx.ellipse(512, horizY - 45, 380, 22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(1536, horizY - 32, 450, 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 6. Celestial Body (Sun / Moon) with Exact Solid View Corona, Core, Disk & Flare Streaks
+    if (l === 'sunset') {
+      const sunX = 1024;
+      const sunY = 480; // Just above the mountain line and horizon
+
+      // Broad sunset halo: Color(0x95FFF7ED), Color(0x75F97316), Color(0x20EA580C), Color(0x00C2410C)
+      const halo = ctx.createRadialGradient(sunX, sunY, 12, sunX, sunY, 170);
+      halo.addColorStop(0.00, 'rgba(255, 247, 237, 0.58)');
+      halo.addColorStop(0.30, 'rgba(249, 115, 22, 0.46)');
+      halo.addColorStop(0.65, 'rgba(234, 88, 12, 0.13)');
+      halo.addColorStop(1.00, 'rgba(194, 65, 12, 0.0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 170, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Intense inner glow: Color(0xF5FFFBEB), Color(0x85F59E0B), Color(0x00F59E0B)
+      const inner = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 65);
+      inner.addColorStop(0.00, 'rgba(255, 251, 235, 0.96)');
+      inner.addColorStop(0.50, 'rgba(245, 158, 11, 0.52)');
+      inner.addColorStop(1.00, 'rgba(245, 158, 11, 0.0)');
+      ctx.fillStyle = inner;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 65, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Golden sun disk: Color(0xFFFFFBEB)
+      ctx.fillStyle = '#FFFBEB';
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 22, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Horizontal golden flare streak: Color(0x55F97316)
+      const streakGrad = ctx.createLinearGradient(sunX - 750, sunY, sunX + 750, sunY);
+      streakGrad.addColorStop(0.0, 'rgba(249, 115, 22, 0.0)');
+      streakGrad.addColorStop(0.5, 'rgba(249, 115, 22, 0.33)');
+      streakGrad.addColorStop(1.0, 'rgba(249, 115, 22, 0.0)');
+      ctx.fillStyle = streakGrad;
+      ctx.fillRect(sunX - 750, sunY - 3, 1500, 6);
+
+    } else if (l === 'day') {
+      const sunX = 720;
+      const sunY = 280;
+
+      // Corona glow: Color(0x60FFFBEB), Color(0x28FDE047), Color(0x00FDE047)
+      const corona = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 130);
+      corona.addColorStop(0.00, 'rgba(255, 251, 235, 0.38)');
+      corona.addColorStop(0.35, 'rgba(253, 224, 71, 0.16)');
+      corona.addColorStop(1.00, 'rgba(253, 224, 71, 0.0)');
+      ctx.fillStyle = corona;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 130, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core glow: Color(0xF0FFFFFF), Color(0x80FEF08A), Color(0x00FEF08A)
+      const core = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 50);
+      core.addColorStop(0.00, 'rgba(255, 255, 255, 0.94)');
+      core.addColorStop(0.50, 'rgba(254, 240, 138, 0.50)');
+      core.addColorStop(1.00, 'rgba(254, 240, 138, 0.0)');
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 50, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Solid sun disk
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Horizontal lens flare streak: Color(0x40FFFFFF)
+      const streakGrad = ctx.createLinearGradient(sunX - 600, sunY, sunX + 600, sunY);
+      streakGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
+      streakGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
+      streakGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+      ctx.fillStyle = streakGrad;
+      ctx.fillRect(sunX - 600, sunY - 2, 1200, 4);
+
+    } else {
+      // Night Moon: Color(0x4560A5FA), Color(0x1538BDF8), Color(0xFFE2E8F0)
+      const moonX = 1400;
+      const moonY = 280;
+
+      const moonGlow = ctx.createRadialGradient(moonX, moonY, 12, moonX, moonY, 60);
+      moonGlow.addColorStop(0.00, 'rgba(96, 165, 250, 0.27)');
+      moonGlow.addColorStop(0.45, 'rgba(56, 189, 248, 0.08)');
+      moonGlow.addColorStop(1.00, 'rgba(0, 0, 0, 0.0)');
+      ctx.fillStyle = moonGlow;
+      ctx.beginPath();
+      ctx.arc(moonX, moonY, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Moon disk
+      ctx.fillStyle = '#E2E8F0';
+      ctx.beginPath();
+      ctx.arc(moonX, moonY, 15, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Crescent shadow cutout: Color(0xFF060B08)
+      ctx.fillStyle = '#060B08';
+      ctx.beginPath();
+      ctx.arc(moonX + 4.5, moonY - 2.5, 12.5, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     const tex = new THREE.CanvasTexture(c);
@@ -2887,8 +3032,8 @@
     }
 
     if (l === 'sunset') {
-      scene.background = new THREE.Color(0xe06d3b);
-      scene.fog = new THREE.FogExp2(0xd97736, 0.00075);
+      scene.background = new THREE.Color(0xfde68a);
+      scene.fog = new THREE.FogExp2(0xd97736, 0.00065);
       if (hemiLight) {
         hemiLight.color.set(0xffd8a8);
         hemiLight.groundColor.set(0x2c1d18);
@@ -2900,7 +3045,7 @@
       }
     } else if (l === 'night') {
       scene.background = new THREE.Color(0x050b12);
-      scene.fog = new THREE.FogExp2(0x060b12, 0.0012);
+      scene.fog = new THREE.FogExp2(0x060b12, 0.0010);
       if (hemiLight) {
         hemiLight.color.set(0x475569);
         hemiLight.groundColor.set(0x060a08);
@@ -2911,8 +3056,8 @@
         dirLightKey.intensity = 1.1;
       }
     } else {
-      scene.background = new THREE.Color(0xbae6fd);
-      scene.fog = new THREE.FogExp2(0xcbe4f9, 0.00065);
+      scene.background = new THREE.Color(0xf1f5f9);
+      scene.fog = new THREE.FogExp2(0xcbe4f9, 0.00055);
       if (hemiLight) {
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x334155);
