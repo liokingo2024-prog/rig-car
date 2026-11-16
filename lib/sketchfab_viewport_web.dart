@@ -482,6 +482,8 @@ void updateSketchfabTestDriveState({
   required double targetZ,
   double fovDeg = 55.0,
   double camRoll = 0.0,
+  bool isDrifting = false,
+  double speedKmh = 0.0,
 }) {
   try {
     final viewer = js.context['SketchfabViewer'];
@@ -507,6 +509,8 @@ void updateSketchfabTestDriveState({
     _tdState['targetZ'] = targetZ;
     _tdState['fov'] = fovDeg;
     _tdState['camRoll'] = camRoll;
+    _tdState['isDrifting'] = isDrifting;
+    _tdState['speedKmh'] = speedKmh;
     viewer.callMethod('updateTestDriveState', [_tdState]);
   } catch (e) {
     debugPrint('updateSketchfabTestDriveState error: $e');

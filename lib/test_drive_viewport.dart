@@ -490,6 +490,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       targetZ: target.z,
       fovDeg: _fovDeg,
       camRoll: _camRoll,
+      isDrifting: _sim.isDrifting,
+      speedKmh: _sim.speedKmh,
     );
   }
 

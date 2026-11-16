@@ -2771,8 +2771,8 @@
     // Horizon line in equirectangular projection is at y = 512 (equator of sphere)
     const horizY = 512;
 
-    // 1. Upper Sky Gradient (0 to horizY)
-    const skyGrad = ctx.createLinearGradient(0, 0, 0, horizY);
+    // 1. Upper Sky Gradient (300 to horizY)
+    const skyGrad = ctx.createLinearGradient(0, 300, 0, horizY);
     if (l === 'sunset') {
       // Exact stops from Solid View (Color(0xFF1E1B4B), 0xFF4C0519, 0xFF831843, 0xFFC2410C, 0xFFFDE68A)
       skyGrad.addColorStop(0.00, '#1E1B4B'); // Deep indigo dusk zenith
@@ -2847,11 +2847,11 @@
         const th = (x / 2048) * Math.PI * 2;
         // Integer harmonic multiples ensure the 360° panorama matches at x = 0 and x = 2048 seamlessly
         const h = (Math.abs(
-          Math.sin(th * 2 + phase) * 36.0 +
-          Math.sin(th * 5 + phase * 1.5) * 22.0 +
-          Math.sin(th * 11 - phase) * 12.0 +
-          Math.sin(th * 19) * 6.0
-        ) + 12.0) * scale;
+          Math.sin(th * 2 + phase) * 44.0 +
+          Math.sin(th * 5 + phase * 1.5) * 26.0 +
+          Math.sin(th * 11 - phase) * 14.0 +
+          Math.sin(th * 19) * 7.0
+        ) + 24.0) * scale;
         ctx.lineTo(x, horizY - h);
       }
       ctx.lineTo(2048, horizY + 30);
@@ -2883,17 +2883,17 @@
     if (l === 'day') {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
       ctx.beginPath();
-      ctx.ellipse(512, horizY - 45, 380, 22, 0, 0, Math.PI * 2);
+      ctx.ellipse(512, horizY - 78, 380, 22, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(1536, horizY - 32, 450, 26, 0, 0, Math.PI * 2);
+      ctx.ellipse(1536, horizY - 62, 450, 26, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
     // 6. Celestial Body (Sun / Moon) with Exact Solid View Corona, Core, Disk & Flare Streaks
     if (l === 'sunset') {
       const sunX = 1024;
-      const sunY = 480; // Just above the mountain line and horizon
+      const sunY = 468; // Just above the mountain line and horizon
 
       // Broad sunset halo: Color(0x95FFF7ED), Color(0x75F97316), Color(0x20EA580C), Color(0x00C2410C)
       const halo = ctx.createRadialGradient(sunX, sunY, 12, sunX, sunY, 170);
@@ -2932,7 +2932,7 @@
 
     } else if (l === 'day') {
       const sunX = 720;
-      const sunY = 280;
+      const sunY = 425;
 
       // Corona glow: Color(0x60FFFBEB), Color(0x28FDE047), Color(0x00FDE047)
       const corona = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 130);
@@ -2971,7 +2971,7 @@
     } else {
       // Night Moon: Color(0x4560A5FA), Color(0x1538BDF8), Color(0xFFE2E8F0)
       const moonX = 1400;
-      const moonY = 280;
+      const moonY = 425;
 
       const moonGlow = ctx.createRadialGradient(moonX, moonY, 12, moonX, moonY, 60);
       moonGlow.addColorStop(0.00, 'rgba(96, 165, 250, 0.27)');
@@ -3035,40 +3035,40 @@
     }
 
     if (l === 'sunset') {
-      scene.background = new THREE.Color(0xfde68a);
-      scene.fog = new THREE.FogExp2(0xd97736, 0.00065);
+      scene.background = new THREE.Color(0xc2410c);
+      scene.fog = new THREE.FogExp2(0xd97736, 0.00055);
       if (hemiLight) {
         hemiLight.color.set(0xffd8a8);
         hemiLight.groundColor.set(0x2c1d18);
-        hemiLight.intensity = 0.95;
+        hemiLight.intensity = 0.72;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xffb469);
-        dirLightKey.intensity = 2.3;
+        dirLightKey.intensity = 1.85;
       }
     } else if (l === 'night') {
-      scene.background = new THREE.Color(0x050b12);
-      scene.fog = new THREE.FogExp2(0x060b12, 0.0010);
+      scene.background = new THREE.Color(0x03070b);
+      scene.fog = new THREE.FogExp2(0x050a10, 0.0009);
       if (hemiLight) {
         hemiLight.color.set(0x475569);
         hemiLight.groundColor.set(0x060a08);
-        hemiLight.intensity = 0.55;
+        hemiLight.intensity = 0.28;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0x93c5fd);
-        dirLightKey.intensity = 1.1;
+        dirLightKey.intensity = 0.65;
       }
     } else {
-      scene.background = new THREE.Color(0xf1f5f9);
-      scene.fog = new THREE.FogExp2(0xcbe4f9, 0.00055);
+      scene.background = new THREE.Color(0x38bdf8);
+      scene.fog = new THREE.FogExp2(0xbbe0f8, 0.00048);
       if (hemiLight) {
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x334155);
-        hemiLight.intensity = 1.15;
+        hemiLight.intensity = 0.85;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xfffbeb);
-        dirLightKey.intensity = 2.1;
+        dirLightKey.intensity = 1.75;
       }
     }
   }
@@ -3100,8 +3100,9 @@
       new THREE.PlaneGeometry(2400, 2400),
       new THREE.MeshStandardMaterial({
         map: createTurfTexture(l),
-        roughness: 0.96,
-        metalness: 0.02
+        roughness: 0.98,
+        metalness: 0.0,
+        envMapIntensity: 0.06
       })
     );
     turfMesh.rotation.x = -Math.PI / 2;
@@ -3117,7 +3118,12 @@
     // Gravel shoulders
     const shoulder = new THREE.Mesh(
       new THREE.PlaneGeometry(roadW + 14, spanLen),
-      new THREE.MeshStandardMaterial({ color: l === 'night' ? 0x16191d : 0x3b3a36, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({
+        color: l === 'night' ? 0x16191d : 0x3b3a36,
+        roughness: 0.96,
+        metalness: 0.0,
+        envMapIntensity: 0.08
+      })
     );
     shoulder.rotation.x = -Math.PI / 2;
     shoulder.position.set(0, -0.025, 0);
@@ -3129,8 +3135,10 @@
       new THREE.PlaneGeometry(roadW, spanLen),
       new THREE.MeshStandardMaterial({
         map: createAsphaltTextures(),
-        roughness: 0.82,
-        metalness: 0.08
+        color: l === 'night' ? 0x4b5563 : 0x9ca3af,
+        roughness: 0.93,
+        metalness: 0.0,
+        envMapIntensity: 0.08
       })
     );
     road.rotation.x = -Math.PI / 2;
@@ -3358,6 +3366,150 @@
     };
   }
 
+  // ── 3D Drift Skid Marks & Dynamic Tire Smoke Particles ─────────────────────
+  let testDriveSkidPool = [];
+  let testDriveSkidCursor = 0;
+  let testDriveLastSkidPos = null;
+  let testDriveSmokePool = [];
+  let testDriveSmokeCursor = 0;
+
+  function initTestDriveDriftFx() {
+    disposeTestDriveDriftFx();
+    const skidMat = new THREE.MeshBasicMaterial({
+      color: 0x090b0d,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -8
+    });
+    const skidGeo = new THREE.PlaneGeometry(0.28, 1.0);
+    for (let i = 0; i < 160; i++) {
+      const m = new THREE.Mesh(skidGeo, skidMat);
+      m.rotation.x = -Math.PI / 2;
+      m.visible = false;
+      m.renderOrder = 7;
+      scene.add(m);
+      testDriveSkidPool.push(m);
+    }
+
+    const sc = document.createElement('canvas');
+    sc.width = 64;
+    sc.height = 64;
+    const sctx = sc.getContext('2d');
+    const sg = sctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+    sg.addColorStop(0, 'rgba(226, 232, 240, 0.55)');
+    sg.addColorStop(0.5, 'rgba(203, 213, 225, 0.25)');
+    sg.addColorStop(1, 'rgba(203, 213, 225, 0.0)');
+    sctx.fillStyle = sg;
+    sctx.fillRect(0, 0, 64, 64);
+    const smokeTex = new THREE.CanvasTexture(sc);
+
+    const smokeGeo = new THREE.PlaneGeometry(1.1, 1.1);
+    for (let i = 0; i < 48; i++) {
+      const sm = new THREE.MeshBasicMaterial({
+        map: smokeTex,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false
+      });
+      const puff = new THREE.Mesh(smokeGeo, sm);
+      puff.visible = false;
+      puff.renderOrder = 8;
+      scene.add(puff);
+      testDriveSmokePool.push({ mesh: puff, life: 0, maxLife: 0.75, vx: 0, vy: 0, vz: 0 });
+    }
+  }
+
+  function updateTestDriveDriftFx(state) {
+    const cx = state.x || 0;
+    const cz = state.z || 0;
+    const yaw = state.yaw || 0;
+    const sinY = Math.sin(yaw);
+    const cosY = Math.cos(yaw);
+
+    for (let i = 0; i < testDriveSmokePool.length; i++) {
+      const p = testDriveSmokePool[i];
+      if (!p.mesh.visible) continue;
+      p.life += 0.016;
+      if (p.life >= p.maxLife) {
+        p.mesh.visible = false;
+        continue;
+      }
+      const t = p.life / p.maxLife;
+      p.mesh.position.x += p.vx * 0.016;
+      p.mesh.position.y += p.vy * 0.016;
+      p.mesh.position.z += p.vz * 0.016;
+      const s = 0.7 + t * 2.2;
+      p.mesh.scale.set(s, s, s);
+      p.mesh.material.opacity = (1.0 - t) * 0.55;
+      if (camera) p.mesh.quaternion.copy(camera.quaternion);
+    }
+
+    if (!state.isDrifting || (state.speedKmh || 0) < 6.0) {
+      testDriveLastSkidPos = null;
+      return;
+    }
+
+    const rearZ = 1.28;
+    const halfTrack = 0.85;
+    const rlX = cx - halfTrack * cosY + rearZ * sinY;
+    const rlZ = cz + halfTrack * sinY + rearZ * cosY;
+    const rrX = cx + halfTrack * cosY + rearZ * sinY;
+    const rrZ = cz - halfTrack * sinY + rearZ * cosY;
+
+    if (testDriveLastSkidPos) {
+      const dx = cx - testDriveLastSkidPos.x;
+      const dz = cz - testDriveLastSkidPos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.35 && dist < 8.0) {
+        const segAngle = Math.atan2(dx, dz);
+        [[rlX, rlZ, testDriveLastSkidPos.rlX, testDriveLastSkidPos.rlZ],
+         [rrX, rrZ, testDriveLastSkidPos.rrX, testDriveLastSkidPos.rrZ]].forEach(function (pair) {
+          const seg = testDriveSkidPool[testDriveSkidCursor];
+          testDriveSkidCursor = (testDriveSkidCursor + 1) % testDriveSkidPool.length;
+          seg.position.set((pair[0] + pair[2]) * 0.5, 0.002, (pair[1] + pair[3]) * 0.5);
+          seg.rotation.set(-Math.PI / 2, 0, segAngle);
+          seg.scale.set(1, Math.max(0.4, dist * 1.15), 1);
+          seg.visible = true;
+        });
+
+        [[rlX, rlZ], [rrX, rrZ]].forEach(function (pt) {
+          const p = testDriveSmokePool[testDriveSmokeCursor];
+          testDriveSmokeCursor = (testDriveSmokeCursor + 1) % testDriveSmokePool.length;
+          p.mesh.position.set(pt[0] + (Math.random() - 0.5) * 0.25, 0.22, pt[1] + (Math.random() - 0.5) * 0.25);
+          p.mesh.scale.set(0.7, 0.7, 0.7);
+          p.mesh.visible = true;
+          p.life = 0;
+          p.vx = (Math.random() - 0.5) * 0.8;
+          p.vy = 0.85 + Math.random() * 0.65;
+          p.vz = (Math.random() - 0.5) * 0.8;
+        });
+      }
+    }
+    testDriveLastSkidPos = { x: cx, z: cz, rlX: rlX, rlZ: rlZ, rrX: rrX, rrZ: rrZ };
+  }
+
+  function disposeTestDriveDriftFx() {
+    testDriveSkidPool.forEach(function (m) {
+      if (scene) scene.remove(m);
+    });
+    if (testDriveSkidPool.length > 0 && testDriveSkidPool[0].geometry) {
+      testDriveSkidPool[0].geometry.dispose();
+      testDriveSkidPool[0].material.dispose();
+    }
+    testDriveSkidPool = [];
+    testDriveSmokePool.forEach(function (p) {
+      if (scene) scene.remove(p.mesh);
+      if (p.mesh.material) p.mesh.material.dispose();
+    });
+    if (testDriveSmokePool.length > 0 && testDriveSmokePool[0].mesh.geometry) {
+      testDriveSmokePool[0].mesh.geometry.dispose();
+    }
+    testDriveSmokePool = [];
+    testDriveLastSkidPos = null;
+  }
+
   function enterTestDriveMode() {
     if (!scene || !currentModel || !renderer) return false;
     if (testDriveActive) return true;
@@ -3447,6 +3599,7 @@
     }
 
     buildTestDriveTrack(testDriveLighting, testDriveTrackStyle);
+    initTestDriveDriftFx();
 
     // Immediately snap camera to the initial vehicle chase pose and render
     // synchronously so the very first visible frame is already the WebGL test drive
@@ -3523,9 +3676,6 @@
     });
 
     if (camera) {
-      if (testDriveSkyDome) {
-        testDriveSkyDome.position.copy(camera.position);
-      }
       if (state.camX !== undefined) {
         camera.position.set(state.camX, state.camY, state.camZ);
         const target = new THREE.Vector3(state.targetX || 0, state.targetY || 0.8, state.targetZ || 0);
@@ -3536,11 +3686,15 @@
         camera.up.copy(camUp);
         camera.lookAt(target);
       }
+      if (testDriveSkyDome) {
+        testDriveSkyDome.position.copy(camera.position);
+      }
       if (state.fov !== undefined && Math.abs(camera.fov - state.fov) > 0.05) {
         camera.fov = state.fov;
         camera.updateProjectionMatrix();
       }
     }
+    updateTestDriveDriftFx(state);
   }
 
   function exitTestDriveMode() {
@@ -3549,6 +3703,7 @@
 
     stopEngineAndSirenAudio();
     stopSkidAudio();
+    disposeTestDriveDriftFx();
 
     Object.values(testDriveWheelPivots).forEach(function (p) {
       p.origParents.forEach(restoreTransform);

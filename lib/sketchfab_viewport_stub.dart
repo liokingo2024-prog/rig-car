@@ -88,6 +88,8 @@ void updateSketchfabTestDriveState({
   required double targetZ,
   double fovDeg = 55.0,
   double camRoll = 0.0,
+  bool isDrifting = false,
+  double speedKmh = 0.0,
 }) {}
 void exitSketchfabTestDrive() {}
 void setSketchfabTestDriveWorld(String lighting, String trackStyle) {}
