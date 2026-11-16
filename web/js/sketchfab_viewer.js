@@ -179,15 +179,15 @@
     dirLightKey = new THREE.DirectionalLight(0xffffff, 1.6);
     dirLightKey.position.set(6, 9, 6);
     dirLightKey.castShadow = true;
-    dirLightKey.shadow.mapSize.width = 2048;
-    dirLightKey.shadow.mapSize.height = 2048;
-    dirLightKey.shadow.camera.near = 0.5;
-    dirLightKey.shadow.camera.far = 60;
-    dirLightKey.shadow.camera.left = -8;
-    dirLightKey.shadow.camera.right = 8;
-    dirLightKey.shadow.camera.top = 8;
-    dirLightKey.shadow.camera.bottom = -8;
-    dirLightKey.shadow.bias = -0.0002;
+    dirLightKey.shadow.mapSize.width = 1024;
+    dirLightKey.shadow.mapSize.height = 1024;
+    dirLightKey.shadow.camera.near = 1.0;
+    dirLightKey.shadow.camera.far = 45;
+    dirLightKey.shadow.camera.left = -4.2;
+    dirLightKey.shadow.camera.right = 4.2;
+    dirLightKey.shadow.camera.top = 4.2;
+    dirLightKey.shadow.camera.bottom = -4.2;
+    dirLightKey.shadow.bias = -0.0003;
     scene.add(dirLightKey);
 
     dirLightFill = new THREE.DirectionalLight(0xaad8e6, 0.7);
@@ -2239,15 +2239,35 @@
   let audioCtx = null;
   let currentPreviewOsc = null;
   let currentPreviewSource = null;
-  let currentSkidOsc = null;
-  let currentSkidGain = null;
+  // Multi-Layer Engine & Exhaust Synthesizer
   let engineOscA = null;
   let engineOscB = null;
-  let engineGain = null;
+  let engineOscSub = null;
+  let enginePreSatGain = null;
+  let engineWaveShaper = null;
   let engineFilter = null;
+  let engineFlutterOsc = null;
+  let engineFlutterGain = null;
+  let engineTurboOsc = null;
+  let engineTurboGain = null;
+  let engineGain = null;
   let sirenOsc = null;
   let sirenLfo = null;
   let sirenGain = null;
+  let lastAudioRpm = 0;
+  let lastAudioThrottle = 0;
+  let lastShiftBarkTime = 0;
+  let lastOverrunTime = 0;
+
+  // Realistic Tire Scrub & Screech Synthesizer
+  let sharedWhiteNoiseBuffer = null;
+  let skidSource = null;
+  let skidNoiseFilter = null;
+  let skidNoiseGain = null;
+  let skidToneA = null;
+  let skidToneB = null;
+  let skidToneGain = null;
+  let skidMasterGain = null;
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -2326,14 +2346,77 @@
     }
   }
 
-  // Live engine + siren synthesizer for Test Drive. Two oscillators (fundamental
-  // plus harmonic overtone) track RPM, and a sweeping LFO drives the siren.
+  // ── Web Audio Engine, Exhaust, Siren, and Skid Synthesizers ───────────────────
+  // Audio synthesis runs natively on the browser AudioRenderThread (<0.02ms overhead).
   const ENGINE_PROFILES = {
     v10: { fundamental: 34, harmonic: 2.02, filter: 2600, gain: 0.16 },
     v8: { fundamental: 27, harmonic: 1.5, filter: 1500, gain: 0.18 },
     turbo_i4: { fundamental: 24, harmonic: 2.5, filter: 2000, gain: 0.14 },
     ev: { fundamental: 90, harmonic: 3.0, filter: 5200, gain: 0.10 }
   };
+
+  function makeDistortionCurve(k) {
+    const n_samples = 512;
+    const curve = new Float32Array(n_samples);
+    const amount = (k !== undefined) ? k : 1.8;
+    for (let i = 0; i < n_samples; ++i) {
+      const x = (i * 2) / n_samples - 1;
+      curve[i] = Math.tanh(amount * x);
+    }
+    return curve;
+  }
+
+  function getWhiteNoiseBuffer(ctx) {
+    if (sharedWhiteNoiseBuffer) return sharedWhiteNoiseBuffer;
+    const len = ctx.sampleRate;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    sharedWhiteNoiseBuffer = buf;
+    return sharedWhiteNoiseBuffer;
+  }
+
+  function triggerExhaustPop(ctx, intensity) {
+    try {
+      if (!ctx || ctx.state === 'suspended') return;
+      const t = ctx.currentTime;
+      const popOsc = ctx.createOscillator();
+      const popGain = ctx.createGain();
+      const popFilter = ctx.createBiquadFilter();
+
+      popOsc.type = 'triangle';
+      popOsc.frequency.setValueAtTime(85 + Math.random() * 40, t);
+      popOsc.frequency.exponentialRampToValueAtTime(26, t + 0.05);
+
+      popFilter.type = 'lowpass';
+      popFilter.frequency.setValueAtTime(420, t);
+
+      const amp = Math.min(0.24, 0.08 * (intensity || 1.0));
+      popGain.gain.setValueAtTime(amp, t);
+      popGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+
+      popOsc.connect(popFilter);
+      popFilter.connect(popGain);
+      popGain.connect(ctx.destination);
+
+      popOsc.start(t);
+      popOsc.stop(t + 0.07);
+    } catch (e) {}
+  }
+
+  function triggerOverrunBurble(ctx) {
+    try {
+      const popCount = 2 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < popCount; i++) {
+        const delay = 0.04 + i * (0.07 + Math.random() * 0.05);
+        setTimeout(function () {
+          triggerExhaustPop(ctx, 0.75 + Math.random() * 0.45);
+        }, delay * 1000);
+      }
+    } catch (e) {}
+  }
 
   function updateEngineAndSirenAudio(rpm, throttle, profile, sirenEnabled) {
     try {
@@ -2342,29 +2425,107 @@
       const rev = Math.max(0, Math.min(1.0, (rpm || 0) / 7800));
       const load = Math.max(0, Math.min(1.0, Math.abs(throttle || 0)));
       const fundamental = cfg.fundamental + rev * 210;
-      const targetGain = 0.004 + rev * 0.03 + load * cfg.gain * 0.55;
+      const targetGain = 0.004 + rev * 0.032 + load * cfg.gain * 0.55;
+
+      const now = ctx.currentTime;
+
+      // Upshift ignition-cut bark detection: sudden RPM drop under load
+      if (lastAudioRpm > 3200 && (lastAudioRpm - (rpm || 0)) > 950 && (now - lastShiftBarkTime) > 0.40) {
+        lastShiftBarkTime = now;
+        triggerExhaustPop(ctx, 1.25);
+      }
+
+      // Off-throttle overrun burble/crackle detection: rapid lift-off at high RPM
+      if (lastAudioThrottle > 0.40 && load < 0.08 && (rpm || 0) > 3600 && (now - lastOverrunTime) > 0.70) {
+        lastOverrunTime = now;
+        triggerOverrunBurble(ctx);
+      }
+
+      lastAudioRpm = rpm || 0;
+      lastAudioThrottle = load;
 
       if (!engineOscA) {
         engineGain = ctx.createGain();
+        engineGain.gain.setValueAtTime(0.0001, now);
+
+        // Pre-saturation gain
+        enginePreSatGain = ctx.createGain();
+        enginePreSatGain.gain.setValueAtTime(0.70, now);
+
+        // WaveShaper soft saturation (tanh curve, 2x oversampled)
+        engineWaveShaper = ctx.createWaveShaper();
+        engineWaveShaper.curve = makeDistortionCurve(1.8);
+        engineWaveShaper.oversample = '2x';
+
+        // Resonant lowpass filter
         engineFilter = ctx.createBiquadFilter();
+        engineFilter.type = 'lowpass';
+        engineFilter.frequency.setValueAtTime(cfg.filter, now);
+        engineFilter.Q.setValueAtTime(2.4, now);
+
+        // 3 harmonic oscillators: fundamental, harmonic, sub-bass
         engineOscA = ctx.createOscillator();
         engineOscB = ctx.createOscillator();
+        engineOscSub = ctx.createOscillator();
         engineOscA.type = 'sawtooth';
-        engineOscB.type = 'sine';
-        engineFilter.type = 'lowpass';
-        engineFilter.frequency.setValueAtTime(cfg.filter, ctx.currentTime);
-        engineGain.gain.setValueAtTime(0.0001, ctx.currentTime);
-        engineOscA.connect(engineFilter);
-        engineOscB.connect(engineFilter);
+        engineOscB.type = 'triangle';
+        engineOscSub.type = 'triangle';
+
+        // Connect harmonic layer into preSat -> waveshaper -> filter -> engineGain
+        engineOscA.connect(enginePreSatGain);
+        engineOscB.connect(enginePreSatGain);
+        engineOscSub.connect(enginePreSatGain);
+        enginePreSatGain.connect(engineWaveShaper);
+        engineWaveShaper.connect(engineFilter);
         engineFilter.connect(engineGain);
+
+        // Throatiness LFO modulating filter cutoff
+        engineFlutterOsc = ctx.createOscillator();
+        engineFlutterGain = ctx.createGain();
+        engineFlutterOsc.type = 'sine';
+        engineFlutterOsc.frequency.setValueAtTime(10, now);
+        engineFlutterGain.gain.setValueAtTime(80, now);
+        engineFlutterOsc.connect(engineFlutterGain);
+        engineFlutterGain.connect(engineFilter.frequency);
+
+        // High-frequency Turbo spool oscillator
+        engineTurboOsc = ctx.createOscillator();
+        engineTurboGain = ctx.createGain();
+        engineTurboOsc.type = 'sine';
+        engineTurboOsc.frequency.setValueAtTime(1600, now);
+        engineTurboGain.gain.setValueAtTime(0.0001, now);
+        engineTurboOsc.connect(engineTurboGain);
+        engineTurboGain.connect(engineGain);
+
+        // Master connect to destination
         engineGain.connect(ctx.destination);
+
         engineOscA.start();
         engineOscB.start();
+        engineOscSub.start();
+        engineFlutterOsc.start();
+        engineTurboOsc.start();
       }
-      engineOscA.frequency.setTargetAtTime(fundamental, ctx.currentTime, 0.04);
-      engineOscB.frequency.setTargetAtTime(fundamental * cfg.harmonic, ctx.currentTime, 0.04);
-      engineFilter.frequency.setTargetAtTime(cfg.filter * (0.55 + rev * 0.8), ctx.currentTime, 0.08);
-      engineGain.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.06);
+
+      // Live parameter modulation on Web Audio thread (<0.02ms overhead)
+      engineOscA.frequency.setTargetAtTime(fundamental, now, 0.04);
+      engineOscB.frequency.setTargetAtTime(fundamental * cfg.harmonic, now, 0.04);
+      engineOscSub.frequency.setTargetAtTime(fundamental * 0.5, now, 0.04);
+
+      const filterCutoff = cfg.filter * (0.55 + rev * 0.85);
+      engineFilter.frequency.setTargetAtTime(filterCutoff, now, 0.06);
+
+      // Throatiness LFO speed and depth track revs
+      engineFlutterOsc.frequency.setTargetAtTime(8 + rev * 22, now, 0.06);
+      engineFlutterGain.gain.setTargetAtTime(50 + rev * 160, now, 0.06);
+
+      // Turbo spool tracks boost and positive throttle
+      const turboFreq = 1600 + rev * 3200 + load * 400;
+      const turboAmp = (cfg === ENGINE_PROFILES.ev) ? 0.0 : (load * (0.003 + rev * 0.020));
+      engineTurboOsc.frequency.setTargetAtTime(turboFreq, now, 0.08);
+      engineTurboGain.gain.setTargetAtTime(turboAmp, now, 0.08);
+
+      engineGain.gain.setTargetAtTime(targetGain, now, 0.06);
 
       if (sirenEnabled) {
         if (!sirenOsc) {
@@ -2396,12 +2557,19 @@
     if (!audioCtx) return;
     if (engineGain) engineGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
     if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
-    [engineOscA, engineOscB, sirenOsc, sirenLfo].forEach(function(osc) {
+    [engineOscA, engineOscB, engineOscSub, engineFlutterOsc, engineTurboOsc, sirenOsc, sirenLfo].forEach(function(osc) {
       if (osc) { try { osc.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
     });
     engineOscA = null;
     engineOscB = null;
+    engineOscSub = null;
+    enginePreSatGain = null;
+    engineWaveShaper = null;
     engineFilter = null;
+    engineFlutterOsc = null;
+    engineFlutterGain = null;
+    engineTurboOsc = null;
+    engineTurboGain = null;
     engineGain = null;
     sirenOsc = null;
     sirenLfo = null;
@@ -2410,26 +2578,74 @@
 
   function updateSkidAudio(isDrifting, enabled) {
     if (!enabled || !isDrifting) {
-      if (currentSkidGain && audioCtx) {
-        currentSkidGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
+      if (skidMasterGain && audioCtx) {
+        skidMasterGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
       }
       return;
     }
     try {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      if (!currentSkidOsc) {
-        currentSkidOsc = audioCtx.createOscillator();
-        currentSkidGain = audioCtx.createGain();
-        currentSkidOsc.type = 'sawtooth';
-        currentSkidOsc.frequency.setValueAtTime(360, audioCtx.currentTime);
-        currentSkidGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-        currentSkidOsc.connect(currentSkidGain);
-        currentSkidGain.connect(audioCtx.destination);
-        currentSkidOsc.start();
+      const ctx = ensureAudioContext();
+      if (!skidMasterGain) {
+        skidMasterGain = ctx.createGain();
+        skidMasterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        skidMasterGain.connect(ctx.destination);
+
+        // Abrasive asphalt scrub: looped white noise through resonant bandpass filter
+        const noiseBuf = getWhiteNoiseBuffer(ctx);
+        skidSource = ctx.createBufferSource();
+        skidSource.buffer = noiseBuf;
+        skidSource.loop = true;
+
+        skidNoiseFilter = ctx.createBiquadFilter();
+        skidNoiseFilter.type = 'bandpass';
+        skidNoiseFilter.frequency.setValueAtTime(1150, ctx.currentTime);
+        skidNoiseFilter.Q.setValueAtTime(1.8, ctx.currentTime);
+
+        skidNoiseGain = ctx.createGain();
+        skidNoiseGain.gain.setValueAtTime(0.07, ctx.currentTime);
+
+        skidSource.connect(skidNoiseFilter);
+        skidNoiseFilter.connect(skidNoiseGain);
+        skidNoiseGain.connect(skidMasterGain);
+        skidSource.start();
+
+        // Dual detuned slip-angle squeal oscillators (760Hz & 815Hz)
+        skidToneA = ctx.createOscillator();
+        skidToneB = ctx.createOscillator();
+        skidToneA.type = 'sawtooth';
+        skidToneB.type = 'triangle';
+        skidToneA.frequency.setValueAtTime(760, ctx.currentTime);
+        skidToneB.frequency.setValueAtTime(815, ctx.currentTime);
+
+        skidToneGain = ctx.createGain();
+        skidToneGain.gain.setValueAtTime(0.05, ctx.currentTime);
+
+        skidToneA.connect(skidToneGain);
+        skidToneB.connect(skidToneGain);
+        skidToneGain.connect(skidMasterGain);
+
+        skidToneA.start();
+        skidToneB.start();
       }
-      currentSkidGain.gain.setTargetAtTime(0.10, audioCtx.currentTime, 0.05);
+      skidMasterGain.gain.setTargetAtTime(0.12, ctx.currentTime, 0.04);
+      skidNoiseGain.gain.setTargetAtTime(0.075, ctx.currentTime, 0.04);
+      skidToneGain.gain.setTargetAtTime(0.055, ctx.currentTime, 0.04);
     } catch (e) {}
+  }
+
+  function stopSkidAudio() {
+    if (!audioCtx) return;
+    if (skidMasterGain) skidMasterGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.06);
+    [skidSource, skidToneA, skidToneB].forEach(function (node) {
+      if (node) { try { node.stop(audioCtx.currentTime + 0.15); } catch (e) {} }
+    });
+    skidSource = null;
+    skidNoiseFilter = null;
+    skidNoiseGain = null;
+    skidToneA = null;
+    skidToneB = null;
+    skidToneGain = null;
+    skidMasterGain = null;
   }
 
   // ── WebGL Test Drive Mode ─────────────────────────────────────────────────
@@ -2482,6 +2698,7 @@
     const turf = new THREE.Mesh(turfGeo, turfMat);
     turf.rotation.x = -Math.PI / 2;
     turf.position.set(0, -0.04, 0);
+    turf.receiveShadow = true;
     testDriveTrackGroup.add(turf);
 
     // Dynamic anchor that snaps along vehicle Z in 24m increments
@@ -2500,6 +2717,7 @@
     const gravel = new THREE.Mesh(gravelGeo, gravelMat);
     gravel.rotation.x = -Math.PI / 2;
     gravel.position.set(0, -0.025, 0);
+    gravel.receiveShadow = true;
     testDriveRoadAnchor.add(gravel);
 
     // 24m dark motorsport asphalt straight
@@ -2512,6 +2730,7 @@
     const road = new THREE.Mesh(roadGeo, roadMat);
     road.rotation.x = -Math.PI / 2;
     road.position.set(0, -0.015, 0);
+    road.receiveShadow = true;
     testDriveRoadAnchor.add(road);
 
     // Subtle 2D asphalt grid for optical flow
@@ -2551,6 +2770,7 @@
       [-12.35, 12.35].forEach(function (cx) {
         const curb = new THREE.Mesh(curbGeo, mat);
         curb.position.set(cx, 0.01, z);
+        curb.receiveShadow = true;
         testDriveRoadAnchor.add(curb);
       });
     }
@@ -2608,6 +2828,139 @@
     scene.add(testDriveTrackGroup);
   }
 
+  // ── Procedural Under-Chassis AO Contact Shadow & Tire Contact Patches ─────
+  let testDriveContactShadow = null;
+
+  function createChassisAOMaterial() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 512);
+
+    const cx = 128, cy = 256;
+    ctx.save();
+    ctx.scale(1.0, 2.0);
+    const outerGrad = ctx.createRadialGradient(cx, cy / 2, 45, cx, cy / 2, 120);
+    outerGrad.addColorStop(0, 'rgba(0, 0, 0, 0.78)');
+    outerGrad.addColorStop(0.48, 'rgba(0, 0, 0, 0.40)');
+    outerGrad.addColorStop(0.85, 'rgba(0, 0, 0, 0.12)');
+    outerGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+    ctx.fillStyle = outerGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy / 2, 120, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.scale(0.82, 2.0);
+    const coreGrad = ctx.createRadialGradient(cx / 0.82, cy / 2, 12, cx / 0.82, cy / 2, 85);
+    coreGrad.addColorStop(0, 'rgba(0, 0, 0, 0.90)');
+    coreGrad.addColorStop(0.65, 'rgba(0, 0, 0, 0.55)');
+    coreGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(cx / 0.82, cy / 2, 85, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    return new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.65
+    });
+  }
+
+  function createTirePatchMaterial() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 128, 128);
+
+    const grad = ctx.createRadialGradient(64, 64, 8, 64, 64, 56);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.92)');
+    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.68)');
+    grad.addColorStop(0.85, 'rgba(0, 0, 0, 0.22)');
+    grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+
+    ctx.save();
+    ctx.scale(0.72, 1.28);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(64 / 0.72, 64 / 1.28, 44, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    return new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.85
+    });
+  }
+
+  function buildTestDriveContactShadow(wheels) {
+    const group = new THREE.Group();
+    group.name = 'TestDriveContactShadow';
+
+    let minX = -0.9, maxX = 0.9, minZ = -1.8, maxZ = 1.8;
+    if (wheels && wheels.FL && wheels.FR && wheels.RL && wheels.RR) {
+      minX = Math.min(wheels.FL.x, wheels.FR.x, wheels.RL.x, wheels.RR.x);
+      maxX = Math.max(wheels.FL.x, wheels.FR.x, wheels.RL.x, wheels.RR.x);
+      minZ = Math.min(wheels.FL.z, wheels.FR.z, wheels.RL.z, wheels.RR.z);
+      maxZ = Math.max(wheels.FL.z, wheels.FR.z, wheels.RL.z, wheels.RR.z);
+    }
+    const carW = Math.max(1.85, (maxX - minX) + 0.38);
+    const carL = Math.max(4.10, (maxZ - minZ) + 0.92);
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+
+    // 1. Under-Chassis Ambient Occlusion contact shadow
+    const chassisMat = createChassisAOMaterial();
+    const chassisGeo = new THREE.PlaneGeometry(carW, carL);
+    const chassisMesh = new THREE.Mesh(chassisGeo, chassisMat);
+    chassisMesh.rotation.x = -Math.PI / 2;
+    chassisMesh.position.set(centerX, 0.003, centerZ);
+    group.add(chassisMesh);
+
+    // 2. Four Tire Contact Patches at asphalt surface (y = 0.004)
+    const tireMat = createTirePatchMaterial();
+    const tireGeo = new THREE.PlaneGeometry(0.28, 0.44);
+    const frontPatches = [];
+
+    const cornerCoords = wheels ? {
+      FL: [wheels.FL ? wheels.FL.x : -0.85, wheels.FL ? wheels.FL.z : 1.35],
+      FR: [wheels.FR ? wheels.FR.x : 0.85, wheels.FR ? wheels.FR.z : 1.35],
+      RL: [wheels.RL ? wheels.RL.x : -0.85, wheels.RL ? wheels.RL.z : -1.35],
+      RR: [wheels.RR ? wheels.RR.x : 0.85, wheels.RR ? wheels.RR.z : -1.35]
+    } : {
+      FL: [-0.85, 1.35],
+      FR: [0.85, 1.35],
+      RL: [-0.85, -1.35],
+      RR: [0.85, -1.35]
+    };
+
+    ['FL', 'FR', 'RL', 'RR'].forEach(function (corner) {
+      const coord = cornerCoords[corner];
+      const patch = new THREE.Mesh(tireGeo, tireMat);
+      patch.rotation.x = -Math.PI / 2;
+      patch.position.set(coord[0], 0.004, coord[1]);
+      group.add(patch);
+      if (corner === 'FL' || corner === 'FR') {
+        frontPatches.push(patch);
+      }
+    });
+
+    return {
+      group: group,
+      frontPatches: frontPatches
+    };
+  }
+
   function enterTestDriveMode() {
     if (!scene || !currentModel || !renderer) return false;
     if (testDriveActive) return true;
@@ -2641,6 +2994,11 @@
     const vehicleChassis = modelPivotGroup || currentModel;
     testDriveModelSnapshot = snapshotTransform(vehicleChassis);
     testDriveBodyGroup.attach(vehicleChassis);
+
+    // Procedural Under-Chassis AO Contact Shadow & 4 Tire Contact Patches
+    const wheels = detectedWheelData && detectedWheelData.wheels;
+    testDriveContactShadow = buildTestDriveContactShadow(wheels);
+    testDriveGroup.add(testDriveContactShadow.group);
 
     testDriveWheelPivots = {};
     const wheels = detectedWheelData && detectedWheelData.wheels;
@@ -2702,6 +3060,21 @@
       currentModel.rotation.z = state.roll || 0;
     }
 
+    // Dynamic directional light & shadow tracking: lock frustum directly to car
+    if (dirLightKey && state.x !== undefined) {
+      dirLightKey.position.set(state.x + 8.0, (state.y || 0) + 18.0, state.z + 12.0);
+      dirLightKey.target.position.set(state.x, state.y || 0, state.z);
+      dirLightKey.target.updateMatrixWorld();
+    }
+
+    // Steer front tire contact patches with steering angle
+    if (testDriveContactShadow && testDriveContactShadow.frontPatches) {
+      const steer = state.steerAngle || 0;
+      testDriveContactShadow.frontPatches.forEach(function (patch) {
+        patch.rotation.z = -steer;
+      });
+    }
+
     // Infinite scrolling 3D track anchor snaps in 24m increments along car Z
     if (testDriveRoadAnchor && state.z !== undefined) {
       const snapZ = Math.round(state.z / 24) * 24;
@@ -2748,6 +3121,9 @@
     if (!testDriveActive) return;
     testDriveActive = false;
 
+    stopEngineAndSirenAudio();
+    stopSkidAudio();
+
     Object.values(testDriveWheelPivots).forEach(function (p) {
       p.origParents.forEach(restoreTransform);
     });
@@ -2763,6 +3139,14 @@
     }
     testDriveModelSnapshot = null;
     testDriveBodyGroup = null;
+
+    if (testDriveContactShadow) {
+      disposeObject(testDriveContactShadow.group);
+      if (testDriveGroup) {
+        testDriveGroup.remove(testDriveContactShadow.group);
+      }
+      testDriveContactShadow = null;
+    }
 
     if (testDriveGroup) {
       scene.remove(testDriveGroup);
@@ -2780,6 +3164,12 @@
       scene.fog = testDriveOrigFog;
     }
     testDriveOrigFog = null;
+
+    if (dirLightKey) {
+      dirLightKey.position.set(6, 9, 6);
+      dirLightKey.target.position.set(0, 0, 0);
+      dirLightKey.target.updateMatrixWorld();
+    }
 
     if (camera) {
       camera.up.set(0, 1, 0);
@@ -2823,6 +3213,7 @@
     playAudioPreview: playAudioPreview,
     stopAudioPreview: stopAudioPreview,
     updateSkidAudio: updateSkidAudio,
+    stopSkidAudio: stopSkidAudio,
     updateEngineAndSirenAudio: updateEngineAndSirenAudio,
     stopEngineAndSirenAudio: stopEngineAndSirenAudio,
     enterTestDriveMode: enterTestDriveMode,

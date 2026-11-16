@@ -331,6 +331,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     if (_webglActive) exitSketchfabTestDrive();
     _notifyPhysicsUpdated();
     updateSketchfabSkidAudio(false, false);
+    stopSketchfabSkidAudio();
     stopSketchfabEngineAudio();
     _ticker.dispose();
     _focusNode.dispose();

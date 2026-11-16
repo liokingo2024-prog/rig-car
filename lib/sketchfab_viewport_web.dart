@@ -532,3 +532,14 @@ void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {
     debugPrint('updateSketchfabSkidAudio error: $e');
   }
 }
+
+void stopSketchfabSkidAudio() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer != null) {
+      viewer.callMethod('stopSkidAudio');
+    }
+  } catch (e) {
+    debugPrint('stopSketchfabSkidAudio error: $e');
+  }
+}

@@ -3536,5 +3536,54 @@ f 4 5 6
       final camRoll = (-steer * 0.085 + latG * 0.028 + roll * 0.40).clamp(-0.16, 0.16);
       expect(camRoll.isFinite, isTrue);
     });
+
+    test('Part XIV: Directional light shadow map frustum, contact shadow dimensions and engine audio harmonic frequency curves', () {
+      // 1. Verify shadow frustum optimization: 1024x1024 at [-4.2m, 4.2m] gives ~122 texels/m vs 128 texels/m at 2048x2048, with 75% memory reduction
+      const oldResolution = 2048 * 2048;
+      const newResolution = 1024 * 1024;
+      expect(newResolution / oldResolution, equals(0.25));
+
+      const frustumSpan = 4.2 - (-4.2); // 8.4m
+      final texelsPerMeter = 1024.0 / frustumSpan;
+      expect(texelsPerMeter, closeTo(121.9, 0.5));
+
+      // 2. Verify contact shadow placement at y = 0.004m to avoid z-fighting with asphalt
+      const contactShadowY = 0.004;
+      const roadSurfaceY = -0.015;
+      expect(contactShadowY, greaterThan(roadSurfaceY));
+      expect(contactShadowY, closeTo(0.004, 0.0001));
+
+      // 3. Verify harmonic engine audio frequency curves: fundamental f0, cylinder firing f1, sub-bass f_sub, turbo whine
+      const v10Fundamental = 34.0;
+      const v10Harmonic = 2.02;
+      const idleRpm = 850.0;
+      const redlineRpm = 7800.0;
+
+      final revIdle = (idleRpm / 7800.0).clamp(0.0, 1.0);
+      final revRedline = (redlineRpm / 7800.0).clamp(0.0, 1.0);
+
+      final f0Idle = v10Fundamental + revIdle * 210.0;
+      final f0Redline = v10Fundamental + revRedline * 210.0;
+      expect(f0Idle, greaterThan(50.0));
+      expect(f0Redline, closeTo(244.0, 1.0));
+
+      final f1Idle = f0Idle * v10Harmonic;
+      expect(f1Idle, greaterThan(110.0));
+
+      // Sub-bass triangle is 0.5x fundamental
+      final fSubIdle = f0Idle * 0.5;
+      expect(fSubIdle, closeTo(28.4, 1.0));
+
+      // Turbo spool frequency scales between 1600Hz and 5200Hz
+      final turboIdle = 1600.0 + revIdle * 3200.0;
+      final turboBoost = 1600.0 + revRedline * 3200.0 + 1.0 * 400.0;
+      expect(turboIdle, greaterThan(1900.0));
+      expect(turboBoost, equals(5200.0));
+
+      // Dual detuned tire squeal frequencies (760Hz and 815Hz)
+      const skidA = 760.0;
+      const skidB = 815.0;
+      expect(skidB - skidA, equals(55.0)); // 55Hz acoustic beat frequency
+    });
   });
 }

@@ -60,6 +60,7 @@ void playSketchfabAudioPreview(
 }) {}
 void stopSketchfabAudioPreview() {}
 void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {}
+void stopSketchfabSkidAudio() {}
 void updateSketchfabEngineAudio(
   double rpm,
   double throttle,
