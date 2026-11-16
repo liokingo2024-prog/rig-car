@@ -522,15 +522,23 @@ void exitSketchfabTestDrive() {
   }
 }
 
-void updateSketchfabTestDriveWorld(String lighting, String trackStyle) {
+void setSketchfabTestDriveWorld(String lighting, String trackStyle) {
   try {
     final viewer = js.context['SketchfabViewer'];
     if (viewer != null) {
-      viewer.callMethod('setTestDriveWorld', [lighting, trackStyle]);
+      if (viewer.hasProperty('setTestDriveWorld')) {
+        viewer.callMethod('setTestDriveWorld', [lighting, trackStyle]);
+      } else if (viewer.hasProperty('setSketchfabTestDriveWorld')) {
+        viewer.callMethod('setSketchfabTestDriveWorld', [lighting, trackStyle]);
+      }
     }
   } catch (e) {
-    debugPrint('updateSketchfabTestDriveWorld error: $e');
+    debugPrint('setSketchfabTestDriveWorld error: $e');
   }
+}
+
+void updateSketchfabTestDriveWorld(String lighting, String trackStyle) {
+  setSketchfabTestDriveWorld(lighting, trackStyle);
 }
 
 void updateSketchfabSkidAudio(bool isDrifting, bool enabled) {

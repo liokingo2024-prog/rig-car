@@ -1460,7 +1460,7 @@ void main() {
     });
 
     testWidgets(
-      'renders TestDriveViewport with Day Bright lighting and asphalt track selector',
+      'renders TestDriveViewport with Golden Sunset lighting and asphalt track selector',
       (tester) async {
         tester.view.physicalSize = const Size(1280, 800);
         tester.view.devicePixelRatio = 1.0;
@@ -1472,10 +1472,10 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 100));
 
-        expect(find.text('Day'), findsOneWidget);
+        expect(find.text('Sunset'), findsOneWidget);
         expect(find.text('Circuit'), findsOneWidget);
         expect(
-          find.byTooltip('Environment Lighting: Day Bright'),
+          find.byTooltip('Environment Lighting: Golden Sunset'),
           findsOneWidget,
         );
         expect(
@@ -2409,7 +2409,7 @@ endsolid sports_car''';
 
       // Verifies TopBar surface and lighting selectors are accessible
       expect(find.text('Circuit'), findsOneWidget);
-      expect(find.text('Day'), findsOneWidget);
+      expect(find.text('Sunset'), findsOneWidget);
     });
 
     test('VehiclePhysicsSimulation accurately tracks wheel roll travel and resets', () {
@@ -3565,18 +3565,18 @@ f 4 5 6
 
     test('Part XV: WebGL world parity sky dome, track surface styles and unified camera baseline', () {
       // 1. Verify chase camera baseline geometry and field of view
-      const camDist = 5.60;
-      const camHeight = 1.88;
-      const baseFov = 56.0;
-      expect(camDist, equals(5.60));
-      expect(camHeight, equals(1.88));
-      expect(baseFov, equals(56.0));
+      const camDist = 5.45;
+      const camHeight = 1.82;
+      const baseFov = 54.0;
+      expect(camDist, equals(5.45));
+      expect(camHeight, equals(1.82));
+      expect(baseFov, equals(54.0));
 
-      // 2. Dynamic speed & surge FOV bounds [50.0°, 78.0°]
-      final minTargetFov = (baseFov + 0.0 - 4.0).clamp(50.0, 78.0);
-      final maxTargetFov = (baseFov + 17.5 + 5.0 + 2.4).clamp(50.0, 78.0);
-      expect(minTargetFov, equals(52.0));
-      expect(maxTargetFov, equals(78.0));
+      // 2. Dynamic speed & surge FOV bounds [50.0°, 76.0°]
+      final minTargetFov = (baseFov + 0.0 - 3.0).clamp(50.0, 76.0);
+      final maxTargetFov = (baseFov + 17.5 + 4.5 + 2.4).clamp(50.0, 76.0);
+      expect(minTargetFov, equals(51.0));
+      expect(maxTargetFov, equals(76.0));
 
       // 3. Verify TrackSurfaceStyle enum values and lowercase identifiers
       expect(TrackSurfaceStyle.values.map((s) => s.name.toLowerCase()).toList(),

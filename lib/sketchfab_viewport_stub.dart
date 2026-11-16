@@ -90,4 +90,5 @@ void updateSketchfabTestDriveState({
   double camRoll = 0.0,
 }) {}
 void exitSketchfabTestDrive() {}
+void setSketchfabTestDriveWorld(String lighting, String trackStyle) {}
 void updateSketchfabTestDriveWorld(String lighting, String trackStyle) {}

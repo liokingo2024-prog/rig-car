@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -234,10 +235,10 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   }
 
   CameraMode _cameraMode = CameraMode.chase;
-  TestDriveLighting _lighting = TestDriveLighting.day;
+  TestDriveLighting _lighting = TestDriveLighting.sunset;
   TrackSurfaceStyle _trackStyle = TrackSurfaceStyle.circuit;
-  final TestDriveRenderMode _renderMode =
-      kIsWeb ? TestDriveRenderMode.webgl : TestDriveRenderMode.solid;
+  final TestDriveRenderMode _renderMode = TestDriveRenderMode.webgl;
+  Timer? _webglRetryTimer;
   double _orbitAzimuth = 0.65;
   double _orbitElevation = 0.32;
   double _orbitDistance = 7.2;
@@ -246,21 +247,21 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   // to the car in polar coordinates so it can never lag behind or cut the
   // chord of a corner at speed.
   double _camYaw = 0.0;
-  double _camDist = 5.60;
-  double _camHeight = 1.88;
+  double _camDist = 5.45;
+  double _camHeight = 1.82;
   double _camLookAhead = 0.0;
   double _camSteerSwing = 0.0;
   double _camSlip = 0.0;
   double _camRoll = 0.0;
-  double _fovDeg = 56.0;
+  double _fovDeg = 54.0;
   double _gearShiftKick = 0.0;
-  int _prevGear = 1;
+  int _lastGear = 1;
   double _chaseUserYaw = 0.0;
   double _chaseUserPitch = 0.0;
   double _timeSinceChaseDrag = 10.0;
   bool _showTouchControls = false;
 
-  Vec3 _chaseCamPos = const Vec3(0, 1.88, 30.0);
+  Vec3 _chaseCamPos = const Vec3(0, 1.82, 30.0);
   Vec3 _chaseCamTarget = const Vec3(0, 0.72, 21.6);
 
   // Time tracking
@@ -328,6 +329,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   @override
   void dispose() {
+    _webglRetryTimer?.cancel();
+    _webglRetryTimer = null;
     if (_webglActive) exitSketchfabTestDrive();
     _notifyPhysicsUpdated();
     updateSketchfabSkidAudio(false, false);
@@ -385,21 +388,6 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       steerInput: steer,
       handbrake: handbrake,
     );
-
-    // Upshift impulse kick
-    if (_sim.currentGear > _prevGear && _prevGear > 0) {
-      _gearShiftKick = 1.0;
-    }
-    _prevGear = _sim.currentGear;
-    _gearShiftKick = max(0.0, _gearShiftKick - dt * 4.0);
-
-    // Dynamic FOV warp: non-linear speed warp + G surge + upshift kick
-    final speedNorm = (_sim.speedKmh / 220.0).clamp(0.0, 1.0);
-    final speedFov = pow(speedNorm, 1.12) * 17.5;
-    final gSurge = (_sim.longitudinalG * 3.8).clamp(-4.0, 5.0);
-    final kickFov = _gearShiftKick * 2.4;
-    final targetFov = (56.0 + speedFov + gSurge + kickFov).clamp(50.0, 78.0);
-    _fovDeg += (targetFov - _fovDeg) * (1.0 - exp(-dt * 8.0));
 
     _updatePerformanceTelemetry(dt, throttle);
     updateSketchfabSkidAudio(_sim.isDrifting, widget.tireSkidAudioEnabled);
@@ -529,7 +517,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   /// Enters/leaves the Three.js drivable mode as the render mode changes.
   /// Falls back to the CPU solid renderer when the JS scene is unavailable.
   void _syncWebglMode() {
-    if (!mounted) return;
+    if (!mounted || !kIsWeb) return;
     final want = _renderMode == TestDriveRenderMode.webgl;
     if (!want) {
       if (!_webglActive) return;
@@ -540,12 +528,13 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     if (_webglActive) return;
     if (enterSketchfabTestDrive()) {
       setState(() => _webglActive = true);
-      updateSketchfabTestDriveWorld(_lighting.name, _trackStyle.name);
+      setSketchfabTestDriveWorld(_lighting.name, _trackStyle.name);
       return;
     }
     if (_webglRetries < 6) {
       _webglRetries++;
-      Future.delayed(const Duration(milliseconds: 250), () {
+      _webglRetryTimer?.cancel();
+      _webglRetryTimer = Timer(const Duration(milliseconds: 250), () {
         if (mounted &&
             _renderMode == TestDriveRenderMode.webgl &&
             !_webglActive) {
@@ -568,30 +557,36 @@ class _TestDriveViewportState extends State<TestDriveViewport>
 
   void _updateChaseCamera(double dt) {
     _timeSinceChaseDrag += dt;
-    // Spring the free-look offset back behind the car after a drag.
     if (_timeSinceChaseDrag > 1.1) {
       final recenter = (dt * 4.5).clamp(0.0, 1.0);
       _chaseUserYaw += (0.0 - _chaseUserYaw) * recenter;
       _chaseUserPitch += (0.0 - _chaseUserPitch) * recenter;
     }
 
-    // Blend the car heading with the velocity vector while drifting so the
-    // slip angle reads on screen without the car sliding off-centre.
+    // Detect upshift impulse under throttle
+    if (_sim.currentGear > _lastGear &&
+        _sim.currentGear > 1 &&
+        _sim.longitudinalG > -0.05) {
+      _gearShiftKick = 1.0;
+    }
+    _lastGear = _sim.currentGear;
+    _gearShiftKick *= exp(-dt * 6.5);
+
     var targetYaw = _sim.yaw;
     var slipDiff = 0.0;
     final horizSpeed = sqrt(
       _sim.velocity.x * _sim.velocity.x + _sim.velocity.z * _sim.velocity.z,
     );
-    if (horizSpeed > 2.0) {
+    if (horizSpeed > 1.8) {
       final velYaw = atan2(-_sim.velocity.x, -_sim.velocity.z);
       slipDiff = _wrapAngle(velYaw - _sim.yaw);
-      final blend = _sim.isDrifting ? 0.50 : 0.20;
+      final blend = _sim.isDrifting ? 0.52 : 0.22;
       targetYaw = _sim.yaw + slipDiff * blend;
     }
 
-    // Wrap-safe, frame-rate independent angular spring on camera yaw.
+    final speedNorm = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
     final yawFollowRate =
-        1.0 - exp(-dt * (5.0 + (_sim.speedKmh / 85.0).clamp(0.0, 5.0)));
+        1.0 - exp(-dt * (6.2 + (_sim.speedKmh / 65.0).clamp(0.0, 6.5)));
     _camYaw = _wrapAngle(_camYaw + _wrapAngle(targetYaw - _camYaw) * yawFollowRate);
 
     final effectiveYaw = _camYaw + _chaseUserYaw;
@@ -599,75 +594,71 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     final camRight = Vec3(cos(effectiveYaw), 0, -sin(effectiveYaw));
     const up = Vec3(0, 1, 0);
 
-    final pitchClamped = _chaseUserPitch.clamp(-0.25, 0.65);
-    final smooth = 1.0 - exp(-dt * 9.0);
+    final pitchClamped = _chaseUserPitch.clamp(-0.22, 0.62);
+    final smooth = 1.0 - exp(-dt * 10.0);
 
-    // Sit low (1.88m) and close (5.60m) at rest, easing back with speed. Throttle squat
-    // pulls the lens back; braking dive pushes it in; upshift kick gives an impulse kick!
-    final speedT = (_sim.speedKmh / 180.0).clamp(0.0, 1.0);
-    final squatSurge = (_sim.longitudinalG * 0.42).clamp(-0.45, 0.65);
-    final kickDist = _gearShiftKick * 0.35;
-    final targetDist = (5.60 +
-            speedT * 1.5 +
-            squatSurge +
-            kickDist) *
-        cos(pitchClamped);
+    // Weight-transfer distance & height
+    final accelPull =
+        (_sim.longitudinalG * 0.45).clamp(-0.42, 0.60) + (_gearShiftKick * 0.30);
+    final targetDist = (5.45 + speedNorm * 1.25 + accelPull) * cos(pitchClamped);
     final targetHeight =
-        (1.88 + speedT * 0.38 - (_sim.pitch * 1.25)) + 5.0 * sin(pitchClamped);
+        (1.82 + speedNorm * 0.30 - (_sim.pitch * 1.1)) + 4.8 * sin(pitchClamped);
 
     _camDist += (targetDist - _camDist) * smooth;
     _camHeight += (targetHeight - _camHeight) * smooth;
 
-    // Pan the target into the corner apex.
-    final targetLookAhead = (-_sim.steerAngle * 2.15).clamp(-1.8, 1.8);
-    _camLookAhead +=
-        (targetLookAhead - _camLookAhead) * (1.0 - exp(-dt * 9.0));
+    // Dynamic FOV warp (54° -> 76°)
+    final speedCurve = pow(speedNorm, 1.12).toDouble();
+    final targetFov = (54.0 +
+            speedCurve * 17.5 +
+            (_sim.longitudinalG * 3.8).clamp(-3.0, 4.5) +
+            _gearShiftKick * 2.4)
+        .clamp(50.0, 76.0);
+    _fovDeg += (targetFov - _fovDeg) * (1.0 - exp(-dt * 8.5));
 
-    // Outer camera swing: camera swings slightly to the outside of the turn (+steerAngle * 0.55m)
-    final targetSteerSwing = (_sim.steerAngle * 0.55).clamp(-0.65, 0.65);
+    // Steering apex look-ahead + outer camera swing
+    final targetLookAhead =
+        (-_sim.steerAngle * (1.95 + speedNorm * 0.45)).clamp(-1.6, 1.6);
+    _camLookAhead += (targetLookAhead - _camLookAhead) * (1.0 - exp(-dt * 9.0));
+
+    final targetSteerSwing =
+        (_sim.steerAngle * (0.48 + speedNorm * 0.30)).clamp(-0.65, 0.65);
     _camSteerSwing += (targetSteerSwing - _camSteerSwing) * (1.0 - exp(-dt * 8.0));
 
-    // During a slide, step the camera to the outside of the car so the slip
-    // angle stays visible instead of the car hiding its own rear axle.
-    final targetSlip =
-        (slipDiff * (_sim.isDrifting ? 1.5 : 0.4)).clamp(-1.3, 1.3);
-    _camSlip += (targetSlip - _camSlip) * (1.0 - exp(-dt * 5.0));
+    final targetSlip = (slipDiff * (_sim.isDrifting ? 1.55 : 0.45)).clamp(-1.35, 1.35);
+    _camSlip += (targetSlip - _camSlip) * (1.0 - exp(-dt * 5.5));
 
-    // Horizon corner banking:
-    // Smoothly tilts into turns (-steerAngle * 0.085 + lateralG * 0.028 + roll * 0.40)
-    final targetRoll = (-_sim.steerAngle * 0.085 + _sim.lateralG * 0.028 + _sim.roll * 0.40).clamp(-0.16, 0.16);
-    _camRoll += (targetRoll - _camRoll) * (1.0 - exp(-dt * 7.0));
+    // Horizon corner banking
+    final targetRoll =
+        (-_sim.steerAngle * 0.085 + _sim.lateralG * 0.028 + _sim.roll * 0.40)
+            .clamp(-0.14, 0.14);
+    _camRoll += (targetRoll - _camRoll) * (1.0 - exp(-dt * 7.5));
 
-    // High-speed road micro-vibration above 50 km/h
-    final vibAmp = (_sim.speedKmh > 50.0)
-        ? min(0.015, (_sim.speedKmh - 50.0) / 200.0 * 0.020)
-        : 0.0;
-    final vibY = vibAmp * sin(_uiPulse * 16.0);
+    final vibAmp = ((_sim.speedKmh - 65.0) / 140.0).clamp(0.0, 1.0) * 0.014;
+    final shakeY = cos(_uiPulse * 27.0) * vibAmp;
 
-    // Tethered directly to the car so it never trails metres behind or drifts
-    // laterally across the frame.
     final camPos = _sim.position -
         (camFwd * _camDist) +
         (camRight * (_camSlip + _camSteerSwing)) +
-        (up * (_camHeight.clamp(0.55, 5.5) + vibY));
-    _chaseCamPos = Vec3(camPos.x, max(camPos.y, 0.65), camPos.z);
+        (up * (_camHeight + shakeY).clamp(0.55, 5.5));
+    _chaseCamPos = Vec3(camPos.x, max(camPos.y, 0.62), camPos.z);
     _chaseCamTarget = _sim.position +
-        (camFwd * 2.4) +
+        (camFwd * (2.6 + speedNorm * 1.1)) +
         (camRight * (_camLookAhead + _camSlip * 0.35)) +
-        (up * 0.72);
+        (up * (0.72 + shakeY * 0.5));
   }
 
   void _resetCar() {
     _sim.reset();
     _camYaw = _sim.yaw;
-    _camDist = 5.60;
-    _camHeight = 1.88;
+    _camDist = 5.45;
+    _camHeight = 1.82;
     _camLookAhead = 0.0;
     _camSteerSwing = 0.0;
     _camSlip = 0.0;
     _camRoll = 0.0;
     _gearShiftKick = 0.0;
-    _prevGear = 1;
+    _lastGear = 1;
     _accelRunActive = false;
     _accelRunDone = false;
     _accelRunTime = 0.0;
@@ -677,8 +668,8 @@ class _TestDriveViewportState extends State<TestDriveViewport>
     _chaseUserYaw = 0.0;
     _chaseUserPitch = 0.0;
     _timeSinceChaseDrag = 10.0;
-    _chaseCamPos = _sim.position + const Vec3(0, 1.88, 5.60);
-    _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.4);
+    _chaseCamPos = _sim.position + const Vec3(0, 1.82, 5.45);
+    _chaseCamTarget = _sim.position + const Vec3(0, 0.72, -2.6);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -999,7 +990,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         onSelected: (style) {
                           setState(() => _trackStyle = style);
                           if (_webglActive) {
-                            updateSketchfabTestDriveWorld(
+                            setSketchfabTestDriveWorld(
                               _lighting.name,
                               style.name,
                             );
@@ -1090,7 +1081,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                         onSelected: (l) {
                           setState(() => _lighting = l);
                           if (_webglActive) {
-                            updateSketchfabTestDriveWorld(
+                            setSketchfabTestDriveWorld(
                               l.name,
                               _trackStyle.name,
                             );
