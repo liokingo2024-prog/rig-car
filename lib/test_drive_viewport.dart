@@ -320,6 +320,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
       _webglActive = true;
       enterSketchfabTestDrive();
       setSketchfabTestDriveWorld(_lighting.name, _trackStyle.name);
+      _pushWebglState();
     }
 
     _ticker = createTicker(_onTick)..start();
@@ -347,6 +348,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   void _onTick(Duration elapsed) {
     if (_lastTick == Duration.zero) {
       _lastTick = elapsed;
+      if (_webglActive) _pushWebglState();
       return;
     }
 
@@ -521,26 +523,17 @@ class _TestDriveViewportState extends State<TestDriveViewport>
   /// Falls back to the CPU solid renderer when the JS scene is unavailable.
   void _syncWebglMode() {
     if (!mounted || !kIsWeb) return;
-    final want = _renderMode == TestDriveRenderMode.webgl;
-    if (!want) {
-      if (!_webglActive) return;
-      exitSketchfabTestDrive();
-      setState(() => _webglActive = false);
-      return;
-    }
-    if (_webglActive) return;
     if (enterSketchfabTestDrive()) {
-      setState(() => _webglActive = true);
+      _webglActive = true;
       setSketchfabTestDriveWorld(_lighting.name, _trackStyle.name);
+      _pushWebglState();
       return;
     }
-    if (_webglRetries < 6) {
+    if (_webglRetries < 12) {
       _webglRetries++;
       _webglRetryTimer?.cancel();
-      _webglRetryTimer = Timer(const Duration(milliseconds: 250), () {
-        if (mounted &&
-            _renderMode == TestDriveRenderMode.webgl &&
-            !_webglActive) {
+      _webglRetryTimer = Timer(const Duration(milliseconds: 100), () {
+        if (mounted && _renderMode == TestDriveRenderMode.webgl) {
           _syncWebglMode();
         }
       });
@@ -747,7 +740,7 @@ class _TestDriveViewportState extends State<TestDriveViewport>
                 Positioned.fill(
                   child: SketchfabViewport(
                     attachOnly: true,
-                    renderMode: 'solid',
+                    renderMode: 'webgl',
                     lighting: switch (_lighting) {
                       TestDriveLighting.day => 'daylight',
                       TestDriveLighting.sunset => 'sunset',

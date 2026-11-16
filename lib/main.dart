@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -936,6 +937,10 @@ handle_brake=${action(key(32))}
       _scanCompleted = true;
     }
     _prepareTestDriveRig();
+    if (kIsWeb) {
+      enterSketchfabTestDrive();
+      setSketchfabTestDriveWorld('sunset', 'circuit');
+    }
     if (mounted) {
       setState(() {
         _isTestDriveMode = true;

@@ -1044,6 +1044,7 @@
   }
 
   function applyRenderMode(mode) {
+    if (testDriveActive) return;
     currentRenderMode = mode;
     if (!currentModel) return;
 
@@ -1092,6 +1093,7 @@
   }
 
   function setLighting(lighting) {
+    if (testDriveActive) return;
     currentLighting = lighting;
     if (!dirLightKey || !dirLightFill || !dirLightRim || !hemiLight || !scene) return;
 
@@ -1629,6 +1631,7 @@
   }
 
   function setGridStyle(style) {
+    if (testDriveActive) return;
     const s = (style || 'cad').toLowerCase();
     currentGridStyle = s;
 
@@ -3444,6 +3447,22 @@
     }
 
     buildTestDriveTrack(testDriveLighting, testDriveTrackStyle);
+
+    // Immediately snap camera to the initial vehicle chase pose and render
+    // synchronously so the very first visible frame is already the WebGL test drive
+    // with zero glimpse/flash of the previous workbench solid orbit view.
+    if (camera) {
+      camera.position.set(0, 1.82, 5.45);
+      camera.lookAt(0, 0.72, -2.6);
+      camera.fov = 54.0;
+      camera.updateProjectionMatrix();
+      if (testDriveSkyDome) {
+        testDriveSkyDome.position.copy(camera.position);
+      }
+    }
+    if (renderer && scene && camera) {
+      renderer.render(scene, camera);
+    }
     return true;
   }
 

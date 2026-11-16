@@ -67,7 +67,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
       ..style.height = '100%'
       ..style.position = 'relative'
       ..style.overflow = 'hidden'
-      ..style.backgroundColor = '#090D0B';
+      ..style.backgroundColor = 'transparent';
 
     ui_web.platformViewRegistry.registerViewFactory(
       _viewType,
@@ -185,6 +185,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   }
 
   void _syncControls() {
+    if (widget.attachOnly) return;
     try {
       final viewer = js.context['SketchfabViewer'];
       if (viewer == null) return;
@@ -199,6 +200,7 @@ class _SketchfabViewportState extends State<SketchfabViewport> {
   @override
   void didUpdateWidget(covariant SketchfabViewport oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.attachOnly) return;
     if (widget.bytes != oldWidget.bytes) {
       if (widget.bytes != null && widget.bytes!.isNotEmpty) {
         _loadModel(widget.bytes!);
