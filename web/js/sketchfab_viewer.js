@@ -2262,6 +2262,16 @@
   let lastShiftBarkTime = 0;
   let lastOverrunTime = 0;
 
+  // Recorded engine loops: Vehicle SFX Free by heyheythere (CC BY 4.0).
+  // Two bands (idle / mid) crossfaded by RPM replace the oscillator tone.
+  const ENGINE_SAMPLE_FILES = {
+    idle: 'audio/car_idle_loop.ogg',
+    mid: 'audio/car_mid_loop.ogg'
+  };
+  const engineSampleBuffers = {};
+  const engineSampleLayers = {};
+  let engineSamplesLoading = false;
+
   // Realistic Tire Scrub & Screech Synthesizer
   let sharedWhiteNoiseBuffer = null;
   let skidSource = null;
@@ -2421,6 +2431,79 @@
     } catch (e) {}
   }
 
+  function loadEngineSamples() {
+    if (engineSamplesLoading || Object.keys(engineSampleBuffers).length > 0) return;
+    engineSamplesLoading = true;
+    const ctx = ensureAudioContext();
+    Object.keys(ENGINE_SAMPLE_FILES).forEach(function(id) {
+      let url;
+      try {
+        url = new URL(ENGINE_SAMPLE_FILES[id], document.baseURI).href;
+      } catch (e) {
+        url = ENGINE_SAMPLE_FILES[id];
+      }
+      fetch(url, { cache: 'force-cache' })
+        .then(function(res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.arrayBuffer();
+        })
+        .then(function(raw) { return ctx.decodeAudioData(raw); })
+        .then(function(buffer) {
+          engineSampleBuffers[id] = buffer;
+        })
+        .catch(function(err) {
+          console.warn('Engine sample unavailable (' + ENGINE_SAMPLE_FILES[id] + '), using synth:', err && err.message);
+        });
+    });
+  }
+
+  function updateEngineSampleLayers(rev, load, now) {
+    const ctx = audioCtx;
+    if (!ctx) return false;
+    const idleBuf = engineSampleBuffers.idle;
+    const midBuf = engineSampleBuffers.mid;
+    if (!idleBuf && !midBuf) return false;
+
+    // Real loops only pitch-shift cleanly inside about half an octave, so split
+    // the rev range into bands and equal-power crossfade across the overlap.
+    let mix = (rev - 0.09) / 0.10;
+    mix = Math.max(0, Math.min(1, mix));
+    const wMid = mix * mix * (3 - 2 * mix);
+    const wIdle = 1 - wMid;
+
+    const rpmNow = rev * 7800;
+    const apex = 0.42 * (0.30 + load * 0.60 + rev * 0.35);
+
+    function drive(id, buffer, weight, rate) {
+      if (!buffer || weight <= 0.0005) {
+        const idle = engineSampleLayers[id];
+        if (idle) idle.gain.gain.setTargetAtTime(0.0001, now, 0.08);
+        return;
+      }
+      let layer = engineSampleLayers[id];
+      if (!layer) {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.loop = true;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        // Offset the two loops so they never phase-lock into a pulse.
+        const offset = Math.random() * Math.min(2.0, buffer.duration);
+        src.start(now, offset);
+        layer = { src: src, gain: gain };
+        engineSampleLayers[id] = layer;
+      }
+      layer.src.playbackRate.setTargetAtTime(rate, now, 0.08);
+      layer.gain.gain.setTargetAtTime(Math.max(0.0001, weight * apex), now, 0.07);
+    }
+
+    drive('idle', idleBuf, wIdle, Math.max(0.85, Math.min(1.62, rpmNow / 900)));
+    drive('mid', midBuf, wMid, Math.max(0.70, Math.min(1.80, rpmNow / 3500)));
+    return true;
+  }
+
   function updateEngineAndSirenAudio(rpm, throttle, profile, sirenEnabled) {
     try {
       const ctx = ensureAudioContext();
@@ -2428,9 +2511,15 @@
       const rev = Math.max(0, Math.min(1.0, (rpm || 0) / 7800));
       const load = Math.max(0, Math.min(1.0, Math.abs(throttle || 0)));
       const fundamental = cfg.fundamental + rev * 210;
-      const targetGain = 0.004 + rev * 0.032 + load * cfg.gain * 0.55;
 
       const now = ctx.currentTime;
+
+      // Recorded loops carry the engine body; keep a thin synth layer for low-end
+      // weight and firing-order harmonics, or the whole synth if the files fail.
+      loadEngineSamples();
+      const samplesActive = updateEngineSampleLayers(rev, load, now);
+      const synthScale = samplesActive ? 0.14 : 1.0;
+      const targetGain = (0.004 + rev * 0.032 + load * cfg.gain * 0.55) * synthScale;
 
       // Upshift ignition-cut bark detection: sudden RPM drop under load
       if (lastAudioRpm > 3200 && (lastAudioRpm - (rpm || 0)) > 950 && (now - lastShiftBarkTime) > 0.40) {
@@ -2560,6 +2649,12 @@
     if (!audioCtx) return;
     if (engineGain) engineGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
     if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
+    Object.keys(engineSampleLayers).forEach(function(id) {
+      const layer = engineSampleLayers[id];
+      try { layer.gain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05); } catch (e) {}
+      try { layer.src.stop(audioCtx.currentTime + 0.25); } catch (e) {}
+      delete engineSampleLayers[id];
+    });
     [engineOscA, engineOscB, engineOscSub, engineFlutterOsc, engineTurboOsc, sirenOsc, sirenLfo].forEach(function(osc) {
       if (osc) { try { osc.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
     });
