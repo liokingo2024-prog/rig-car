@@ -2254,9 +2254,6 @@
   let engineTurboOsc = null;
   let engineTurboGain = null;
   let engineGain = null;
-  let sirenOsc = null;
-  let sirenLfo = null;
-  let sirenGain = null;
   let lastAudioRpm = 0;
   let lastAudioThrottle = 0;
   let lastShiftBarkTime = 0;
@@ -2282,14 +2279,7 @@
   let skidSampleLayer = null;
   let skidSampleGain = null;
 
-  // Realistic Tire Scrub & Screech Synthesizer
-  let sharedWhiteNoiseBuffer = null;
-  let skidSource = null;
-  let skidNoiseFilter = null;
-  let skidNoiseGain = null;
-  let skidToneA = null;
-  let skidToneB = null;
-  let skidToneGain = null;
+  // Tyre scrub plays from the recorded sample only; see updateSkidAudio.
   let skidMasterGain = null;
 
   function ensureAudioContext() {
@@ -2399,45 +2389,11 @@
     return curve;
   }
 
-  function getWhiteNoiseBuffer(ctx) {
-    if (sharedWhiteNoiseBuffer) return sharedWhiteNoiseBuffer;
-    const len = ctx.sampleRate;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    sharedWhiteNoiseBuffer = buf;
-    return sharedWhiteNoiseBuffer;
-  }
-
   function triggerExhaustPop(ctx, intensity) {
     try {
       if (!ctx || ctx.state === 'suspended') return;
-      // Prefer the recorded backfire when the pack has loaded.
-      if (playSfxOneShot('backfire', Math.min(0.45, 0.20 * (intensity || 1.0)), 0.9 + Math.random() * 0.25)) return;
-      const t = ctx.currentTime;
-      const popOsc = ctx.createOscillator();
-      const popGain = ctx.createGain();
-      const popFilter = ctx.createBiquadFilter();
-
-      popOsc.type = 'triangle';
-      popOsc.frequency.setValueAtTime(85 + Math.random() * 40, t);
-      popOsc.frequency.exponentialRampToValueAtTime(26, t + 0.05);
-
-      popFilter.type = 'lowpass';
-      popFilter.frequency.setValueAtTime(420, t);
-
-      const amp = Math.min(0.24, 0.08 * (intensity || 1.0));
-      popGain.gain.setValueAtTime(amp, t);
-      popGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-
-      popOsc.connect(popFilter);
-      popFilter.connect(popGain);
-      popGain.connect(ctx.destination);
-
-      popOsc.start(t);
-      popOsc.stop(t + 0.07);
+      // Recorded backfire only: no synth stand-in, so a missing file is silent.
+      playSfxOneShot('backfire', Math.min(0.45, 0.20 * (intensity || 1.0)), 0.9 + Math.random() * 0.25);
     } catch (e) {}
   }
 
@@ -2497,7 +2453,7 @@
           }
         })
         .catch(function(err) {
-          console.warn('SFX sample unavailable (' + SFX_SAMPLE_FILES[id] + '), using synth:', err && err.message);
+          console.warn('SFX sample unavailable (' + SFX_SAMPLE_FILES[id] + '), staying silent:', err && err.message);
         });
     });
   }
@@ -2572,8 +2528,9 @@
 
       const now = ctx.currentTime;
 
-      // Recorded loops carry the engine body; keep a thin synth layer for low-end
-      // weight and firing-order harmonics, or the whole synth if the files fail.
+      // Recorded loops carry the engine body; a thin synth layer adds low-end
+      // weight and firing-order harmonics on top. Without the recordings there
+      // is no engine sound at all -- deliberately no synth stand-in.
       loadSfxSamples();
 
       // Ignition only fires when the engine audio has been silent for a moment,
@@ -2585,7 +2542,7 @@
 
       const samplesActive = updateEngineSampleLayers(sampleProfile, rev, load, now);
       const tuning = ENGINE_SAMPLE_TUNING[sampleProfile] || ENGINE_SAMPLE_TUNING.v10;
-      const synthScale = samplesActive ? tuning.synth : 1.0;
+      const synthScale = samplesActive ? tuning.synth : 0.0;
       const targetGain = (0.004 + rev * 0.032 + load * cfg.gain * 0.55) * synthScale;
 
       // Upshift ignition-cut bark detection: sudden RPM drop under load
@@ -2699,29 +2656,10 @@
           src.start(now, Math.random() * wail.duration);
           sirenSampleLayer = src;
         }
+        // Recorded wail only: if it is missing the siren stays silent.
         if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.28, now, 0.15);
-        if (!wail && !sirenOsc) {
-          sirenGain = ctx.createGain();
-          sirenOsc = ctx.createOscillator();
-          sirenLfo = ctx.createOscillator();
-          const lfoGain = ctx.createGain();
-          sirenOsc.type = 'square';
-          sirenOsc.frequency.setValueAtTime(880, ctx.currentTime);
-          sirenLfo.type = 'sine';
-          sirenLfo.frequency.setValueAtTime(0.55, ctx.currentTime);
-          lfoGain.gain.setValueAtTime(420, ctx.currentTime);
-          sirenLfo.connect(lfoGain);
-          lfoGain.connect(sirenOsc.frequency);
-          sirenGain.gain.setValueAtTime(0.0001, ctx.currentTime);
-          sirenOsc.connect(sirenGain);
-          sirenGain.connect(ctx.destination);
-          sirenOsc.start();
-          sirenLfo.start();
-        }
-        if (sirenGain) sirenGain.gain.setTargetAtTime(0.035, ctx.currentTime, 0.15);
-      } else {
-        if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
-        if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
+      } else if (sirenSampleGain) {
+        sirenSampleGain.gain.setTargetAtTime(0.0001, now, 0.1);
       }
     } catch (e) {}
   }
@@ -2729,14 +2667,13 @@
   function stopEngineAndSirenAudio() {
     if (!audioCtx) return;
     if (engineGain) engineGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
-    if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
     Object.keys(engineSampleLayers).forEach(function(id) {
       const layer = engineSampleLayers[id];
       try { layer.gain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05); } catch (e) {}
       try { layer.src.stop(audioCtx.currentTime + 0.25); } catch (e) {}
       delete engineSampleLayers[id];
     });
-    [engineOscA, engineOscB, engineOscSub, engineFlutterOsc, engineTurboOsc, sirenOsc, sirenLfo].forEach(function(osc) {
+    [engineOscA, engineOscB, engineOscSub, engineFlutterOsc, engineTurboOsc].forEach(function(osc) {
       if (osc) { try { osc.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
     });
     engineOscA = null;
@@ -2750,9 +2687,6 @@
     engineTurboOsc = null;
     engineTurboGain = null;
     engineGain = null;
-    sirenOsc = null;
-    sirenLfo = null;
-    sirenGain = null;
     if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
     if (sirenSampleLayer) { try { sirenSampleLayer.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
     sirenSampleGain = null;
@@ -2773,86 +2707,38 @@
     try {
       const ctx = ensureAudioContext();
       loadSfxSamples();
+      // Tyre scrub is the pack's recording and nothing else: if it has not loaded
+      // (or failed), the slide is simply silent.
+      const tyreBuffer = sfxSampleBuffers.skid;
+      if (!tyreBuffer) return;
       if (!skidMasterGain) {
         skidMasterGain = ctx.createGain();
         skidMasterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
         skidMasterGain.connect(ctx.destination);
-
-        // Abrasive asphalt scrub: looped white noise through resonant bandpass filter
-        const noiseBuf = getWhiteNoiseBuffer(ctx);
-        skidSource = ctx.createBufferSource();
-        skidSource.buffer = noiseBuf;
-        skidSource.loop = true;
-
-        skidNoiseFilter = ctx.createBiquadFilter();
-        skidNoiseFilter.type = 'bandpass';
-        skidNoiseFilter.frequency.setValueAtTime(1150, ctx.currentTime);
-        skidNoiseFilter.Q.setValueAtTime(1.8, ctx.currentTime);
-
-        skidNoiseGain = ctx.createGain();
-        skidNoiseGain.gain.setValueAtTime(0.07, ctx.currentTime);
-
-        skidSource.connect(skidNoiseFilter);
-        skidNoiseFilter.connect(skidNoiseGain);
-        skidNoiseGain.connect(skidMasterGain);
-        skidSource.start();
-
-        // Dual detuned slip-angle squeal oscillators (760Hz & 815Hz)
-        skidToneA = ctx.createOscillator();
-        skidToneB = ctx.createOscillator();
-        skidToneA.type = 'sawtooth';
-        skidToneB.type = 'triangle';
-        skidToneA.frequency.setValueAtTime(760, ctx.currentTime);
-        skidToneB.frequency.setValueAtTime(815, ctx.currentTime);
-
-        skidToneGain = ctx.createGain();
-        skidToneGain.gain.setValueAtTime(0.05, ctx.currentTime);
-
-        skidToneA.connect(skidToneGain);
-        skidToneB.connect(skidToneGain);
-        skidToneGain.connect(skidMasterGain);
-
-        skidToneA.start();
-        skidToneB.start();
       }
-      // Recorded tyre scrub carries the body of the slide; the noise and squeal
-      // oscillators drop to a supporting level (or stay at full level without it).
-      const tyreBuffer = sfxSampleBuffers.skid;
-      if (tyreBuffer) {
-        if (!skidSampleLayer) {
-          const src = ctx.createBufferSource();
-          src.buffer = tyreBuffer;
-          src.loop = true;
-          src.playbackRate.setValueAtTime(1, ctx.currentTime);
-          skidSampleGain = ctx.createGain();
-          skidSampleGain.gain.setValueAtTime(0.0001, ctx.currentTime);
-          src.connect(skidSampleGain);
-          skidSampleGain.connect(skidMasterGain);
-          src.start(ctx.currentTime, Math.random() * Math.min(1.5, tyreBuffer.duration));
-          skidSampleLayer = src;
-        }
-        skidSampleGain.gain.setTargetAtTime(1.6, ctx.currentTime, 0.05);
+      if (!skidSampleLayer) {
+        const src = ctx.createBufferSource();
+        src.buffer = tyreBuffer;
+        src.loop = true;
+        src.playbackRate.setValueAtTime(1, ctx.currentTime);
+        skidSampleGain = ctx.createGain();
+        skidSampleGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        src.connect(skidSampleGain);
+        skidSampleGain.connect(skidMasterGain);
+        src.start(ctx.currentTime, Math.random() * Math.min(1.5, tyreBuffer.duration));
+        skidSampleLayer = src;
       }
+      skidSampleGain.gain.setTargetAtTime(1.6, ctx.currentTime, 0.05);
       skidMasterGain.gain.setTargetAtTime(0.12, ctx.currentTime, 0.04);
-      skidNoiseGain.gain.setTargetAtTime(tyreBuffer ? 0.012 : 0.075, ctx.currentTime, 0.04);
-      skidToneGain.gain.setTargetAtTime(tyreBuffer ? 0.028 : 0.055, ctx.currentTime, 0.04);
     } catch (e) {}
   }
 
   function stopSkidAudio() {
     if (!audioCtx) return;
     if (skidMasterGain) skidMasterGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.06);
-    [skidSource, skidToneA, skidToneB, skidSampleLayer].forEach(function (node) {
-      if (node) { try { node.stop(audioCtx.currentTime + 0.15); } catch (e) {} }
-    });
-    skidSource = null;
+    if (skidSampleLayer) { try { skidSampleLayer.stop(audioCtx.currentTime + 0.15); } catch (e) {} }
     skidSampleLayer = null;
     skidSampleGain = null;
-    skidNoiseFilter = null;
-    skidNoiseGain = null;
-    skidToneA = null;
-    skidToneB = null;
-    skidToneGain = null;
     skidMasterGain = null;
   }
 
