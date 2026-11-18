@@ -2368,14 +2368,14 @@
     ev: { fundamental: 90, harmonic: 3.0, filter: 5200, gain: 0.10 }
   };
 
-  // The free pack only has one recorded car engine, so each combustion profile
-  // gets its own pitch and voicing instead of sounding identical. The EV has no
-  // firing order, so it keeps its pure synthesized whine and no recorded loops.
+  // The free pack only has one recorded car engine, so every profile drives the
+  // same two loops with its own pitch and voicing. The EV is shifted far up and
+  // filtered bright so the loop reads as a motor whine rather than an idle.
   const ENGINE_SAMPLE_TUNING = {
-    v10: { pitch: 0.94, tone: 560, body: 1.00, filterQ: 1.05 },
-    v8: { pitch: 0.74, tone: 400, body: 1.12, filterQ: 1.30 },
-    turbo_i4: { pitch: 1.16, tone: 880, body: 0.90, filterQ: 0.90 },
-    ev: { enabled: false }
+    v10: { pitch: 0.94, tone: 560, body: 1.00, filterQ: 1.05, synth: 0.14 },
+    v8: { pitch: 0.74, tone: 400, body: 1.12, filterQ: 1.30, synth: 0.14 },
+    turbo_i4: { pitch: 1.16, tone: 880, body: 0.90, filterQ: 0.90, synth: 0.14 },
+    ev: { pitch: 1.75, tone: 2400, body: 0.70, filterQ: 0.70, synth: 0.45 }
   };
 
   function makeDistortionCurve(k) {
@@ -2472,16 +2472,6 @@
     if (!ctx) return false;
 
     const tuning = ENGINE_SAMPLE_TUNING[profileKey] || ENGINE_SAMPLE_TUNING.v10;
-    if (tuning.enabled === false) {
-      // EV: retire any recorded layers left over from a petrol profile switch.
-      Object.keys(engineSampleLayers).forEach(function(id) {
-        const old = engineSampleLayers[id];
-        try { old.gain.gain.setTargetAtTime(0.0001, now, 0.05); } catch (e) {}
-        try { old.src.stop(now + 0.20); } catch (e) {}
-        delete engineSampleLayers[id];
-      });
-      return false;
-    }
 
     const idleBuf = engineSampleBuffers.idle;
     const midBuf = engineSampleBuffers.mid;
@@ -2523,7 +2513,7 @@
         layer = { src: src, filter: filter, gain: gain };
         engineSampleLayers[id] = layer;
       }
-      layer.src.playbackRate.setTargetAtTime(rate * tuning.pitch, now, 0.08);
+      layer.src.playbackRate.setTargetAtTime(Math.min(3.0, rate * tuning.pitch), now, 0.08);
       // Voicing opens up with revs: a V8 stays dark and rumbly, the i4 gets buzzy.
       const tone = Math.max(120, Math.min(12000, tuning.tone * (1 + rev * 2.2)));
       layer.filter.frequency.setTargetAtTime(tone, now, 0.10);
@@ -2549,9 +2539,10 @@
 
       // Recorded loops carry the engine body; keep a thin synth layer for low-end
       // weight and firing-order harmonics, or the whole synth if the files fail.
-      if (sampleProfile !== 'ev') loadEngineSamples();
+      loadEngineSamples();
       const samplesActive = updateEngineSampleLayers(sampleProfile, rev, load, now);
-      const synthScale = samplesActive ? 0.14 : 1.0;
+      const tuning = ENGINE_SAMPLE_TUNING[sampleProfile] || ENGINE_SAMPLE_TUNING.v10;
+      const synthScale = samplesActive ? tuning.synth : 1.0;
       const targetGain = (0.004 + rev * 0.032 + load * cfg.gain * 0.55) * synthScale;
 
       // Upshift ignition-cut bark detection: sudden RPM drop under load
