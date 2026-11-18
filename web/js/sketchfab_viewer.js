@@ -2254,10 +2254,6 @@
   let engineTurboOsc = null;
   let engineTurboGain = null;
   let engineGain = null;
-  let lastAudioRpm = 0;
-  let lastAudioThrottle = 0;
-  let lastShiftBarkTime = 0;
-  let lastOverrunTime = 0;
 
   // Recorded SFX: Vehicle SFX Free by heyheythere (CC BY 4.0), see CREDITS.md.
   // Idle and mid bands are crossfaded by RPM; the rest replace oscillator stand-ins.
@@ -2265,7 +2261,6 @@
     idle: 'audio/car_idle_loop.ogg',
     mid: 'audio/car_mid_loop.ogg',
     start: 'audio/car_start.ogg',
-    backfire: 'audio/backfire_01.ogg',
     skid: 'audio/skid_long_01.ogg',
     siren: 'audio/police_wail_loop.ogg'
   };
@@ -2387,26 +2382,6 @@
       curve[i] = Math.tanh(amount * x);
     }
     return curve;
-  }
-
-  function triggerExhaustPop(ctx, intensity) {
-    try {
-      if (!ctx || ctx.state === 'suspended') return;
-      // Recorded backfire only: no synth stand-in, so a missing file is silent.
-      playSfxOneShot('backfire', Math.min(0.45, 0.20 * (intensity || 1.0)), 0.9 + Math.random() * 0.25);
-    } catch (e) {}
-  }
-
-  function triggerOverrunBurble(ctx) {
-    try {
-      const popCount = 2 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < popCount; i++) {
-        const delay = 0.04 + i * (0.07 + Math.random() * 0.05);
-        setTimeout(function () {
-          triggerExhaustPop(ctx, 0.75 + Math.random() * 0.45);
-        }, delay * 1000);
-      }
-    } catch (e) {}
   }
 
   function playSfxOneShot(id, gain, rate) {
@@ -2544,21 +2519,6 @@
       const tuning = ENGINE_SAMPLE_TUNING[sampleProfile] || ENGINE_SAMPLE_TUNING.v10;
       const synthScale = samplesActive ? tuning.synth : 0.0;
       const targetGain = (0.004 + rev * 0.032 + load * cfg.gain * 0.55) * synthScale;
-
-      // Upshift ignition-cut bark detection: sudden RPM drop under load
-      if (lastAudioRpm > 3200 && (lastAudioRpm - (rpm || 0)) > 950 && (now - lastShiftBarkTime) > 0.40) {
-        lastShiftBarkTime = now;
-        triggerExhaustPop(ctx, 1.25);
-      }
-
-      // Off-throttle overrun burble/crackle detection: rapid lift-off at high RPM
-      if (lastAudioThrottle > 0.40 && load < 0.08 && (rpm || 0) > 3600 && (now - lastOverrunTime) > 0.70) {
-        lastOverrunTime = now;
-        triggerOverrunBurble(ctx);
-      }
-
-      lastAudioRpm = rpm || 0;
-      lastAudioThrottle = load;
 
       if (!engineOscA) {
         engineGain = ctx.createGain();
