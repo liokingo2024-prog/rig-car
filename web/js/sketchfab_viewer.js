@@ -2697,15 +2697,15 @@
     c.height = 512;
     const ctx = c.getContext('2d');
 
-    // Base dark charcoal asphalt
-    ctx.fillStyle = '#1e2226';
+    // Base rich motorsport asphalt
+    ctx.fillStyle = '#2d333b';
     ctx.fillRect(0, 0, 512, 512);
 
     // Mineral aggregate grain
-    for (let i = 0; i < 16000; i++) {
+    for (let i = 0; i < 18000; i++) {
       const x = Math.random() * 512;
       const y = Math.random() * 512;
-      const v = 22 + Math.floor(Math.random() * 28);
+      const v = 38 + Math.floor(Math.random() * 34);
       ctx.fillStyle = `rgb(${v},${v + 2},${v + 5})`;
       ctx.fillRect(x, y, 2, 2);
     }
@@ -2850,12 +2850,12 @@
         '',
         'void main() {',
         '  vec3 dir = normalize(vWorldDir);',
-        '  float h = clamp(dir.y, 0.0, 1.0);',
+        '  float h = clamp(dir.y, 0.0001, 1.0);',
         '',
         '  vec3 sky = mix(uHorizon, uMid, pow(h, 0.38));',
         '  sky = mix(sky, uZenith, smoothstep(0.14, 0.72, h));',
         '',
-        '  float sunCos = max(dot(dir, normalize(uSunDir)), 0.0);',
+        '  float sunCos = max(dot(dir, normalize(uSunDir)), 0.0001);',
         '  if (uIsNight < 0.5) {',
         '    float halo = pow(sunCos, 6.0) * 0.42 + pow(sunCos, 48.0) * 0.55;',
         '    float disc = smoothstep(0.9988, 0.9995, sunCos);',
@@ -2966,55 +2966,77 @@
     testDriveMountainRing = buildMountainHorizonRing(l);
     scene.add(testDriveMountainRing);
 
-    // Generate PBR environment reflection map from the sky dome for realistic car paint reflections
-    if (renderer && THREE.PMREMGenerator) {
-      try {
-        if (testDriveEnvRT) testDriveEnvRT.dispose();
-        const pmrem = new THREE.PMREMGenerator(renderer);
-        const envScene = new THREE.Scene();
-        envScene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), createSkyDomeMaterial(l)));
-        testDriveEnvRT = pmrem.fromScene(envScene, 0.04);
-        scene.environment = testDriveEnvRT.texture;
-        pmrem.dispose();
-      } catch (e) {}
+    // Keep scene.environment null so PMREMGenerator never injects NaN into
+    // MeshStandardMaterial (which previously turned the car and road pitch black).
+    if (testDriveEnvRT) {
+      try { testDriveEnvRT.dispose(); } catch (e) {}
+      testDriveEnvRT = null;
     }
+    scene.environment = null;
 
     if (l === 'sunset') {
-      scene.background = new THREE.Color(0xc2410c);
-      scene.fog = new THREE.FogExp2(0xd97736, 0.00055);
+      scene.background = new THREE.Color(0xd97706);
+      scene.fog = new THREE.FogExp2(0xd97736, 0.00042);
       if (hemiLight) {
-        hemiLight.color.set(0xffd8a8);
-        hemiLight.groundColor.set(0x2c1d18);
-        hemiLight.intensity = 0.72;
+        hemiLight.color.set(0xffe4b5);
+        hemiLight.groundColor.set(0x4a3525);
+        hemiLight.intensity = 1.35;
       }
       if (dirLightKey) {
-        dirLightKey.color.set(0xffb469);
-        dirLightKey.intensity = 1.85;
+        dirLightKey.color.set(0xffc078);
+        dirLightKey.intensity = 2.25;
       }
+      if (dirLightFill) {
+        dirLightFill.color.set(0xffb088);
+        dirLightFill.intensity = 0.95;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0xffdfa0);
+        dirLightRim.intensity = 1.10;
+      }
+      if (renderer) renderer.toneMappingExposure = 1.15;
     } else if (l === 'night') {
       scene.background = new THREE.Color(0x03070b);
-      scene.fog = new THREE.FogExp2(0x050a10, 0.0009);
+      scene.fog = new THREE.FogExp2(0x060c14, 0.00065);
       if (hemiLight) {
-        hemiLight.color.set(0x475569);
-        hemiLight.groundColor.set(0x060a08);
-        hemiLight.intensity = 0.28;
+        hemiLight.color.set(0x64748b);
+        hemiLight.groundColor.set(0x1e293b);
+        hemiLight.intensity = 0.75;
       }
       if (dirLightKey) {
-        dirLightKey.color.set(0x93c5fd);
-        dirLightKey.intensity = 0.65;
+        dirLightKey.color.set(0xbad7ff);
+        dirLightKey.intensity = 1.35;
       }
+      if (dirLightFill) {
+        dirLightFill.color.set(0x60a5fa);
+        dirLightFill.intensity = 0.65;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0x93c5fd);
+        dirLightRim.intensity = 0.95;
+      }
+      if (renderer) renderer.toneMappingExposure = 1.05;
     } else {
       scene.background = new THREE.Color(0x38bdf8);
-      scene.fog = new THREE.FogExp2(0xbbe0f8, 0.00048);
+      scene.fog = new THREE.FogExp2(0xcbe4f9, 0.00038);
       if (hemiLight) {
         hemiLight.color.set(0xffffff);
-        hemiLight.groundColor.set(0x334155);
-        hemiLight.intensity = 0.85;
+        hemiLight.groundColor.set(0x475569);
+        hemiLight.intensity = 1.40;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xfffbeb);
-        dirLightKey.intensity = 1.75;
+        dirLightKey.intensity = 2.15;
       }
+      if (dirLightFill) {
+        dirLightFill.color.set(0xbae6fd);
+        dirLightFill.intensity = 0.95;
+      }
+      if (dirLightRim) {
+        dirLightRim.color.set(0xffffff);
+        dirLightRim.intensity = 0.95;
+      }
+      if (renderer) renderer.toneMappingExposure = 1.15;
     }
   }
 
@@ -3045,9 +3067,9 @@
       new THREE.PlaneGeometry(2400, 2400),
       new THREE.MeshStandardMaterial({
         map: createTurfTexture(l),
-        roughness: 0.98,
-        metalness: 0.0,
-        envMapIntensity: 0.06
+        color: l === 'night' ? 0x94a3b8 : 0xffffff,
+        roughness: 0.92,
+        metalness: 0.0
       })
     );
     turfMesh.rotation.x = -Math.PI / 2;
@@ -3064,10 +3086,9 @@
     const shoulder = new THREE.Mesh(
       new THREE.PlaneGeometry(roadW + 14, spanLen),
       new THREE.MeshStandardMaterial({
-        color: l === 'night' ? 0x16191d : 0x3b3a36,
-        roughness: 0.96,
-        metalness: 0.0,
-        envMapIntensity: 0.08
+        color: l === 'night' ? 0x334155 : 0x57534e,
+        roughness: 0.90,
+        metalness: 0.0
       })
     );
     shoulder.rotation.x = -Math.PI / 2;
@@ -3080,10 +3101,9 @@
       new THREE.PlaneGeometry(roadW, spanLen),
       new THREE.MeshStandardMaterial({
         map: createAsphaltTextures(),
-        color: l === 'night' ? 0x4b5563 : 0x9ca3af,
-        roughness: 0.93,
-        metalness: 0.0,
-        envMapIntensity: 0.08
+        color: l === 'night' ? 0x94a3b8 : 0xe2e8f0,
+        roughness: 0.85,
+        metalness: 0.04
       })
     );
     road.rotation.x = -Math.PI / 2;
