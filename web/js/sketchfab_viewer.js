@@ -2368,6 +2368,16 @@
     ev: { fundamental: 90, harmonic: 3.0, filter: 5200, gain: 0.10 }
   };
 
+  // The free pack only has one recorded car engine, so each combustion profile
+  // gets its own pitch and voicing instead of sounding identical. The EV has no
+  // firing order, so it keeps its pure synthesized whine and no recorded loops.
+  const ENGINE_SAMPLE_TUNING = {
+    v10: { pitch: 0.94, tone: 560, body: 1.00, filterQ: 1.05 },
+    v8: { pitch: 0.74, tone: 400, body: 1.12, filterQ: 1.30 },
+    turbo_i4: { pitch: 1.16, tone: 880, body: 0.90, filterQ: 0.90 },
+    ev: { enabled: false }
+  };
+
   function makeDistortionCurve(k) {
     const n_samples = 512;
     const curve = new Float32Array(n_samples);
@@ -2457,9 +2467,22 @@
     });
   }
 
-  function updateEngineSampleLayers(rev, load, now) {
+  function updateEngineSampleLayers(profileKey, rev, load, now) {
     const ctx = audioCtx;
     if (!ctx) return false;
+
+    const tuning = ENGINE_SAMPLE_TUNING[profileKey] || ENGINE_SAMPLE_TUNING.v10;
+    if (tuning.enabled === false) {
+      // EV: retire any recorded layers left over from a petrol profile switch.
+      Object.keys(engineSampleLayers).forEach(function(id) {
+        const old = engineSampleLayers[id];
+        try { old.gain.gain.setTargetAtTime(0.0001, now, 0.05); } catch (e) {}
+        try { old.src.stop(now + 0.20); } catch (e) {}
+        delete engineSampleLayers[id];
+      });
+      return false;
+    }
+
     const idleBuf = engineSampleBuffers.idle;
     const midBuf = engineSampleBuffers.mid;
     if (!idleBuf && !midBuf) return false;
@@ -2485,18 +2508,26 @@
         const src = ctx.createBufferSource();
         src.buffer = buffer;
         src.loop = true;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.Q.setValueAtTime(tuning.filterQ, now);
+        filter.frequency.setValueAtTime(tuning.tone, now);
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.0001, now);
-        src.connect(gain);
+        src.connect(filter);
+        filter.connect(gain);
         gain.connect(ctx.destination);
         // Offset the two loops so they never phase-lock into a pulse.
         const offset = Math.random() * Math.min(2.0, buffer.duration);
         src.start(now, offset);
-        layer = { src: src, gain: gain };
+        layer = { src: src, filter: filter, gain: gain };
         engineSampleLayers[id] = layer;
       }
-      layer.src.playbackRate.setTargetAtTime(rate, now, 0.08);
-      layer.gain.gain.setTargetAtTime(Math.max(0.0001, weight * apex), now, 0.07);
+      layer.src.playbackRate.setTargetAtTime(rate * tuning.pitch, now, 0.08);
+      // Voicing opens up with revs: a V8 stays dark and rumbly, the i4 gets buzzy.
+      const tone = Math.max(120, Math.min(12000, tuning.tone * (1 + rev * 2.2)));
+      layer.filter.frequency.setTargetAtTime(tone, now, 0.10);
+      layer.gain.gain.setTargetAtTime(Math.max(0.0001, weight * apex * tuning.body), now, 0.07);
     }
 
     drive('idle', idleBuf, wIdle, Math.max(0.85, Math.min(1.62, rpmNow / 900)));
@@ -2507,7 +2538,9 @@
   function updateEngineAndSirenAudio(rpm, throttle, profile, sirenEnabled) {
     try {
       const ctx = ensureAudioContext();
-      const cfg = ENGINE_PROFILES[String(profile || 'v10').toLowerCase()] || ENGINE_PROFILES.v10;
+      const profileKey = String(profile || 'v10').toLowerCase();
+      const cfg = ENGINE_PROFILES[profileKey] || ENGINE_PROFILES.v10;
+      const sampleProfile = ENGINE_PROFILES[profileKey] ? profileKey : 'v10';
       const rev = Math.max(0, Math.min(1.0, (rpm || 0) / 7800));
       const load = Math.max(0, Math.min(1.0, Math.abs(throttle || 0)));
       const fundamental = cfg.fundamental + rev * 210;
@@ -2516,8 +2549,8 @@
 
       // Recorded loops carry the engine body; keep a thin synth layer for low-end
       // weight and firing-order harmonics, or the whole synth if the files fail.
-      loadEngineSamples();
-      const samplesActive = updateEngineSampleLayers(rev, load, now);
+      if (sampleProfile !== 'ev') loadEngineSamples();
+      const samplesActive = updateEngineSampleLayers(sampleProfile, rev, load, now);
       const synthScale = samplesActive ? 0.14 : 1.0;
       const targetGain = (0.004 + rev * 0.032 + load * cfg.gain * 0.55) * synthScale;
 
