@@ -2262,15 +2262,25 @@
   let lastShiftBarkTime = 0;
   let lastOverrunTime = 0;
 
-  // Recorded engine loops: Vehicle SFX Free by heyheythere (CC BY 4.0).
-  // Two bands (idle / mid) crossfaded by RPM replace the oscillator tone.
-  const ENGINE_SAMPLE_FILES = {
+  // Recorded SFX: Vehicle SFX Free by heyheythere (CC BY 4.0), see CREDITS.md.
+  // Idle and mid bands are crossfaded by RPM; the rest replace oscillator stand-ins.
+  const SFX_SAMPLE_FILES = {
     idle: 'audio/car_idle_loop.ogg',
-    mid: 'audio/car_mid_loop.ogg'
+    mid: 'audio/car_mid_loop.ogg',
+    start: 'audio/car_start.ogg',
+    backfire: 'audio/backfire_01.ogg',
+    skid: 'audio/skid_long_01.ogg',
+    siren: 'audio/police_wail_loop.ogg'
   };
-  const engineSampleBuffers = {};
+  const sfxSampleBuffers = {};
   const engineSampleLayers = {};
-  let engineSamplesLoading = false;
+  let sfxSamplesLoading = false;
+  let pendingEngineStart = false;
+  let lastEngineActiveTime = -1;
+  let sirenSampleLayer = null;
+  let sirenSampleGain = null;
+  let skidSampleLayer = null;
+  let skidSampleGain = null;
 
   // Realistic Tire Scrub & Screech Synthesizer
   let sharedWhiteNoiseBuffer = null;
@@ -2404,6 +2414,8 @@
   function triggerExhaustPop(ctx, intensity) {
     try {
       if (!ctx || ctx.state === 'suspended') return;
+      // Prefer the recorded backfire when the pack has loaded.
+      if (playSfxOneShot('backfire', Math.min(0.45, 0.20 * (intensity || 1.0)), 0.9 + Math.random() * 0.25)) return;
       const t = ctx.currentTime;
       const popOsc = ctx.createOscillator();
       const popGain = ctx.createGain();
@@ -2441,16 +2453,35 @@
     } catch (e) {}
   }
 
-  function loadEngineSamples() {
-    if (engineSamplesLoading || Object.keys(engineSampleBuffers).length > 0) return;
-    engineSamplesLoading = true;
+  function playSfxOneShot(id, gain, rate) {
+    const ctx = audioCtx;
+    const buffer = sfxSampleBuffers[id];
+    if (!ctx || !buffer) return false;
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.playbackRate.setValueAtTime(rate || 1, ctx.currentTime);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(gain, ctx.currentTime);
+      src.connect(g);
+      g.connect(ctx.destination);
+      src.start(ctx.currentTime);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function loadSfxSamples() {
+    if (sfxSamplesLoading || Object.keys(sfxSampleBuffers).length > 0) return;
+    sfxSamplesLoading = true;
     const ctx = ensureAudioContext();
-    Object.keys(ENGINE_SAMPLE_FILES).forEach(function(id) {
+    Object.keys(SFX_SAMPLE_FILES).forEach(function(id) {
       let url;
       try {
-        url = new URL(ENGINE_SAMPLE_FILES[id], document.baseURI).href;
+        url = new URL(SFX_SAMPLE_FILES[id], document.baseURI).href;
       } catch (e) {
-        url = ENGINE_SAMPLE_FILES[id];
+        url = SFX_SAMPLE_FILES[id];
       }
       fetch(url, { cache: 'force-cache' })
         .then(function(res) {
@@ -2459,10 +2490,14 @@
         })
         .then(function(raw) { return ctx.decodeAudioData(raw); })
         .then(function(buffer) {
-          engineSampleBuffers[id] = buffer;
+          sfxSampleBuffers[id] = buffer;
+          if (pendingEngineStart && id === 'start') {
+            pendingEngineStart = false;
+            playSfxOneShot('start', 0.5, 1.0);
+          }
         })
         .catch(function(err) {
-          console.warn('Engine sample unavailable (' + ENGINE_SAMPLE_FILES[id] + '), using synth:', err && err.message);
+          console.warn('SFX sample unavailable (' + SFX_SAMPLE_FILES[id] + '), using synth:', err && err.message);
         });
     });
   }
@@ -2473,8 +2508,8 @@
 
     const tuning = ENGINE_SAMPLE_TUNING[profileKey] || ENGINE_SAMPLE_TUNING.v10;
 
-    const idleBuf = engineSampleBuffers.idle;
-    const midBuf = engineSampleBuffers.mid;
+    const idleBuf = sfxSampleBuffers.idle;
+    const midBuf = sfxSampleBuffers.mid;
     if (!idleBuf && !midBuf) return false;
 
     // Real loops only pitch-shift cleanly inside about half an octave, so split
@@ -2539,7 +2574,15 @@
 
       // Recorded loops carry the engine body; keep a thin synth layer for low-end
       // weight and firing-order harmonics, or the whole synth if the files fail.
-      loadEngineSamples();
+      loadSfxSamples();
+
+      // Ignition only fires when the engine audio has been silent for a moment,
+      // i.e. on entering Test Drive rather than every frame.
+      if (now - lastEngineActiveTime > 0.8) {
+        if (!playSfxOneShot('start', 0.5, 1.0)) pendingEngineStart = true;
+      }
+      lastEngineActiveTime = now;
+
       const samplesActive = updateEngineSampleLayers(sampleProfile, rev, load, now);
       const tuning = ENGINE_SAMPLE_TUNING[sampleProfile] || ENGINE_SAMPLE_TUNING.v10;
       const synthScale = samplesActive ? tuning.synth : 1.0;
@@ -2644,7 +2687,20 @@
       engineGain.gain.setTargetAtTime(targetGain, now, 0.06);
 
       if (sirenEnabled) {
-        if (!sirenOsc) {
+        const wail = sfxSampleBuffers.siren;
+        if (wail && !sirenSampleLayer) {
+          const src = ctx.createBufferSource();
+          src.buffer = wail;
+          src.loop = true;
+          sirenSampleGain = ctx.createGain();
+          sirenSampleGain.gain.setValueAtTime(0.0001, now);
+          src.connect(sirenSampleGain);
+          sirenSampleGain.connect(ctx.destination);
+          src.start(now, Math.random() * wail.duration);
+          sirenSampleLayer = src;
+        }
+        if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.28, now, 0.15);
+        if (!wail && !sirenOsc) {
           sirenGain = ctx.createGain();
           sirenOsc = ctx.createOscillator();
           sirenLfo = ctx.createOscillator();
@@ -2662,9 +2718,10 @@
           sirenOsc.start();
           sirenLfo.start();
         }
-        sirenGain.gain.setTargetAtTime(0.035, ctx.currentTime, 0.15);
-      } else if (sirenGain) {
-        sirenGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
+        if (sirenGain) sirenGain.gain.setTargetAtTime(0.035, ctx.currentTime, 0.15);
+      } else {
+        if (sirenGain) sirenGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
+        if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.1);
       }
     } catch (e) {}
   }
@@ -2696,6 +2753,11 @@
     sirenOsc = null;
     sirenLfo = null;
     sirenGain = null;
+    if (sirenSampleGain) sirenSampleGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.08);
+    if (sirenSampleLayer) { try { sirenSampleLayer.stop(audioCtx.currentTime + 0.25); } catch (e) {} }
+    sirenSampleGain = null;
+    sirenSampleLayer = null;
+    lastEngineActiveTime = -1;
   }
 
   function updateSkidAudio(isDrifting, enabled) {
@@ -2703,10 +2765,14 @@
       if (skidMasterGain && audioCtx) {
         skidMasterGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
       }
+      if (skidSampleGain && audioCtx) {
+        skidSampleGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
+      }
       return;
     }
     try {
       const ctx = ensureAudioContext();
+      loadSfxSamples();
       if (!skidMasterGain) {
         skidMasterGain = ctx.createGain();
         skidMasterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
@@ -2749,19 +2815,39 @@
         skidToneA.start();
         skidToneB.start();
       }
+      // Recorded tyre scrub carries the body of the slide; the noise and squeal
+      // oscillators drop to a supporting level (or stay at full level without it).
+      const tyreBuffer = sfxSampleBuffers.skid;
+      if (tyreBuffer) {
+        if (!skidSampleLayer) {
+          const src = ctx.createBufferSource();
+          src.buffer = tyreBuffer;
+          src.loop = true;
+          src.playbackRate.setValueAtTime(1, ctx.currentTime);
+          skidSampleGain = ctx.createGain();
+          skidSampleGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+          src.connect(skidSampleGain);
+          skidSampleGain.connect(skidMasterGain);
+          src.start(ctx.currentTime, Math.random() * Math.min(1.5, tyreBuffer.duration));
+          skidSampleLayer = src;
+        }
+        skidSampleGain.gain.setTargetAtTime(1.6, ctx.currentTime, 0.05);
+      }
       skidMasterGain.gain.setTargetAtTime(0.12, ctx.currentTime, 0.04);
-      skidNoiseGain.gain.setTargetAtTime(0.075, ctx.currentTime, 0.04);
-      skidToneGain.gain.setTargetAtTime(0.055, ctx.currentTime, 0.04);
+      skidNoiseGain.gain.setTargetAtTime(tyreBuffer ? 0.012 : 0.075, ctx.currentTime, 0.04);
+      skidToneGain.gain.setTargetAtTime(tyreBuffer ? 0.028 : 0.055, ctx.currentTime, 0.04);
     } catch (e) {}
   }
 
   function stopSkidAudio() {
     if (!audioCtx) return;
     if (skidMasterGain) skidMasterGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.06);
-    [skidSource, skidToneA, skidToneB].forEach(function (node) {
+    [skidSource, skidToneA, skidToneB, skidSampleLayer].forEach(function (node) {
       if (node) { try { node.stop(audioCtx.currentTime + 0.15); } catch (e) {} }
     });
     skidSource = null;
+    skidSampleLayer = null;
+    skidSampleGain = null;
     skidNoiseFilter = null;
     skidNoiseGain = null;
     skidToneA = null;
