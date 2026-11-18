@@ -2980,63 +2980,63 @@
       if (hemiLight) {
         hemiLight.color.set(0xffe4b5);
         hemiLight.groundColor.set(0x4a3525);
-        hemiLight.intensity = 1.35;
+        hemiLight.intensity = 0.90;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xffc078);
-        dirLightKey.intensity = 2.25;
+        dirLightKey.intensity = 1.50;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0xffb088);
-        dirLightFill.intensity = 0.95;
+        dirLightFill.intensity = 0.40;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0xffdfa0);
-        dirLightRim.intensity = 1.10;
+        dirLightRim.intensity = 0.45;
       }
-      if (renderer) renderer.toneMappingExposure = 1.15;
+      if (renderer) renderer.toneMappingExposure = 1.00;
     } else if (l === 'night') {
       scene.background = new THREE.Color(0x03070b);
       scene.fog = new THREE.FogExp2(0x060c14, 0.00065);
       if (hemiLight) {
         hemiLight.color.set(0x64748b);
         hemiLight.groundColor.set(0x1e293b);
-        hemiLight.intensity = 0.75;
+        hemiLight.intensity = 0.55;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xbad7ff);
-        dirLightKey.intensity = 1.35;
+        dirLightKey.intensity = 1.00;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0x60a5fa);
-        dirLightFill.intensity = 0.65;
+        dirLightFill.intensity = 0.35;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0x93c5fd);
-        dirLightRim.intensity = 0.95;
+        dirLightRim.intensity = 0.45;
       }
-      if (renderer) renderer.toneMappingExposure = 1.05;
+      if (renderer) renderer.toneMappingExposure = 0.95;
     } else {
       scene.background = new THREE.Color(0x38bdf8);
       scene.fog = new THREE.FogExp2(0xcbe4f9, 0.00038);
       if (hemiLight) {
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x475569);
-        hemiLight.intensity = 1.40;
+        hemiLight.intensity = 0.90;
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xfffbeb);
-        dirLightKey.intensity = 2.15;
+        dirLightKey.intensity = 1.50;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0xbae6fd);
-        dirLightFill.intensity = 0.95;
+        dirLightFill.intensity = 0.40;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0xffffff);
-        dirLightRim.intensity = 0.95;
+        dirLightRim.intensity = 0.45;
       }
-      if (renderer) renderer.toneMappingExposure = 1.15;
+      if (renderer) renderer.toneMappingExposure = 1.00;
     }
   }
 
