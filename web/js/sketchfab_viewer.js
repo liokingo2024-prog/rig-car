@@ -113,9 +113,7 @@
     });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.0));
-    renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    applyRendererColorPipeline(renderer);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -171,12 +169,17 @@
       }
     });
 
+    // 4b. Procedural studio IBL -- shared by the Rigger and Test Drive views.
+    const studioEnv = buildStudioEnvironment(renderer);
+    if (studioEnv) scene.environment = studioEnv.texture;
+
     // 5. Lighting Rig (Sketchfab Studio 3-Point PBR Lighting)
-    hemiLight = new THREE.HemisphereLight(0xffffff, 0x18241d, 1.0);
+    // Soft hemisphere fills tyres, grilles and interiors so nothing crushes to black.
+    hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 0.85);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
 
-    dirLightKey = new THREE.DirectionalLight(0xffffff, 1.6);
+    dirLightKey = new THREE.DirectionalLight(0xffffff, 1.2);
     dirLightKey.position.set(6, 9, 6);
     dirLightKey.castShadow = true;
     dirLightKey.shadow.mapSize.width = 1024;
@@ -190,11 +193,11 @@
     dirLightKey.shadow.bias = -0.0003;
     scene.add(dirLightKey);
 
-    dirLightFill = new THREE.DirectionalLight(0xaad8e6, 0.7);
+    dirLightFill = new THREE.DirectionalLight(0xddeeff, 0.5);
     dirLightFill.position.set(-6, 4, -4);
     scene.add(dirLightFill);
 
-    dirLightRim = new THREE.DirectionalLight(0xffeedd, 0.9);
+    dirLightRim = new THREE.DirectionalLight(0xfff4e6, 0.35);
     dirLightRim.position.set(0, 5, -8);
     scene.add(dirLightRim);
 
@@ -387,6 +390,72 @@
         if (callback) callback({ success: false, error: error });
       }
     );
+  }
+
+  /**
+   * sRGB output + ACES filmic tone mapping, resolved against the bundled
+   * three.js build (r128 exposes outputEncoding, newer builds outputColorSpace).
+   */
+  function applyRendererColorPipeline(r) {
+    if (!r) return;
+    try {
+      if (THREE.SRGBColorSpace !== undefined && 'outputColorSpace' in r) {
+        r.outputColorSpace = THREE.SRGBColorSpace;
+      } else if (THREE.sRGBEncoding !== undefined) {
+        r.outputEncoding = THREE.sRGBEncoding;
+      }
+    } catch (e) {}
+    r.toneMapping = THREE.ACESFilmicToneMapping;
+    r.toneMappingExposure = 1.15;
+  }
+
+  // Baked once and reused; the scene is a neutral gray shell with one overhead
+  // softbox and two angled side panels, so no HDRI file has to be downloaded.
+  let studioEnvRT = null;
+
+  function buildStudioEnvironment(r) {
+    if (!r || typeof THREE.PMREMGenerator === 'undefined') return null;
+    if (studioEnvRT) return studioEnvRT;
+    let pmrem = null;
+    try {
+      pmrem = new THREE.PMREMGenerator(r);
+      const envScene = new THREE.Scene();
+
+      // Neutral gray room: 0x404040 backdrop keeps black paint from reading as void.
+      const backdrop = new THREE.Mesh(
+        new THREE.SphereGeometry(30, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x404040, side: THREE.BackSide })
+      );
+      envScene.add(backdrop);
+
+      function panel(color, boost, w, h, pos) {
+        const mat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
+        mat.color.multiplyScalar(boost);
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+        mesh.position.set(pos[0], pos[1], pos[2]);
+        mesh.lookAt(0, 0.6, 0);
+        envScene.add(mesh);
+      }
+
+      panel(0xffffff, 3.2, 18, 8, [0, 13, 0]);      // overhead softbox
+      panel(0xddeeff, 1.6, 9, 12, [-12, 5, -6]);    // cool side fill
+      panel(0xfff4e6, 1.3, 9, 12, [12, 5, -6]);     // warm side fill
+
+      studioEnvRT = pmrem.fromScene(envScene, 0.02);
+
+      envScene.traverse(function (o) {
+        if (o.geometry) { try { o.geometry.dispose(); } catch (e) {} }
+        if (o.material) { try { o.material.dispose(); } catch (e) {} }
+      });
+      return (studioEnvRT && studioEnvRT.texture) ? studioEnvRT : null;
+    } catch (e) {
+      // Never let an IBL failure blank the car: the light rig still carries it.
+      console.warn('Studio IBL unavailable:', e && e.message);
+      studioEnvRT = null;
+      return null;
+    } finally {
+      if (pmrem) { try { pmrem.dispose(); } catch (e) {} }
+    }
   }
 
   function loadGltf(arrayBuffer, callback) {
@@ -763,32 +832,48 @@
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           mats.forEach(mat => {
-            // Enable anisotropic filtering on all textures
-            const textures = [
-              mat.map, mat.normalMap, mat.roughnessMap,
-              mat.metalnessMap, mat.aoMap, mat.emissiveMap
-            ];
-            textures.forEach(tex => {
+            // Color maps are sRGB; normal/roughness/metalness/AO stay linear --
+            // mis-encoding them is what produced the harsh specular glare.
+            const srgbTextures = [mat.map, mat.emissiveMap];
+            srgbTextures.forEach(tex => {
               if (tex) {
                 tex.encoding = THREE.sRGBEncoding;
                 tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
               }
             });
+            [mat.normalMap, mat.roughnessMap, mat.metalnessMap, mat.aoMap].forEach(tex => {
+              if (tex) tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
+            });
 
-            // Glass / windshield handling
-            const name = (mat.name || '').toLowerCase();
-            const isGlass = name.includes('glass') || name.includes('windshield') ||
-                            name.includes('window') || name.includes('wnd') ||
-                            name.includes('visor');
-            if (isGlass || (mat.transparent && mat.opacity < 0.98)) {
+            // Studio PBR defaults on every lit material.
+            if (mat.isMeshStandardMaterial) mat.envMapIntensity = 1.2;
+
+            // Glass / windshield handling: transparent flag, transmission, or a
+            // name hit. Alpha-tested cutouts (decals, grille meshes) are excluded
+            // so they do not turn into reflective glass.
+            const matName = (mat.name || '').toLowerCase();
+            const meshName = (child.name || '').toLowerCase();
+            const glassPattern = /glass|window|windshield|windscreen|headlight_glass/i;
+            const alphaCutout = (mat.alphaTest || 0) > 0 || !!mat.alphaMap;
+            const isGlass = !alphaCutout && (
+              glassPattern.test(matName) ||
+              glassPattern.test(meshName) ||
+              mat.transparent === true ||
+              (mat.transmission || 0) > 0
+            );
+            if (isGlass) {
               mat.transparent = true;
-              mat.depthWrite = true;
+              mat.opacity = Math.max(mat.opacity ?? 0.3, 0.25);
+              mat.roughness = Math.min(mat.roughness ?? 0.05, 0.08);
+              mat.metalness = 0.1;
+              mat.envMapIntensity = 2.0;
+              mat.depthWrite = false;
               mat.side = THREE.DoubleSide;
-              if (mat.opacity >= 1.0) mat.opacity = 0.55;
             } else {
               // Double-sided for thin aero panels (spoilers, wings, diffusers)
               mat.side = THREE.DoubleSide;
             }
+            mat.needsUpdate = true;
 
             originalMaterials.set(mat.uuid, mat.clone());
           });
@@ -1102,22 +1187,22 @@
         scene.background.set(0x1a262c);
         hemiLight.color.set(0xffffff);
         hemiLight.groundColor.set(0x607d8b);
-        hemiLight.intensity = 1.1;
+        hemiLight.intensity = 0.95;
         dirLightKey.color.set(0xfffaed);
-        dirLightKey.intensity = 1.6;
-        dirLightFill.intensity = 0.8;
-        dirLightRim.intensity = 0.5;
+        dirLightKey.intensity = 1.35;
+        dirLightFill.intensity = 0.55;
+        dirLightRim.intensity = 0.45;
         renderer.toneMappingExposure = 1.15;
         break;
       case 'night':
         scene.background.set(0x050706);
         hemiLight.color.set(0x334466);
         hemiLight.groundColor.set(0x111111);
-        hemiLight.intensity = 0.35;
+        hemiLight.intensity = 0.30;
         dirLightKey.color.set(0x88bbff);
-        dirLightKey.intensity = 0.7;
-        dirLightFill.intensity = 0.3;
-        dirLightRim.intensity = 1.2;
+        dirLightKey.intensity = 0.60;
+        dirLightFill.intensity = 0.30;
+        dirLightRim.intensity = 0.55;
         renderer.toneMappingExposure = 0.95;
         break;
       case 'flat':
@@ -1134,24 +1219,26 @@
         scene.background.set(0x1c1207);
         hemiLight.color.set(0xffd9b0);
         hemiLight.groundColor.set(0x2a1a12);
-        hemiLight.intensity = 0.85;
+        hemiLight.intensity = 0.80;
         dirLightKey.color.set(0xffb066);
-        dirLightKey.intensity = 1.5;
-        dirLightFill.intensity = 0.45;
-        dirLightRim.intensity = 0.6;
+        dirLightKey.intensity = 1.25;
+        dirLightFill.intensity = 0.50;
+        dirLightRim.intensity = 0.55;
         renderer.toneMappingExposure = 1.05;
         break;
       case 'studio':
       default:
         scene.background.set(0x0c1318);
         hemiLight.color.set(0xffffff);
-        hemiLight.groundColor.set(0x18241d);
-        hemiLight.intensity = 1.0;
+        hemiLight.groundColor.set(0x333333);
+        hemiLight.intensity = 0.85;
         dirLightKey.color.set(0xffffff);
-        dirLightKey.intensity = 1.6;
-        dirLightFill.intensity = 0.7;
-        dirLightRim.intensity = 0.9;
-        renderer.toneMappingExposure = 1.05;
+        dirLightKey.intensity = 1.20;
+        dirLightFill.color.set(0xddeeff);
+        dirLightFill.intensity = 0.50;
+        dirLightRim.color.set(0xfff4e6);
+        dirLightRim.intensity = 0.35;
+        renderer.toneMappingExposure = 1.15;
         break;
     }
   }
@@ -2736,7 +2823,6 @@
   // ── Procedural WebGL World Parity: Sky Dome, Fog & Dynamic Track Styles ──
   let testDriveSkyDome = null;
   let testDriveMountainRing = null;
-  let testDriveEnvRT = null;
   let testDriveOrigEnv = null;
   let testDriveOrigFog = null;
   let testDriveLighting = 'sunset';
@@ -3017,13 +3103,10 @@
     testDriveMountainRing = buildMountainHorizonRing(l);
     scene.add(testDriveMountainRing);
 
-    // Keep scene.environment null so PMREMGenerator never injects NaN into
-    // MeshStandardMaterial (which previously turned the car and road pitch black).
-    if (testDriveEnvRT) {
-      try { testDriveEnvRT.dispose(); } catch (e) {}
-      testDriveEnvRT = null;
-    }
-    scene.environment = null;
+    // Same studio IBL as the Rigger so paint and glass look identical in both
+    // modes; the Rigger's own environment is restored when Test Drive exits.
+    const studioEnv = buildStudioEnvironment(renderer);
+    scene.environment = studioEnv ? studioEnv.texture : null;
 
     if (l === 'sunset') {
       scene.background = new THREE.Color(0xd97706);
@@ -3035,17 +3118,17 @@
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xffc078);
-        dirLightKey.intensity = 1.50;
+        dirLightKey.intensity = 1.25;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0xffb088);
-        dirLightFill.intensity = 0.40;
+        dirLightFill.intensity = 0.45;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0xffdfa0);
-        dirLightRim.intensity = 0.45;
+        dirLightRim.intensity = 0.40;
       }
-      if (renderer) renderer.toneMappingExposure = 1.00;
+      if (renderer) renderer.toneMappingExposure = 1.05;
     } else if (l === 'night') {
       scene.background = new THREE.Color(0x03070b);
       scene.fog = new THREE.FogExp2(0x060c14, 0.00065);
@@ -3056,15 +3139,15 @@
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xbad7ff);
-        dirLightKey.intensity = 1.00;
+        dirLightKey.intensity = 0.90;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0x60a5fa);
-        dirLightFill.intensity = 0.35;
+        dirLightFill.intensity = 0.40;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0x93c5fd);
-        dirLightRim.intensity = 0.45;
+        dirLightRim.intensity = 0.40;
       }
       if (renderer) renderer.toneMappingExposure = 0.95;
     } else {
@@ -3077,17 +3160,17 @@
       }
       if (dirLightKey) {
         dirLightKey.color.set(0xfffbeb);
-        dirLightKey.intensity = 1.50;
+        dirLightKey.intensity = 1.25;
       }
       if (dirLightFill) {
         dirLightFill.color.set(0xbae6fd);
-        dirLightFill.intensity = 0.40;
+        dirLightFill.intensity = 0.50;
       }
       if (dirLightRim) {
         dirLightRim.color.set(0xffffff);
-        dirLightRim.intensity = 0.45;
+        dirLightRim.intensity = 0.40;
       }
-      if (renderer) renderer.toneMappingExposure = 1.00;
+      if (renderer) renderer.toneMappingExposure = 1.05;
     }
   }
 
@@ -3757,11 +3840,6 @@
         testDriveGroup.remove(testDriveContactShadow.group);
       }
       testDriveContactShadow = null;
-    }
-
-    if (testDriveEnvRT) {
-      try { testDriveEnvRT.dispose(); } catch (e) {}
-      testDriveEnvRT = null;
     }
 
     if (testDriveSkyDome) {
