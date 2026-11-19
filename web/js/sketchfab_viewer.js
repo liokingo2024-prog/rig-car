@@ -424,7 +424,7 @@
       // Neutral gray room: 0x404040 backdrop keeps black paint from reading as void.
       const backdrop = new THREE.Mesh(
         new THREE.SphereGeometry(30, 16, 12),
-        new THREE.MeshBasicMaterial({ color: 0x404040, side: THREE.BackSide })
+        new THREE.MeshBasicMaterial({ color: 0x3a3a3a, side: THREE.BackSide })
       );
       envScene.add(backdrop);
 
@@ -437,11 +437,15 @@
         envScene.add(mesh);
       }
 
-      panel(0xffffff, 3.2, 18, 8, [0, 13, 0]);      // overhead softbox
-      panel(0xddeeff, 1.6, 9, 12, [-12, 5, -6]);    // cool side fill
-      panel(0xfff4e6, 1.3, 9, 12, [12, 5, -6]);     // warm side fill
+      // Panel gains stay modest: the bright ones baked mirror-hot highlights
+      // into the paint, which is what made every car look wet.
+      panel(0xffffff, 1.7, 18, 8, [0, 13, 0]);      // overhead softbox
+      panel(0xddeeff, 0.95, 9, 12, [-12, 5, -6]);   // cool side fill
+      panel(0xfff4e6, 0.85, 9, 12, [12, 5, -6]);    // warm side fill
 
-      studioEnvRT = pmrem.fromScene(envScene, 0.02);
+      // Heavier blur turns panel edges into a soft gradient instead of a
+      // hard-edged reflection that reads as a light bar on the hood.
+      studioEnvRT = pmrem.fromScene(envScene, 0.08);
 
       envScene.traverse(function (o) {
         if (o.geometry) { try { o.geometry.dispose(); } catch (e) {} }
@@ -846,7 +850,15 @@
             });
 
             // Studio PBR defaults on every lit material.
-            if (mat.isMeshStandardMaterial) mat.envMapIntensity = 1.2;
+            if (mat.isMeshStandardMaterial) {
+              mat.envMapIntensity = 0.65;
+              // Dielectric surfaces (paint, plastic, rubber) with a very low
+              // roughness become chrome under any environment map. A small
+              // floor keeps them glossy-but-not-liquid; real metals stay sharp.
+              if (mat.metalness < 0.5 && !mat.roughnessMap && mat.roughness < 0.15) {
+                mat.roughness = 0.15;
+              }
+            }
 
             // Glass / windshield handling: transparent flag, transmission, or a
             // name hit. Alpha-tested cutouts (decals, grille meshes) are excluded
@@ -866,7 +878,7 @@
               mat.opacity = Math.max(mat.opacity ?? 0.3, 0.25);
               mat.roughness = Math.min(mat.roughness ?? 0.05, 0.08);
               mat.metalness = 0.1;
-              mat.envMapIntensity = 2.0;
+              mat.envMapIntensity = 1.0;
               mat.depthWrite = false;
               mat.side = THREE.DoubleSide;
             } else {
