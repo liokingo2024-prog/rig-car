@@ -568,3 +568,91 @@ void stopSketchfabSkidAudio() {
     debugPrint('stopSketchfabSkidAudio error: $e');
   }
 }
+
+Future<Map<String, dynamic>?> runSketchfabAiScan({String? modelPath, double minConfidence = 0.15}) async {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer == null || !viewer.hasProperty('runAiAutoRig')) return null;
+
+    final opts = js.JsObject.jsify({
+      'modelPath': modelPath ?? 'models/yolo11n_rigcar_best.onnx',
+      'minConfidence': minConfidence,
+      'autoFlip': true,
+    });
+
+    // Run AI scan with callback
+    Map<String, dynamic>? resultFeatures;
+    final callback = js.JsFunction.withThis((_, js.JsObject? res) {
+      if (res != null && res['success'] == true && res['features'] != null) {
+        final f = res['features'];
+        resultFeatures = {
+          'forwardAligned': f['forwardAligned'] ?? true,
+          'wasFlipped': f['wasFlipped'] ?? false,
+          'headlights': (f['headlights'] as js.JsArray?)?.map((h) => {
+            'x': (h as js.JsObject)['x'],
+            'y': h['y'],
+            'z': h['z'],
+            'score': h['score'],
+          }).toList() ?? [],
+          'taillights': (f['taillights'] as js.JsArray?)?.map((t) => {
+            'x': (t as js.JsObject)['x'],
+            'y': t['y'],
+            'z': t['z'],
+            'score': t['score'],
+          }).toList() ?? [],
+          'doorHandles': (f['doorHandles'] as js.JsArray?)?.map((dh) => {
+            'x': (dh as js.JsObject)['x'],
+            'y': dh['y'],
+            'z': dh['z'],
+            'score': dh['score'],
+          }).toList() ?? [],
+          'doors': (f['doors'] as js.JsArray?)?.map((d) => {
+            'x': (d as js.JsObject)['x'],
+            'y': d['y'],
+            'z': d['z'],
+            'score': d['score'],
+          }).toList() ?? [],
+          'frontDoorsCount': f['frontDoorsCount'] ?? 0,
+          'backDoorsCount': f['backDoorsCount'] ?? 0,
+          'doorHandlesCount': f['doorHandlesCount'] ?? 0,
+        };
+      }
+    });
+
+    viewer.callMethod('runAiAutoRig', [opts, callback]);
+    // Allow brief async event turn for WebGL render & inference
+    await Future.delayed(const Duration(milliseconds: 350));
+    return resultFeatures;
+  } catch (e) {
+    debugPrint('runSketchfabAiScan error: $e');
+    return null;
+  }
+}
+
+Map<String, dynamic>? getSketchfabAiFeatures() {
+  try {
+    final viewer = js.context['SketchfabViewer'];
+    if (viewer == null || !viewer.hasProperty('getAiDetectedFeatures')) return null;
+    final f = viewer.callMethod('getAiDetectedFeatures');
+    if (f == null) return null;
+    return {
+      'forwardAligned': f['forwardAligned'] ?? true,
+      'wasFlipped': f['wasFlipped'] ?? false,
+      'headlights': (f['headlights'] as js.JsArray?)?.map((h) => {
+        'x': (h as js.JsObject)['x'],
+        'y': h['y'],
+        'z': h['z'],
+        'score': h['score'],
+      }).toList() ?? [],
+      'taillights': (f['taillights'] as js.JsArray?)?.map((t) => {
+        'x': (t as js.JsObject)['x'],
+        'y': t['y'],
+        'z': t['z'],
+        'score': t['score'],
+      }).toList() ?? [],
+    };
+  } catch (e) {
+    debugPrint('getSketchfabAiFeatures error: $e');
+    return null;
+  }
+}

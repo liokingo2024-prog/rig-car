@@ -94,3 +94,5 @@ void updateSketchfabTestDriveState({
 void exitSketchfabTestDrive() {}
 void setSketchfabTestDriveWorld(String lighting, String trackStyle) {}
 void updateSketchfabTestDriveWorld(String lighting, String trackStyle) {}
+Future<Map<String, dynamic>?> runSketchfabAiScan({String? modelPath, double minConfidence = 0.15}) async => null;
+Map<String, dynamic>? getSketchfabAiFeatures() => null;

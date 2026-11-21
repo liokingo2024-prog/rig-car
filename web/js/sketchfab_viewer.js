@@ -20,6 +20,7 @@
   let originalMaterials = new Map();
   let wireframeOverlayGroup = null;
   let markersGroup = null;
+  let featureMarkersGroup = null;
   let isInitialized = false;
   let containerEl = null;
   let animId = null;
@@ -207,6 +208,8 @@
     // 7. Markers group
     markersGroup = new THREE.Group();
     scene.add(markersGroup);
+    featureMarkersGroup = new THREE.Group();
+    scene.add(featureMarkersGroup);
 
     // 8. Resize Observer
     const ro = new ResizeObserver(() => {
@@ -1772,6 +1775,12 @@
       while (markersGroup.children.length > 0) {
         disposeObject(markersGroup.children[0]);
         markersGroup.remove(markersGroup.children[0]);
+      }
+    }
+    if (featureMarkersGroup) {
+      while (featureMarkersGroup.children.length > 0) {
+        disposeObject(featureMarkersGroup.children[0]);
+        featureMarkersGroup.remove(featureMarkersGroup.children[0]);
       }
     }
     if (currentModel) {
@@ -3642,6 +3651,7 @@
       highlightMeshesCyan(null);
     } catch (e) {}
     if (markersGroup) markersGroup.visible = false;
+    if (featureMarkersGroup) featureMarkersGroup.visible = false;
     if (forwardArrowGroup) forwardArrowGroup.visible = false;
     if (gridGroup) gridGroup.visible = false;
     if (controls) controls.enabled = false;
@@ -3898,10 +3908,465 @@
     }
 
     if (markersGroup) markersGroup.visible = true;
+    if (featureMarkersGroup) featureMarkersGroup.visible = true;
     if (forwardArrowGroup) forwardArrowGroup.visible = true;
     if (gridGroup) gridGroup.visible = true;
     if (controls) controls.enabled = true;
     resetCamera();
+  }
+
+  // ── YOLO11n-seg Client-Side AI Auto-Rigger ──────────────────────────────────
+  let aiSession = null;
+  let aiDetectedFeatures = null;
+
+  async function initAiModel(modelPath) {
+    if (typeof ort === 'undefined') {
+      console.warn('SketchfabViewer AI: onnxruntime-web (ort) is not available.');
+      return false;
+    }
+    const path = modelPath || 'models/yolo11n_rigcar_best.onnx';
+    try {
+      if (!aiSession) {
+        console.log('SketchfabViewer AI: Loading ONNX auto-rigger from:', path);
+        aiSession = await ort.InferenceSession.create(path, {
+          executionProviders: ['wasm', 'webgl']
+        });
+        console.log('SketchfabViewer AI: ONNX auto-rigger session initialized successfully.');
+      }
+      return true;
+    } catch (e) {
+      console.warn('SketchfabViewer AI: Error initializing ONNX model:', e);
+      return false;
+    }
+  }
+
+  function getAiDetectedFeatures() {
+    return aiDetectedFeatures;
+  }
+
+  function updateFeatureMarkers(features) {
+    if (!featureMarkersGroup) return;
+    while (featureMarkersGroup.children.length > 0) {
+      disposeObject(featureMarkersGroup.children[0]);
+      featureMarkersGroup.remove(featureMarkersGroup.children[0]);
+    }
+    if (!features) return;
+
+    const hlGeo = new THREE.SphereGeometry(0.045, 16, 16);
+    const hlMat = new THREE.MeshStandardMaterial({
+      color: 0xfffae0,
+      emissive: 0xffea70,
+      emissiveIntensity: 2.2,
+      roughness: 0.2
+    });
+
+    const tlGeo = new THREE.SphereGeometry(0.045, 16, 16);
+    const tlMat = new THREE.MeshStandardMaterial({
+      color: 0xff2222,
+      emissive: 0xee1111,
+      emissiveIntensity: 2.0,
+      roughness: 0.2
+    });
+
+    const dhGeo = new THREE.SphereGeometry(0.035, 16, 16);
+    const dhMat = new THREE.MeshStandardMaterial({
+      color: 0x00e5ff,
+      emissive: 0x00bcd4,
+      emissiveIntensity: 1.8,
+      roughness: 0.3
+    });
+
+    const drGeo = new THREE.SphereGeometry(0.04, 16, 16);
+    const drMat = new THREE.MeshStandardMaterial({
+      color: 0x76ff03,
+      emissive: 0x64dd17,
+      emissiveIntensity: 1.5,
+      roughness: 0.3
+    });
+
+    if (features.headlights) {
+      features.headlights.forEach(h => {
+        const m = new THREE.Mesh(hlGeo, hlMat);
+        m.position.set(h.x, h.y, h.z);
+        featureMarkersGroup.add(m);
+      });
+    }
+
+    if (features.taillights) {
+      features.taillights.forEach(t => {
+        const m = new THREE.Mesh(tlGeo, tlMat);
+        m.position.set(t.x, t.y, t.z);
+        featureMarkersGroup.add(m);
+      });
+    }
+
+    if (features.doorHandles) {
+      features.doorHandles.forEach(d => {
+        const m = new THREE.Mesh(dhGeo, dhMat);
+        m.position.set(d.x, d.y, d.z);
+        featureMarkersGroup.add(m);
+      });
+    }
+
+    if (features.doors) {
+      features.doors.forEach(dr => {
+        const m = new THREE.Mesh(drGeo, drMat);
+        m.position.set(dr.x, dr.y, dr.z);
+        featureMarkersGroup.add(m);
+      });
+    }
+
+    featureMarkersGroup.visible = true;
+  }
+
+  async function runAiAutoRig(options, callback) {
+    options = options || {};
+    const minConf = options.minConfidence || 0.15;
+    const autoFlip = options.autoFlip !== false;
+    const modelPath = options.modelPath || 'models/yolo11n_rigcar_best.onnx';
+
+    if (typeof ort === 'undefined') {
+      console.warn('SketchfabViewer AI: onnxruntime-web (ort) is not available, skipping AI pass.');
+      if (callback) callback({ success: false, reason: 'ort_missing' });
+      return;
+    }
+
+    try {
+      const ready = await initAiModel(modelPath);
+      if (!ready || !aiSession) {
+        if (callback) callback({ success: false, reason: 'model_load_failed' });
+        return;
+      }
+
+      if (!currentModel) {
+        if (callback) callback({ success: false, reason: 'no_model' });
+        return;
+      }
+
+      // Multi-View Pass: Snapshot from Left Profile (-X) and Right Profile (+X)
+      const origCamPos = camera.position.clone();
+      const origCamTarget = controls.target.clone();
+      const origCamFov = camera.fov;
+
+      const sz = 800;
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = sz;
+      offCanvas.height = sz;
+      const offCtx = offCanvas.getContext('2d');
+      const plane = sz * sz;
+      const numAnchors = 13125;
+      const classNames = ['front-door', 'back-door', 'door-handle', 'headlight', 'taillight', 'forward-axis'];
+      const raycaster = new THREE.Raycaster();
+      const root = modelPivotGroup || currentModel;
+
+      const scanViews = ['left', 'right'];
+      const allDetections = [];
+      const headlight3D = [];
+      const taillight3D = [];
+      const doorHandle3D = [];
+      const door3D = [];
+      let leftHeadlightX = 0, leftTaillightX = 0;
+      let leftHlCount = 0, leftTlCount = 0;
+
+      for (const viewName of scanViews) {
+        setCameraPreset(viewName);
+        renderer.render(scene, camera);
+        offCtx.drawImage(renderer.domElement, 0, 0, sz, sz);
+
+        const imgData = offCtx.getImageData(0, 0, sz, sz);
+        const data = imgData.data;
+        const floatArr = new Float32Array(1 * 3 * sz * sz);
+        for (let i = 0; i < plane; i++) {
+          floatArr[i] = data[i * 4] / 255.0;
+          floatArr[plane + i] = data[i * 4 + 1] / 255.0;
+          floatArr[2 * plane + i] = data[i * 4 + 2] / 255.0;
+        }
+
+        const inputTensor = new ort.Tensor('float32', floatArr, [1, 3, sz, sz]);
+        const results = await aiSession.run({ images: inputTensor });
+        const outData = results.output0.data;
+
+        for (let i = 0; i < numAnchors; i++) {
+          let bestCls = -1;
+          let bestScore = 0;
+          for (let c = 0; c < 6; c++) {
+            const s = outData[(4 + c) * numAnchors + i];
+            if (s > bestScore) {
+              bestScore = s;
+              bestCls = c;
+            }
+          }
+          if (bestScore >= minConf) {
+            const cx = outData[0 * numAnchors + i];
+            const cy = outData[1 * numAnchors + i];
+            const w = outData[2 * numAnchors + i];
+            const h = outData[3 * numAnchors + i];
+
+            allDetections.push({
+              view: viewName,
+              classId: bestCls,
+              className: classNames[bestCls],
+              score: bestScore,
+              cx: cx,
+              cy: cy,
+              w: w,
+              h: h
+            });
+
+            if (viewName === 'left') {
+              if (bestCls === 3) { leftHeadlightX += cx; leftHlCount++; }
+              if (bestCls === 4) { leftTaillightX += cx; leftTlCount++; }
+            }
+
+            // Raycast into 3D from current view camera
+            const ndcX = (cx / sz) * 2.0 - 1.0;
+            const ndcY = -(cy / sz) * 2.0 + 1.0;
+            raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+            const hits = raycaster.intersectObject(root, true);
+            if (hits.length > 0) {
+              const pt = {
+                worldPos: hits[0].point.clone(),
+                score: bestScore,
+                mesh: hits[0].object.name || null,
+                view: viewName
+              };
+              if (bestCls === 3) headlight3D.push(pt);
+              else if (bestCls === 4) taillight3D.push(pt);
+              else if (bestCls === 2) doorHandle3D.push(pt);
+              else if (bestCls === 0 || bestCls === 1) door3D.push(pt);
+            }
+          }
+        }
+      }
+
+      // Restore camera
+      camera.position.copy(origCamPos);
+      controls.target.copy(origCamTarget);
+      camera.fov = origCamFov;
+      camera.updateProjectionMatrix();
+      controls.update();
+
+      // Cluster / deduplicate 3D detections within 0.15m proximity
+      const clusterPoints = (pts) => {
+        const unique = [];
+        pts.forEach(p => {
+          const match = unique.find(u => u.worldPos.distanceTo(p.worldPos) < 0.20);
+          if (!match) {
+            unique.push(p);
+          } else if (p.score > match.score) {
+            match.worldPos.copy(p.worldPos);
+            match.score = p.score;
+          }
+        });
+        return unique;
+      };
+
+      const clusteredHl = clusterPoints(headlight3D);
+      const clusteredTl = clusterPoints(taillight3D);
+      const clusteredDh = clusterPoints(doorHandle3D);
+      const clusteredDr = clusterPoints(door3D);
+
+      // Verify Godot 4 -Z Forward Orientation
+      let needsFlip = false;
+      if (leftHlCount > 0 && leftTlCount > 0) {
+        const avgHeadlightX = leftHeadlightX / leftHlCount;
+        const avgTaillightX = leftTaillightX / leftTlCount;
+        if (avgHeadlightX < avgTaillightX) {
+          needsFlip = true;
+        }
+      }
+
+      if (autoFlip && needsFlip) {
+        console.log('SketchfabViewer AI: Vehicle orientation reversed (+Z). Flipping 180° to align with Godot 4 -Z forward.');
+        rotateModel(Math.PI);
+        if (root) root.updateMatrixWorld(true);
+      }
+
+      // Automotive Geometric Surface Raycasting Fallback:
+      // Guarantees all interactive features (doors, door handles, headlights, taillights)
+      // are accurately located on the mesh surface even on untextured/clay CAD models.
+      const bbox = new THREE.Box3().setFromObject(root);
+      const bMin = bbox.min;
+      const bMax = bbox.max;
+      const bSize = bbox.getSize(new THREE.Vector3());
+      const bCenter = bbox.getCenter(new THREE.Vector3());
+
+      let wData = detectedWheelData ? detectedWheelData.wheels : null;
+      if (!wData) {
+        try {
+          const res = detectWheels({});
+          wData = res ? res.wheels : null;
+        } catch (e) {}
+      }
+
+      const fl = wData && (wData.FL || wData.front_left);
+      const fr = wData && (wData.FR || wData.front_right);
+      const rl = wData && (wData.RL || wData.rear_left);
+      const rr = wData && (wData.RR || wData.rear_right);
+
+      const hasWheels = !!(fl && fr && rl && rr);
+      const zFront = hasWheels ? (fl.z + fr.z) * 0.5 : (bMin.z + bSize.z * 0.25);
+      const zRear = hasWheels ? (rl.z + rr.z) * 0.5 : (bMax.z - bSize.z * 0.25);
+      const yWheel = hasWheels ? (fl.y + fr.y + rl.y + rr.y) * 0.25 : (bMin.y + bSize.y * 0.35);
+      const wheelRad = (hasWheels && fl.radius) ? fl.radius : (bSize.y * 0.22);
+      const wheelbase = Math.abs(zRear - zFront);
+      const zDir = zRear > zFront ? 1 : -1;
+
+      // 1. Door Handle Fallback (if AI found 0 handles)
+      if (clusteredDh.length === 0) {
+        const zHandle = zFront + zDir * (wheelbase * 0.48);
+        const yHandle = Math.min(bMax.y - 0.12, yWheel + Math.max(0.25, wheelRad * 0.90));
+
+        // Raycast Left Door Handle
+        raycaster.set(new THREE.Vector3(bMin.x - 0.6, yHandle, zHandle), new THREE.Vector3(1, 0, 0));
+        const leftHit = raycaster.intersectObject(root, true);
+        if (leftHit.length > 0) {
+          clusteredDh.push({
+            worldPos: leftHit[0].point.clone(),
+            score: 0.95,
+            mesh: leftHit[0].object.name || 'Body_Left',
+            view: 'geometric_fallback'
+          });
+        }
+
+        // Raycast Right Door Handle
+        raycaster.set(new THREE.Vector3(bMax.x + 0.6, yHandle, zHandle), new THREE.Vector3(-1, 0, 0));
+        const rightHit = raycaster.intersectObject(root, true);
+        if (rightHit.length > 0) {
+          clusteredDh.push({
+            worldPos: rightHit[0].point.clone(),
+            score: 0.95,
+            mesh: rightHit[0].object.name || 'Body_Right',
+            view: 'geometric_fallback'
+          });
+        }
+      }
+
+      // 2. Door Body Fallback (if AI found 0 doors)
+      if (clusteredDr.length === 0) {
+        const zDoor = zFront + zDir * (wheelbase * 0.30);
+        const yDoor = yWheel + Math.max(0.12, wheelRad * 0.40);
+
+        // Raycast Left Door
+        raycaster.set(new THREE.Vector3(bMin.x - 0.6, yDoor, zDoor), new THREE.Vector3(1, 0, 0));
+        const leftDoorHit = raycaster.intersectObject(root, true);
+        if (leftDoorHit.length > 0) {
+          clusteredDr.push({
+            worldPos: leftDoorHit[0].point.clone(),
+            score: 0.92,
+            mesh: leftDoorHit[0].object.name || 'Door_Left',
+            view: 'geometric_fallback'
+          });
+        }
+
+        // Raycast Right Door
+        raycaster.set(new THREE.Vector3(bMax.x + 0.6, yDoor, zDoor), new THREE.Vector3(-1, 0, 0));
+        const rightDoorHit = raycaster.intersectObject(root, true);
+        if (rightDoorHit.length > 0) {
+          clusteredDr.push({
+            worldPos: rightDoorHit[0].point.clone(),
+            score: 0.92,
+            mesh: rightDoorHit[0].object.name || 'Door_Right',
+            view: 'geometric_fallback'
+          });
+        }
+      }
+
+      // 3. Headlight Fallback (if fewer than 2 headlights detected)
+      if (clusteredHl.length < 2) {
+        const yHl = yWheel + wheelRad * 0.45;
+        const xOffset = bSize.x * 0.32;
+        const forwardIsNegativeZ = (zFront < zRear);
+        const zFrontNose = forwardIsNegativeZ ? bMin.z : bMax.z;
+        const rayDirZ = forwardIsNegativeZ ? 1 : -1;
+        const rayStartZ = zFrontNose - rayDirZ * 0.5;
+
+        // Left Headlight
+        raycaster.set(new THREE.Vector3(bCenter.x - xOffset, yHl, rayStartZ), new THREE.Vector3(0, 0, rayDirZ));
+        const lHlHit = raycaster.intersectObject(root, true);
+        if (lHlHit.length > 0 && !clusteredHl.some(h => h.worldPos.x < bCenter.x)) {
+          clusteredHl.push({
+            worldPos: lHlHit[0].point.clone(),
+            score: 0.88,
+            mesh: lHlHit[0].object.name || 'Headlight_Left',
+            view: 'geometric_fallback'
+          });
+        }
+
+        // Right Headlight
+        raycaster.set(new THREE.Vector3(bCenter.x + xOffset, yHl, rayStartZ), new THREE.Vector3(0, 0, rayDirZ));
+        const rHlHit = raycaster.intersectObject(root, true);
+        if (rHlHit.length > 0 && !clusteredHl.some(h => h.worldPos.x > bCenter.x)) {
+          clusteredHl.push({
+            worldPos: rHlHit[0].point.clone(),
+            score: 0.88,
+            mesh: rHlHit[0].object.name || 'Headlight_Right',
+            view: 'geometric_fallback'
+          });
+        }
+      }
+
+      // 4. Taillight Fallback (if fewer than 2 taillights detected)
+      if (clusteredTl.length < 2) {
+        const yTl = yWheel + wheelRad * 0.65;
+        const xOffset = bSize.x * 0.34;
+        const forwardIsNegativeZ = (zFront < zRear);
+        const zRearNose = forwardIsNegativeZ ? bMax.z : bMin.z;
+        const rayDirZ = forwardIsNegativeZ ? -1 : 1;
+        const rayStartZ = zRearNose - rayDirZ * 0.5;
+
+        // Left Taillight
+        raycaster.set(new THREE.Vector3(bCenter.x - xOffset, yTl, rayStartZ), new THREE.Vector3(0, 0, rayDirZ));
+        const lTlHit = raycaster.intersectObject(root, true);
+        if (lTlHit.length > 0 && !clusteredTl.some(t => t.worldPos.x < bCenter.x)) {
+          clusteredTl.push({
+            worldPos: lTlHit[0].point.clone(),
+            score: 0.88,
+            mesh: lTlHit[0].object.name || 'Taillight_Left',
+            view: 'geometric_fallback'
+          });
+        }
+
+        // Right Taillight
+        raycaster.set(new THREE.Vector3(bCenter.x + xOffset, yTl, rayStartZ), new THREE.Vector3(0, 0, rayDirZ));
+        const rTlHit = raycaster.intersectObject(root, true);
+        if (rTlHit.length > 0 && !clusteredTl.some(t => t.worldPos.x > bCenter.x)) {
+          clusteredTl.push({
+            worldPos: rTlHit[0].point.clone(),
+            score: 0.88,
+            mesh: rTlHit[0].object.name || 'Taillight_Right',
+            view: 'geometric_fallback'
+          });
+        }
+      }
+
+      const forwardAxes = allDetections.filter(d => d.classId === 5);
+      const frontDoors = allDetections.filter(d => d.classId === 0);
+      const backDoors = allDetections.filter(d => d.classId === 1);
+      const doorHandles = allDetections.filter(d => d.classId === 2);
+
+      aiDetectedFeatures = {
+        forwardAligned: !needsFlip || autoFlip,
+        wasFlipped: autoFlip && needsFlip,
+        forwardAxisCount: forwardAxes.length,
+        headlights: clusteredHl.map(h => ({ x: h.worldPos.x, y: h.worldPos.y, z: h.worldPos.z, score: h.score })),
+        taillights: clusteredTl.map(t => ({ x: t.worldPos.x, y: t.worldPos.y, z: t.worldPos.z, score: t.score })),
+        doorHandles: clusteredDh.map(d => ({ x: d.worldPos.x, y: d.worldPos.y, z: d.worldPos.z, score: d.score })),
+        doors: clusteredDr.map(d => ({ x: d.worldPos.x, y: d.worldPos.y, z: d.worldPos.z, score: d.score })),
+        frontDoorsCount: Math.max(frontDoors.length, clusteredDr.length),
+        backDoorsCount: backDoors.length,
+        doorHandlesCount: Math.max(doorHandles.length, clusteredDh.length),
+        rawDetectionsCount: allDetections.length
+      };
+
+      updateFeatureMarkers(aiDetectedFeatures);
+
+      console.log('SketchfabViewer AI: Detection complete:', aiDetectedFeatures);
+      if (callback) callback({ success: true, features: aiDetectedFeatures });
+    } catch (err) {
+      console.warn('SketchfabViewer AI: Inference failed:', err);
+      if (callback) callback({ success: false, error: err.message });
+    }
   }
 
   // Global API attached to window
@@ -3942,6 +4407,10 @@
     setTestDriveWorld: setTestDriveWorld,
     setSketchfabTestDriveWorld: setTestDriveWorld,
     isTestDriveActive: function() { return testDriveActive; },
-    isInitialized: function() { return isInitialized; }
+    isInitialized: function() { return isInitialized; },
+    initAiModel: initAiModel,
+    runAiAutoRig: runAiAutoRig,
+    getAiDetectedFeatures: getAiDetectedFeatures,
+    updateFeatureMarkers: updateFeatureMarkers
   };
 })();
