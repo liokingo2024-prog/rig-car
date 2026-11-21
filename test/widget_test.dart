@@ -1097,8 +1097,8 @@ void main() {
       await tester.tap(find.text('Export Rig').first);
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
-      expect(find.text('Scale & Axis Valid'), findsOneWidget);
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsNothing);
+      expect(find.text('Scale & Axis Valid'), findsNothing);
       expect(find.text('GODOT 4 ARCHITECTURE'), findsOneWidget);
       expect(find.text('EXPORT OUTPUT'), findsOneWidget);
       expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
@@ -2014,7 +2014,7 @@ endsolid sports_car''';
       await tester.pump(const Duration(milliseconds: 100));
 
       // Step 5: Export Rig
-      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsNothing);
       expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
       expect(find.text('Launch Test Drive'), findsOneWidget);
     });
@@ -2161,7 +2161,7 @@ endsolid sports_car''';
       // And Step 5 is unlocked
       await tester.tap(find.text('Export Rig').first);
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
+      expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsNothing);
     });
 
     testWidgets('ensures viewport does not render circle markers or CoM text on middle object', (tester) async {

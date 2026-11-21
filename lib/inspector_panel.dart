@@ -229,7 +229,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
   }
 
   Widget _buildStatusBadge() {
-    if (widget.activeStep != 1 && widget.inspectMode == 'manual') {
+    if (widget.activeStep != 1 &&
+        widget.activeStep != 5 &&
+        widget.inspectMode == 'manual') {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
         decoration: BoxDecoration(
@@ -389,7 +391,10 @@ class _InspectorPanelState extends State<InspectorPanel> {
               ],
             ),
           ),
-          if (widget.activeStep != 1) ...[
+          // Steps 2-4 have separate auto and manual views; step 1 and the
+          // export step do not, so the mode switch is only shown where it
+          // actually changes the panel.
+          if (widget.activeStep != 1 && widget.activeStep != 5) ...[
             const SizedBox(width: 8),
             // 2-button segmented pill toggle: [ ✨ Auto | 🛠 Custom ]
             Flexible(
@@ -1616,38 +1621,9 @@ class _InspectorPanelState extends State<InspectorPanel> {
   // ── STEP 5: EXPORT RIG ────────────────────────────────────────────────────
 
   Widget _buildStep5Export() {
-    final wheelsVerified = widget.assignedWheels.values.whereType<DetectedWheel>().length >= 4;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _SectionHeader('PRE-FLIGHT READINESS CHECKLIST'),
-        const SizedBox(height: 8),
-        _ReadinessCheckRow(
-          title: 'Scale & Axis Valid',
-          subtitle: 'Normalized vehicle bounds and standard -Z forward heading',
-          isReady: widget.parsedModel != null,
-        ),
-        const SizedBox(height: 6),
-        _ReadinessCheckRow(
-          title: '4 Wheel Hubs Verified',
-          subtitle: 'FL, FR, RL, RR rotation pivots and radii mapped',
-          isReady: wheelsVerified,
-        ),
-        const SizedBox(height: 6),
-        _ReadinessCheckRow(
-          title: 'Physics Profile Attached',
-          subtitle: 'Suspension travel, mass distribution and tire grip attached',
-          isReady: true,
-        ),
-        const SizedBox(height: 6),
-        _ReadinessCheckRow(
-          title: 'Audio Nodes Configured',
-          subtitle: 'RPM pitch tracking and accessory sound graphs bound',
-          isReady: true,
-        ),
-
-        const SizedBox(height: 18),
         const _SectionHeader('EXPORT OUTPUT'),
         const SizedBox(height: 8),
         Container(
@@ -2707,54 +2683,6 @@ class _AudioSlotCardState extends State<_AudioSlotCard> {
                 ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReadinessCheckRow extends StatelessWidget {
-  const _ReadinessCheckRow({
-    required this.title,
-    required this.subtitle,
-    required this.isReady,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool isReady;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isReady ? _Palette.accentEmerald : _Palette.accentAmber;
-    return Container(
-      padding: const EdgeInsets.all(9),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1814),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _Palette.borderDefault),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(isReady ? Icons.check_circle_rounded : Icons.warning_amber_rounded, size: 15, color: color),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(color: _Palette.textPrimary, fontSize: 11, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: _Palette.textSecondary, fontSize: 9.5),
-                ),
-              ],
-            ),
           ),
         ],
       ),

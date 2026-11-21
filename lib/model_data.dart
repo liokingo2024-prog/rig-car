@@ -640,8 +640,10 @@ class ParsedModel {
   /// each wheel's geometry is rebased onto its hub from [wheelPivots] so
   /// rotating the node spins that wheel instead of orbiting the car.
   ///
-  /// Normals are averaged per vertex. The parsed model carries no material
-  /// graph, so every part shares one neutral PBR material.
+  /// Normals are averaged per vertex, and the colours the importer sampled from
+  /// the source material and base-colour textures are baked into a `COLOR_0`
+  /// attribute, so paint, glass, tyres and lights keep their colours. Every part
+  /// shares one PBR material whose white base colour multiplies those colours.
   Uint8List toRiggedGlb({Map<String, Vec3> wheelPivots = const {}}) {
     final bin = BytesBuilder(copy: false);
     final bufferViews = <Map<String, Object>>[];
@@ -714,6 +716,36 @@ class ParsedModel {
         }
       }
 
+      // Bake the per-triangle colours sampled at import time (vertex colours,
+      // material factors and base-colour texels) into one colour per vertex, so
+      // the exported car is not a single flat grey surface.
+      final colorSums = Float64List(verts.length * 4);
+      final colorCounts = Int32List(verts.length);
+      for (final t in tris) {
+        final c = t.color;
+        if (c == null) continue;
+        for (final idx in [t.a, t.b, t.c]) {
+          colorSums[idx * 4] += c.r;
+          colorSums[idx * 4 + 1] += c.g;
+          colorSums[idx * 4 + 2] += c.b;
+          colorSums[idx * 4 + 3] += c.a;
+          colorCounts[idx]++;
+        }
+      }
+      int channel(double sum, int count, double fallback) =>
+          (count == 0 ? fallback * 255 : sum / count * 255)
+              .round()
+              .clamp(0, 255)
+              .toInt();
+      final colors = Uint8List(verts.length * 4);
+      for (var i = 0; i < verts.length; i++) {
+        final n = colorCounts[i];
+        colors[i * 4] = channel(colorSums[i * 4], n, 0.78);
+        colors[i * 4 + 1] = channel(colorSums[i * 4 + 1], n, 0.80);
+        colors[i * 4 + 2] = channel(colorSums[i * 4 + 2], n, 0.83);
+        colors[i * 4 + 3] = channel(colorSums[i * 4 + 3], n, 1.0);
+      }
+
       final indices = Uint32List(tris.length * 3);
       for (var i = 0; i < tris.length; i++) {
         indices[i * 3] = tris[i].a;
@@ -735,6 +767,7 @@ class ParsedModel {
 
       final posView = addBufferView(positions.buffer.asUint8List(), 34962);
       final nrmView = addBufferView(normals.buffer.asUint8List(), 34962);
+      final colView = addBufferView(colors, 34962);
       final idxView = addBufferView(indices.buffer.asUint8List(), 34963);
 
       final posAccessor = accessors.length;
@@ -753,6 +786,14 @@ class ParsedModel {
         'count': verts.length,
         'type': 'VEC3',
       });
+      final colAccessor = accessors.length;
+      accessors.add(<String, Object>{
+        'bufferView': colView,
+        'componentType': 5121,
+        'normalized': true,
+        'count': verts.length,
+        'type': 'VEC4',
+      });
       final idxAccessor = accessors.length;
       accessors.add(<String, Object>{
         'bufferView': idxView,
@@ -769,6 +810,7 @@ class ParsedModel {
             'attributes': <String, Object>{
               'POSITION': posAccessor,
               'NORMAL': nrmAccessor,
+              'COLOR_0': colAccessor,
             },
             'indices': idxAccessor,
             'material': 0,
@@ -807,9 +849,9 @@ class ParsedModel {
           <String, Object>{
             'name': 'CarPaint',
             'pbrMetallicRoughness': <String, Object>{
-              'baseColorFactor': <double>[0.78, 0.80, 0.83, 1.0],
-              'metallicFactor': 0.35,
-              'roughnessFactor': 0.45,
+              'baseColorFactor': <double>[1.0, 1.0, 1.0, 1.0],
+              'metallicFactor': 0.15,
+              'roughnessFactor': 0.55,
             },
             'doubleSided': true,
           },

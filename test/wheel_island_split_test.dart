@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
+import 'dart:ui' show Color;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rig_car/model_data.dart';
@@ -17,7 +20,7 @@ void main() {
 
     // Body triangle well away from every hub.
     verts.addAll(const [Vec3(0, 1.4, 0), Vec3(0.2, 1.4, 0), Vec3(0, 1.4, 0.2)]);
-    tris.add(Triangle(0, 1, 2));
+    tris.add(Triangle(0, 1, 2, const Color(0xFFFF0000)));
 
     hubs.forEach((corner, hub) {
       for (var i = 0; i < 12; i++) {
@@ -122,6 +125,41 @@ void main() {
     expect(obj, contains('o Left_Rear_Wheel'));
     expect(obj, contains('o Right_Rear_Wheel'));
     expect(obj.indexOf('o Body'), lessThan(obj.indexOf('o Left_Front_Wheel')));
+
+    // The rigged GLB must carry the colours sampled at import instead of one
+    // flat grey, so paint, glass and tyres survive the export.
+    final glb = result.model.toRiggedGlb();
+    final glbData = ByteData.sublistView(glb);
+    final jsonLength = glbData.getUint32(12, Endian.little);
+    final json = jsonDecode(
+      utf8.decode(glb.sublist(20, 20 + jsonLength)),
+    ) as Map<String, dynamic>;
+
+    final attributes =
+        ((json['meshes'] as List)[0]['primitives'] as List)[0]['attributes']
+            as Map<String, dynamic>;
+    expect(attributes.containsKey('COLOR_0'), isTrue);
+
+    final colorAccessor =
+        (json['accessors'] as List)[attributes['COLOR_0'] as int]
+            as Map<String, dynamic>;
+    expect(colorAccessor['type'], 'VEC4');
+    expect(colorAccessor['componentType'], 5121);
+    expect(colorAccessor['normalized'], isTrue);
+
+    final colorView =
+        (json['bufferViews'] as List)[colorAccessor['bufferView'] as int]
+            as Map<String, dynamic>;
+    final binStart = 20 + jsonLength + 8;
+    final colors = glb.sublist(
+      binStart + (colorView['byteOffset'] as int),
+      binStart +
+          (colorView['byteOffset'] as int) +
+          (colorAccessor['count'] as int) * 4,
+    );
+    // Vertex 0 is shared by no other triangle, so it keeps the sampled colour
+    // exactly instead of the neutral grey used when a mesh carries no colours.
+    expect(colors.sublist(0, 4), [255, 0, 0, 255]);
   });
 
   test('separate wheel nodes are left untouched', () {
