@@ -1100,7 +1100,8 @@ void main() {
       expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
       expect(find.text('Scale & Axis Valid'), findsOneWidget);
       expect(find.text('GODOT 4 ARCHITECTURE'), findsOneWidget);
-      expect(find.text('Export Godot 4 Rig (.glb / .tscn)'), findsOneWidget);
+      expect(find.text('EXPORT OUTPUT'), findsOneWidget);
+      expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
     });
 
     testWidgets('interacts with all 5 inspector steps, toggles auto and manual modes, and verifies controls', (tester) async {
@@ -2014,7 +2015,7 @@ endsolid sports_car''';
 
       // Step 5: Export Rig
       expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsOneWidget);
-      expect(find.text('Export Godot 4 Rig (.glb / .tscn)'), findsOneWidget);
+      expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
       expect(find.text('Launch Test Drive'), findsOneWidget);
     });
 
