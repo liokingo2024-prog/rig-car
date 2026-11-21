@@ -834,6 +834,13 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     );
   }
 
+  /// Runs an export for a target picked from a header export menu, keeping the
+  /// step-5 selection in sync with what was actually exported.
+  Future<void> _exportWithTarget(String target) async {
+    if (_exportTarget != target) setState(() => _exportTarget = target);
+    await _exportGodotFiles();
+  }
+
   Future<void> _exportGodotFiles() async {
     final blockReason = _exportBlockReason;
     if (blockReason != null) {
@@ -2081,7 +2088,7 @@ handle_brake=${action(key(32))}
             children: [
               if (!desktop)
                 _MobileHeader(
-                  onExport: _exportGodotFiles,
+                  onExport: _exportWithTarget,
                   isTestDrive: _isTestDriveMode,
                   onToggleTestDrive: () {
                     if (_isTestDriveMode) {
@@ -2130,7 +2137,7 @@ handle_brake=${action(key(32))}
                           if (desktop)
                             _DesktopTopbar(
                               modelName: _modelName,
-                              onExport: _exportGodotFiles,
+                              onExport: _exportWithTarget,
                               inspectMode: _inspectMode,
                               wheelsCount: _assignedWheels.values
                                   .whereType<DetectedWheel>()
@@ -2734,7 +2741,7 @@ class _DesktopTopbar extends StatelessWidget {
   });
 
   final String modelName;
-  final VoidCallback onExport;
+  final ValueChanged<String> onExport;
   final String inspectMode;
   final int wheelsCount;
   final bool isScanDone;
@@ -2890,14 +2897,40 @@ class _DesktopTopbar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          OutlinedButton.icon(
-            onPressed: onExport,
-            icon: const Icon(Icons.file_download_outlined, size: 15),
-            label: const Text('Export rig', style: TextStyle(fontSize: 11)),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFC9D1D9),
-              side: const BorderSide(color: Color(0xFF223127)),
+          PopupMenuButton<String>(
+            tooltip: 'Choose what to export',
+            onSelected: onExport,
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'glb',
+                child: Text('Organized model (.glb)', style: TextStyle(fontSize: 12)),
+              ),
+              PopupMenuItem(
+                value: 'scene',
+                child: Text('Rigged scene (.tscn + script)', style: TextStyle(fontSize: 12)),
+              ),
+              PopupMenuItem(
+                value: 'project',
+                child: Text('Full Godot 4 project (.zip)', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+            child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF223127)),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.file_download_outlined, size: 15, color: Color(0xFFC9D1D9)),
+                  SizedBox(width: 6),
+                  Text(
+                    'Export rig',
+                    style: TextStyle(fontSize: 11, color: Color(0xFFC9D1D9)),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 6),
@@ -2928,7 +2961,7 @@ class _MobileHeader extends StatelessWidget {
     required this.isTestDrive,
     required this.onToggleTestDrive,
   });
-  final VoidCallback onExport;
+  final ValueChanged<String> onExport;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
 
@@ -2974,10 +3007,24 @@ class _MobileHeader extends StatelessWidget {
                   : const Color(0xFF10B981),
             ),
           ),
-          IconButton(
-            onPressed: onExport,
-            tooltip: 'Export Godot rig',
+          PopupMenuButton<String>(
+            tooltip: 'Choose what to export',
+            onSelected: onExport,
             icon: const Icon(Icons.file_download_outlined),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'glb',
+                child: Text('Organized model (.glb)', style: TextStyle(fontSize: 12)),
+              ),
+              PopupMenuItem(
+                value: 'scene',
+                child: Text('Rigged scene (.tscn + script)', style: TextStyle(fontSize: 12)),
+              ),
+              PopupMenuItem(
+                value: 'project',
+                child: Text('Full Godot 4 project (.zip)', style: TextStyle(fontSize: 12)),
+              ),
+            ],
           ),
         ],
       ),
