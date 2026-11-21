@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -560,6 +561,53 @@ class ParsedModel {
     );
   }
 
+  /// Ordered parts of a rigged export: the body first, then one part per wheel.
+  ///
+  /// [name] is the human-readable node name used by the binary glTF export and
+  /// by `rig_car.gd`; [objName] is the space-free Wavefront group name.
+  List<({String name, String objName, MeshInstance instance})> riggedParts() {
+    String nodeNameOf(MeshInstance i) =>
+        i.nodeIndex >= 0 && i.nodeIndex < nodes.length
+            ? nodes[i.nodeIndex].name
+            : '';
+
+    final ordered = List<MeshInstance>.of(instances)
+      ..sort((a, b) => (nodeNameOf(a) == kBodyNodeName ? 0 : 1)
+          .compareTo(nodeNameOf(b) == kBodyNodeName ? 0 : 1));
+
+    final usedNames = <String>{};
+    final usedObjNames = <String>{};
+    final parts = <({String name, String objName, MeshInstance instance})>[];
+
+    for (final inst in ordered) {
+      if (inst.triangles.isEmpty) continue;
+
+      var name = nodeNameOf(inst).trim();
+      if (name.isEmpty) name = 'Part_${inst.nodeIndex}';
+      if (!usedNames.add(name)) {
+        var suffix = 2;
+        while (!usedNames.add('$name $suffix')) {
+          suffix++;
+        }
+        name = '$name $suffix';
+      }
+
+      var objName =
+          objSafeObjectName(name).replaceAll(RegExp(r'^_+|_+$'), '');
+      if (objName.isEmpty) objName = 'Part_${inst.nodeIndex}';
+      if (!usedObjNames.add(objName)) {
+        var suffix = 2;
+        while (!usedObjNames.add('${objName}_$suffix')) {
+          suffix++;
+        }
+        objName = '${objName}_$suffix';
+      }
+
+      parts.add((name: name, objName: objName, instance: inst));
+    }
+    return parts;
+  }
+
   /// Wavefront OBJ with one object group per part, so merged-mesh exports
   /// expose `Body`, `Left_Front_Wheel`, `Right_Front_Wheel`,
   /// `Left_Rear_Wheel` and `Right_Rear_Wheel` objects in Godot 4. The body is
@@ -567,32 +615,9 @@ class ParsedModel {
   String toRiggedObj() {
     final sb = StringBuffer('# RIG-CAR rigged split export\n');
     var offset = 1;
-    final usedNames = <String>{};
-
-    String nameOf(MeshInstance i) =>
-        i.nodeIndex >= 0 && i.nodeIndex < nodes.length
-            ? nodes[i.nodeIndex].name
-            : '';
-
-    final ordered = List<MeshInstance>.of(instances)
-      ..sort((a, b) => (nameOf(a) == kBodyNodeName ? 0 : 1)
-          .compareTo(nameOf(b) == kBodyNodeName ? 0 : 1));
-
-    for (final inst in ordered) {
-      if (inst.triangles.isEmpty) continue;
-      final nodeName = inst.nodeIndex < nodes.length
-          ? nodes[inst.nodeIndex].name
-          : 'Part_${inst.nodeIndex}';
-      var safeName =
-          objSafeObjectName(nodeName).replaceAll(RegExp(r'^_+|_+$'), '');
-      if (safeName.isEmpty) safeName = 'Part_${inst.nodeIndex}';
-      if (!usedNames.add(safeName)) {
-        var suffix = 2;
-        while (!usedNames.add('${safeName}_$suffix')) {
-          suffix++;
-        }
-        safeName = '${safeName}_$suffix';
-      }
+    for (final part in riggedParts()) {
+      final inst = part.instance;
+      final safeName = part.objName;
       sb.writeln('o $safeName');
       for (final v in inst.worldVertices) {
         sb.writeln(
@@ -606,6 +631,231 @@ class ParsedModel {
       offset += inst.worldVertices.length;
     }
     return sb.toString();
+  }
+
+  /// Self-contained binary glTF (.glb) of the rigged parts.
+  ///
+  /// One node per part, named exactly like [riggedParts] (`Body`,
+  /// `Left Front Wheel`, ...) so the exported Godot script can bind them, and
+  /// each wheel's geometry is rebased onto its hub from [wheelPivots] so
+  /// rotating the node spins that wheel instead of orbiting the car.
+  ///
+  /// Normals are averaged per vertex. The parsed model carries no material
+  /// graph, so every part shares one neutral PBR material.
+  Uint8List toRiggedGlb({Map<String, Vec3> wheelPivots = const {}}) {
+    final bin = BytesBuilder(copy: false);
+    final bufferViews = <Map<String, Object>>[];
+    final accessors = <Map<String, Object>>[];
+    final meshes = <Map<String, Object>>[];
+    final nodes = <Map<String, Object>>[];
+
+    int addBufferView(List<int> bytes, int target) {
+      while (bin.length % 4 != 0) {
+        bin.addByte(0);
+      }
+      final offset = bin.length;
+      bin.add(bytes);
+      bufferViews.add(<String, Object>{
+        'buffer': 0,
+        'byteOffset': offset,
+        'byteLength': bytes.length,
+        'target': target,
+      });
+      return bufferViews.length - 1;
+    }
+
+    for (final part in riggedParts()) {
+      final verts = part.instance.worldVertices;
+      if (verts.isEmpty) continue;
+      final tris = [
+        for (final t in part.instance.triangles)
+          if (t.a < verts.length && t.b < verts.length && t.c < verts.length)
+            t,
+      ];
+      if (tris.isEmpty) continue;
+
+      final pivot = wheelPivots[part.name] ?? Vec3.zero;
+      final positions = Float32List(verts.length * 3);
+      final normals = Float32List(verts.length * 3);
+      for (var i = 0; i < verts.length; i++) {
+        final v = verts[i];
+        positions[i * 3] = v.x - pivot.x;
+        positions[i * 3 + 1] = v.y - pivot.y;
+        positions[i * 3 + 2] = v.z - pivot.z;
+      }
+
+      // Area-weighted vertex normals: unnormalised face normals accumulate so
+      // larger faces dominate, then each vertex normal is normalised.
+      for (final t in tris) {
+        final v0 = verts[t.a], v1 = verts[t.b], v2 = verts[t.c];
+        final nx = (v1.y - v0.y) * (v2.z - v0.z) -
+            (v1.z - v0.z) * (v2.y - v0.y);
+        final ny = (v1.z - v0.z) * (v2.x - v0.x) -
+            (v1.x - v0.x) * (v2.z - v0.z);
+        final nz = (v1.x - v0.x) * (v2.y - v0.y) -
+            (v1.y - v0.y) * (v2.x - v0.x);
+        for (final idx in [t.a, t.b, t.c]) {
+          normals[idx * 3] += nx;
+          normals[idx * 3 + 1] += ny;
+          normals[idx * 3 + 2] += nz;
+        }
+      }
+      for (var i = 0; i < verts.length; i++) {
+        final x = normals[i * 3], y = normals[i * 3 + 1], z = normals[i * 3 + 2];
+        final len = sqrt(x * x + y * y + z * z);
+        if (len > 1e-9) {
+          normals[i * 3] = x / len;
+          normals[i * 3 + 1] = y / len;
+          normals[i * 3 + 2] = z / len;
+        } else {
+          normals[i * 3] = 0;
+          normals[i * 3 + 1] = 1;
+          normals[i * 3 + 2] = 0;
+        }
+      }
+
+      final indices = Uint32List(tris.length * 3);
+      for (var i = 0; i < tris.length; i++) {
+        indices[i * 3] = tris[i].a;
+        indices[i * 3 + 1] = tris[i].b;
+        indices[i * 3 + 2] = tris[i].c;
+      }
+
+      final min = <double>[double.infinity, double.infinity, double.infinity];
+      final max = <double>[
+        -double.infinity,
+        -double.infinity,
+        -double.infinity,
+      ];
+      for (var i = 0; i < positions.length; i++) {
+        final axis = i % 3;
+        if (positions[i] < min[axis]) min[axis] = positions[i];
+        if (positions[i] > max[axis]) max[axis] = positions[i];
+      }
+
+      final posView = addBufferView(positions.buffer.asUint8List(), 34962);
+      final nrmView = addBufferView(normals.buffer.asUint8List(), 34962);
+      final idxView = addBufferView(indices.buffer.asUint8List(), 34963);
+
+      final posAccessor = accessors.length;
+      accessors.add(<String, Object>{
+        'bufferView': posView,
+        'componentType': 5126,
+        'count': verts.length,
+        'type': 'VEC3',
+        'min': min,
+        'max': max,
+      });
+      final nrmAccessor = accessors.length;
+      accessors.add(<String, Object>{
+        'bufferView': nrmView,
+        'componentType': 5126,
+        'count': verts.length,
+        'type': 'VEC3',
+      });
+      final idxAccessor = accessors.length;
+      accessors.add(<String, Object>{
+        'bufferView': idxView,
+        'componentType': 5125,
+        'count': indices.length,
+        'type': 'SCALAR',
+      });
+
+      final meshIndex = meshes.length;
+      meshes.add(<String, Object>{
+        'name': part.name,
+        'primitives': [
+          <String, Object>{
+            'attributes': <String, Object>{
+              'POSITION': posAccessor,
+              'NORMAL': nrmAccessor,
+            },
+            'indices': idxAccessor,
+            'material': 0,
+          },
+        ],
+      });
+
+      nodes.add(<String, Object>{
+        'name': part.name,
+        'mesh': meshIndex,
+        if (pivot.x != 0 || pivot.y != 0 || pivot.z != 0)
+          'translation': <double>[pivot.x, pivot.y, pivot.z],
+      });
+    }
+
+    final rootIndex = nodes.length;
+    nodes.add(<String, Object>{
+      'name': 'RigCarModel',
+      'children': [for (var i = 0; i < rootIndex; i++) i],
+    });
+
+    final binBytes = bin.takeBytes();
+    final jsonBytes = utf8.encode(
+      jsonEncode(<String, Object>{
+        'asset': <String, Object>{'version': '2.0', 'generator': 'RIG-CAR'},
+        'scene': 0,
+        'scenes': [
+          <String, Object>{
+            'name': 'RigCarModel',
+            'nodes': [rootIndex],
+          },
+        ],
+        'nodes': nodes,
+        'meshes': meshes,
+        'materials': [
+          <String, Object>{
+            'name': 'CarPaint',
+            'pbrMetallicRoughness': <String, Object>{
+              'baseColorFactor': <double>[0.78, 0.80, 0.83, 1.0],
+              'metallicFactor': 0.35,
+              'roughnessFactor': 0.45,
+            },
+            'doubleSided': true,
+          },
+        ],
+        'accessors': accessors,
+        'bufferViews': bufferViews,
+        'buffers': [
+          <String, Object>{'byteLength': binBytes.length},
+        ],
+      }),
+    );
+
+    final jsonPad = (4 - jsonBytes.length % 4) % 4;
+    final binPad = (4 - binBytes.length % 4) % 4;
+    final jsonLength = jsonBytes.length + jsonPad;
+    final binLength = binBytes.length + binPad;
+    final totalLength = 12 + 8 + jsonLength + 8 + binLength;
+
+    final out = BytesBuilder(copy: false);
+    out.add(
+      (ByteData(12)
+            ..setUint32(0, 0x46546C67, Endian.little) // 'glTF'
+            ..setUint32(4, 2, Endian.little)
+            ..setUint32(8, totalLength, Endian.little))
+          .buffer
+          .asUint8List(),
+    );
+    out.add(
+      (ByteData(8)
+            ..setUint32(0, jsonLength, Endian.little)
+            ..setUint32(4, 0x4E4F534A, Endian.little)) // 'JSON'
+          .buffer
+          .asUint8List(),
+    );
+    out.add(jsonBytes);
+    out.add(List<int>.filled(jsonPad, 0x20));
+    out.add(
+      (ByteData(8)
+            ..setUint32(0, binLength, Endian.little)
+            ..setUint32(4, 0x004E4942, Endian.little)) // 'BIN\0'
+          .buffer
+          .asUint8List(),
+    );
+    out.add(binBytes);
+    out.add(List<int>.filled(binPad, 0));
+    return out.takeBytes();
   }
 
   /// Returns a normalized copy for rigging and viewport display.
@@ -1555,6 +1805,10 @@ class RigConfig {
     this.chassisSize,
     this.godotArchitecture = 'standard',
     this.wheelNodeNames = const {},
+    this.headlightPositions = const [],
+    this.taillightPositions = const [],
+    this.doorHandlePositions = const [],
+    this.doorPositions = const [],
   });
 
   final String modelName;
@@ -1587,6 +1841,18 @@ class RigConfig {
   /// Godot script can spin and steer the model's own wheels.
   final Map<String, String> wheelNodeNames;
 
+  /// AI-detected 3D anchor points for headlights.
+  final List<Vec3> headlightPositions;
+
+  /// AI-detected 3D anchor points for taillights.
+  final List<Vec3> taillightPositions;
+
+  /// AI-detected 3D anchor points for door handles (interactive grab prompt anchors).
+  final List<Vec3> doorHandlePositions;
+
+  /// AI-detected 3D anchor points for door panels.
+  final List<Vec3> doorPositions;
+
   Vec3 _wp(int i, Vec3 fallback) =>
       wheelPositions != null && i < wheelPositions!.length
       ? wheelPositions![i]
@@ -1614,6 +1880,10 @@ class RigConfig {
     },
     if (bodyNodeName != null) 'body': {'node': bodyNodeName!},
     if (wheelNodeNames.isNotEmpty) 'wheel_nodes': wheelNodeNames,
+    if (headlightPositions.isNotEmpty) 'headlights': headlightPositions.map((p) => {'x': p.x, 'y': p.y, 'z': p.z}).toList(),
+    if (taillightPositions.isNotEmpty) 'taillights': taillightPositions.map((p) => {'x': p.x, 'y': p.y, 'z': p.z}).toList(),
+    if (doorHandlePositions.isNotEmpty) 'door_handles': doorHandlePositions.map((p) => {'x': p.x, 'y': p.y, 'z': p.z}).toList(),
+    if (doorPositions.isNotEmpty) 'doors': doorPositions.map((p) => {'x': p.x, 'y': p.y, 'z': p.z}).toList(),
     'wheels': {
       'front': {
         'use_as_steering': frontSteering,
@@ -1748,7 +2018,7 @@ func _physics_process(_delta: float) -> void:
 ''';
   }
 
-  String toTscn() {
+  String toTscn({String? modelPath}) {
     final fl = _wp(0, const Vec3(-0.85, 0.35, -1.35));
     final fr = _wp(1, const Vec3(0.85, 0.35, -1.35));
     final rl = _wp(2, const Vec3(-0.85, 0.35, 1.35));
@@ -1762,13 +2032,16 @@ func _physics_process(_delta: float) -> void:
     final hasCustomModel = modelName.isNotEmpty &&
         modelName != 'No model loaded' &&
         !modelName.contains('Template');
+    // Callers can point the scene at the rigged .glb they ship instead of the
+    // authored source, which Godot cannot always instance.
+    final modelRef = modelPath ?? modelName;
     final extResourceIndex = hasCustomModel ? 3 : 2;
 
     if (godotArchitecture == 'raycast') {
       return '''[gd_scene load_steps=$extResourceIndex format=3]
 
 [ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelName" id="2_model"]\n' : ''}
+${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelRef" id="2_model"]\n' : ''}
 [sub_resource type="BoxShape3D" id="BoxShape3D_body"]
 size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
 
@@ -1802,13 +2075,51 @@ target_position = Vector3(0, -${(wheelRadius + springRestLength).toStringAsFixed
 [node name="IdleAudio" type="AudioStreamPlayer3D" parent="."]
 [node name="HighRpmAudio" type="AudioStreamPlayer3D" parent="."]
 [node name="SkidAudio" type="AudioStreamPlayer3D" parent="."]
+${headlightPositions.isEmpty ? '' : '\n' + headlightPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Headlight_${side}_$i" type="SpotLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+spot_range = 30.0
+spot_angle = 35.0
+light_color = Color(1.0, 0.98, 0.92, 1.0)
+light_energy = 2.5
 ''';
+}).join('\n')}
+${taillightPositions.isEmpty ? '' : '\n' + taillightPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Taillight_${side}_$i" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+omni_range = 6.0
+light_color = Color(1.0, 0.08, 0.08, 1.0)
+light_energy = 1.8
+''';
+}).join('\n')}
+${doorHandlePositions.isEmpty ? '' : '\n' + doorHandlePositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="DoorHandle_${side}_$i" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+''';
+}).join('\n')}
+${doorPositions.isEmpty ? '' : '\n' + doorPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Door_${side}_$i" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+''';
+}).join('\n')}''';
     }
 
     return '''[gd_scene load_steps=$extResourceIndex format=3]
 
 [ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelName" id="2_model"]\n' : ''}
+${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelRef" id="2_model"]\n' : ''}
 [sub_resource type="BoxShape3D" id="BoxShape3D_body"]
 size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
 
@@ -1870,6 +2181,44 @@ use_as_traction = $rearTraction
 [node name="IdleAudio" type="AudioStreamPlayer3D" parent="."]
 [node name="HighRpmAudio" type="AudioStreamPlayer3D" parent="."]
 [node name="SkidAudio" type="AudioStreamPlayer3D" parent="."]
+${headlightPositions.isEmpty ? '' : '\n' + headlightPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Headlight_${side}_$i" type="SpotLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+spot_range = 30.0
+spot_angle = 35.0
+light_color = Color(1.0, 0.98, 0.92, 1.0)
+light_energy = 2.5
 ''';
+}).join('\n')}
+${taillightPositions.isEmpty ? '' : '\n' + taillightPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Taillight_${side}_$i" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+omni_range = 6.0
+light_color = Color(1.0, 0.08, 0.08, 1.0)
+light_energy = 1.8
+''';
+}).join('\n')}
+${doorHandlePositions.isEmpty ? '' : '\n' + doorHandlePositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="DoorHandle_${side}_$i" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+''';
+}).join('\n')}
+${doorPositions.isEmpty ? '' : '\n' + doorPositions.asMap().entries.map((e) {
+  final i = e.key + 1;
+  final p = e.value;
+  final side = p.x < 0 ? 'Left' : 'Right';
+  return '''[node name="Door_${side}_$i" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${p.y.toStringAsFixed(3)}, ${p.z.toStringAsFixed(3)})
+''';
+}).join('\n')}''';
   }
 }

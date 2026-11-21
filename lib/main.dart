@@ -180,6 +180,12 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   bool _sirenAudioEnabled = false;
   bool _tireSkidAudioEnabled = true;
   String _godotArchitecture = 'standard';
+
+  /// What the export button produces: 'glb' (organized model only), 'scene'
+  /// (rigged tscn + script + model) or 'project' (full Godot 4 bundle).
+  String _exportTarget = 'project';
+  bool _exportIncludeAudio = true;
+  bool _exportIncludeSourceModel = false;
   bool _excludeRoofAntenna = false;
   String? _activePickingCorner;
   late List<DetectedMeshGroup> _detectedGroups;
@@ -188,6 +194,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   int _scanStage = 0;
   bool _scanCompleted = false;
   bool _highlightFoundWheels = false;
+  List<Vec3> _aiHeadlights = const [];
+  List<Vec3> _aiTaillights = const [];
+  List<Vec3> _aiDoorHandles = const [];
+  List<Vec3> _aiDoors = const [];
 
   // Manual wheel assignments [FL, FR, RL, RR]
   final Map<String, DetectedWheel?> _assignedWheels = {
@@ -733,11 +743,11 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   /// Model plus the part names the exported vehicle should use. Merged-mesh
   /// models are split so the export exposes `Body`, `Left Front Wheel`,
   /// `Right Front Wheel`, `Left Rear Wheel` and `Right Rear Wheel`.
-  ({ParsedModel? model, Map<String, String> wheelNames, String? bodyName})
+  ({ParsedModel? model, Map<String, String> wheelNames, String? bodyName, bool wheelSplit})
       _exportRig() {
     final model = _parsedModel;
     if (model == null) {
-      return (model: null, wheelNames: const {}, bodyName: null);
+      return (model: null, wheelNames: const {}, bodyName: null, wheelSplit: false);
     }
 
     final wheels = <String, DetectedWheel>{};
@@ -747,6 +757,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     }
 
     var rigModel = model;
+    var wheelSplit = false;
     var wheelNames = {
       for (final e in wheels.entries) e.key: e.value.nodeName,
     };
@@ -763,10 +774,16 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
             e.key: rigModel.nodes[e.value].name,
         };
         bodyName = kBodyNodeName;
+        wheelSplit = true;
       }
     }
 
-    return (model: rigModel, wheelNames: wheelNames, bodyName: bodyName);
+    return (
+      model: rigModel,
+      wheelNames: wheelNames,
+      bodyName: bodyName,
+      wheelSplit: wheelSplit,
+    );
   }
 
   RigConfig get _config {
@@ -810,6 +827,10 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       wheelPositions: wheelPositions,
       bodyNodeName: rig.bodyName,
       wheelNodeNames: rig.wheelNames,
+      headlightPositions: _aiHeadlights,
+      taillightPositions: _aiTaillights,
+      doorHandlePositions: _aiDoorHandles,
+      doorPositions: _aiDoors,
     );
   }
 
@@ -823,11 +844,36 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
     final config = _config;
     final rig = _exportRig();
+    final rigModel = rig.model;
+    if (rigModel == null) {
+      _showMessage('Load a vehicle model before exporting.');
+      return;
+    }
+
     final modelBase = _modelName
         .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')
         .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '');
-    final bundleName =
-        '${modelBase == 'No_model_loaded' || modelBase.isEmpty ? 'rig_car' : modelBase}_godot4_bundle';
+    final baseName = modelBase == 'No_model_loaded' || modelBase.isEmpty
+        ? 'rig_car'
+        : modelBase;
+
+    // Rebase wheel geometry onto its hub so rotating an exported wheel node
+    // spins that wheel instead of orbiting the whole car.
+    final wheelPivots = <String, Vec3>{
+      for (final e in rig.wheelNames.entries)
+        if (_assignedWheels[e.key] != null)
+          e.value: _assignedWheels[e.key]!.worldPosition,
+    };
+    final glbBytes = rigModel.toRiggedGlb(wheelPivots: wheelPivots);
+    final glbName = '${baseName}_rigged.glb';
+
+    if (_exportTarget == 'glb') {
+      await downloadBytesFile(glbName, glbBytes, 'model/gltf-binary');
+      if (mounted) {
+        _showMessage('Exported $glbName (body + four named wheel nodes)');
+      }
+      return;
+    }
 
     // Bundle every asset into a single zip: browsers block chained multi-file
     // downloads, and Godot needs the project file next to the scene.
@@ -837,46 +883,59 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       archive.addFile(ArchiveFile(name, bytes.length, bytes));
     }
 
-    addText('project.godot', _godotProjectFile());
+    final sourceEntry = _modelName.contains('/')
+        ? _modelName.split('/').last
+        : _modelName;
+    final sourceInstanceable =
+        RegExp(r'\.(glb|gltf)$', caseSensitive: false).hasMatch(sourceEntry);
+    final shipSource = _exportTarget == 'project' &&
+        _exportIncludeSourceModel &&
+        sourceInstanceable &&
+        (_modelBytes?.isNotEmpty ?? false);
+    // A merged-mesh car only exposes its wheels through the split export, and a
+    // source Godot cannot import as a scene must never be referenced.
+    final instanceName = shipSource && !rig.wheelSplit ? sourceEntry : glbName;
+
     addText('rig_car.gd', config.toGdScript());
-    addText('rig_car.tscn', config.toTscn());
+    addText('rig_car.tscn', config.toTscn(modelPath: 'res://$instanceName'));
     addText(
       'rig_car_config.json',
       const JsonEncoder.withIndent('  ').convert(config.toJson()),
     );
+    archive.addFile(ArchiveFile(glbName, glbBytes.length, glbBytes));
 
-    // Also ship a split OBJ with dedicated wheel groups: single-mesh cars have
-    // no wheel nodes for the Godot script to bind.
-    final rigModel = rig.model;
-    if (rigModel != null) {
-      addText('${modelBase}_rigged.obj', rigModel.toRiggedObj());
+    if (shipSource) {
+      final modelBytes = _modelBytes!;
+      archive.addFile(ArchiveFile(sourceEntry, modelBytes.length, modelBytes));
     }
 
-    final modelBytes = _modelBytes;
-    if (modelBytes != null && modelBytes.isNotEmpty) {
-      // Keep the exact authored filename: rig_car.tscn references res://<name>.
-      final modelEntry = _modelName.contains('/')
-          ? _modelName.split('/').last
-          : _modelName;
-      archive.addFile(
-        ArchiveFile(modelEntry, modelBytes.length, modelBytes),
-      );
+    if (_exportTarget == 'project') {
+      addText('project.godot', _godotProjectFile());
+      if (_exportIncludeAudio) {
+        for (final slot in _audioSlots) {
+          final bytes = slot.bytes;
+          if (bytes == null || bytes.isEmpty) continue;
+          final safeName =
+              slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+          archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
+        }
+      }
     }
 
-    for (final slot in _audioSlots) {
-      final bytes = slot.bytes;
-      if (bytes == null || bytes.isEmpty) continue;
-      final safeName = slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-      archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
-    }
-
+    final bundleName = _exportTarget == 'project'
+        ? '${baseName}_godot4_bundle'
+        : '${baseName}_rigged_scene';
     final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive));
     await downloadBytesFile(
       '$bundleName.zip',
       zipBytes,
       'application/zip',
     );
-    if (mounted) _showMessage('Exported $bundleName.zip (Godot 4 project bundle)');
+    if (mounted) {
+      _showMessage(_exportTarget == 'project'
+          ? 'Exported $bundleName.zip (Godot 4 project bundle)'
+          : 'Exported $bundleName.zip (rig_car.tscn + script + rigged glb)');
+    }
   }
 
   /// Minimal Godot 4.3 project file so the exported scene opens and drives
@@ -1349,9 +1408,52 @@ handle_brake=${action(key(32))}
     _syncJsAndAutoWheels(jsResult, detection);
     _updateDetectedGroupsFromWheels(detection);
 
+    // 3. AI Auto-Rig pass (ONNX YOLO11n-seg for forward alignment verification & headlights/taillights/doors/handles)
+    List<Vec3> detectedHl = [];
+    List<Vec3> detectedTl = [];
+    List<Vec3> detectedDh = [];
+    List<Vec3> detectedDr = [];
+    try {
+      final aiResult = await runSketchfabAiScan();
+      if (aiResult != null) {
+        if (aiResult['headlights'] is List) {
+          detectedHl = (aiResult['headlights'] as List).map((p) => Vec3(
+            ((p as Map)['x'] as num).toDouble(),
+            (p['y'] as num).toDouble(),
+            (p['z'] as num).toDouble(),
+          )).toList();
+        }
+        if (aiResult['taillights'] is List) {
+          detectedTl = (aiResult['taillights'] as List).map((p) => Vec3(
+            ((p as Map)['x'] as num).toDouble(),
+            (p['y'] as num).toDouble(),
+            (p['z'] as num).toDouble(),
+          )).toList();
+        }
+        if (aiResult['doorHandles'] is List) {
+          detectedDh = (aiResult['doorHandles'] as List).map((p) => Vec3(
+            ((p as Map)['x'] as num).toDouble(),
+            (p['y'] as num).toDouble(),
+            (p['z'] as num).toDouble(),
+          )).toList();
+        }
+        if (aiResult['doors'] is List) {
+          detectedDr = (aiResult['doors'] as List).map((p) => Vec3(
+            ((p as Map)['x'] as num).toDouble(),
+            (p['y'] as num).toDouble(),
+            (p['z'] as num).toDouble(),
+          )).toList();
+        }
+      }
+    } catch (_) {}
+
     setState(() {
       _detection = detection;
       _selectedBodyNodeIndex = detection.body?.nodeIndex;
+      _aiHeadlights = detectedHl;
+      _aiTaillights = detectedTl;
+      _aiDoorHandles = detectedDh;
+      _aiDoors = detectedDr;
       _drive = detection.suggestedDrive;
       _frontTraction = _drive == 'AWD' || _drive == 'FWD';
       _rearTraction = _drive == 'AWD' || _drive == 'RWD';
@@ -1375,7 +1477,10 @@ handle_brake=${action(key(32))}
     final cleanNote = detection.underWheelObjectsDeleted > 0
         ? ' · Purged ${detection.underWheelObjectsDeleted} under-wheel mesh'
         : '';
-    _showMessage('Auto rig: ${detection.wheels.length}/4 wheels detected$axisNote$cleanNote · 0.00m land contact');
+    final aiNote = (_aiHeadlights.isNotEmpty || _aiDoorHandles.isNotEmpty)
+        ? ' · AI Rig: ${_aiHeadlights.length} HL, ${_aiTaillights.length} TL, ${_aiDoorHandles.length} Handles, ${_aiDoors.length} Doors'
+        : '';
+    _showMessage('Auto rig: ${detection.wheels.length}/4 wheels detected$axisNote$cleanNote$aiNote · 0.00m land contact');
   }
 
   void _onGroupRoleChange(int groupId, String role) {
@@ -2222,6 +2327,13 @@ handle_brake=${action(key(32))}
       godotArchitecture: _godotArchitecture,
       canExport: _exportBlockReason == null,
       exportBlockReason: _exportBlockReason,
+      exportTarget: _exportTarget,
+      includeAudio: _exportIncludeAudio,
+      includeSourceModel: _exportIncludeSourceModel,
+      onExportTargetChanged: (target) => setState(() => _exportTarget = target),
+      onIncludeAudioChanged: (v) => setState(() => _exportIncludeAudio = v),
+      onIncludeSourceModelChanged: (v) =>
+          setState(() => _exportIncludeSourceModel = v),
       onStepSelect: _selectStep,
       onPickModel: _pickModel,
       onRotateYaw: _onRotateYaw,

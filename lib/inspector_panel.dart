@@ -51,6 +51,12 @@ class InspectorPanel extends StatefulWidget {
     required this.godotArchitecture,
     required this.canExport,
     required this.exportBlockReason,
+    this.exportTarget = 'project',
+    this.includeAudio = true,
+    this.includeSourceModel = false,
+    this.onExportTargetChanged,
+    this.onIncludeAudioChanged,
+    this.onIncludeSourceModelChanged,
     required this.onStepSelect,
     required this.onPickModel,
     required this.onRotateYaw,
@@ -114,6 +120,15 @@ class InspectorPanel extends StatefulWidget {
   final String godotArchitecture; // 'standard' | 'raycast'
   final bool canExport;
   final String? exportBlockReason;
+
+  /// Export output: 'glb' (organized model), 'scene' (tscn + script + model)
+  /// or 'project' (full Godot 4 bundle).
+  final String exportTarget;
+  final bool includeAudio;
+  final bool includeSourceModel;
+  final ValueChanged<String>? onExportTargetChanged;
+  final ValueChanged<bool>? onIncludeAudioChanged;
+  final ValueChanged<bool>? onIncludeSourceModelChanged;
 
   // Event hooks
   final ValueChanged<int> onStepSelect;
@@ -1175,6 +1190,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
         lines.add('[AI_CLEAN] Purged $purged under-wheel shadow/floor mesh');
       }
       lines.add('[AI_LAND] Zero height locked (wheel contact Y=0.000m)');
+      lines.add('[YOLO11n-seg] 6-Class neural vision calibrated (heading, doors & lights).');
       lines.add('[SOLVED] FL(${_formatWheelR(fl)}) FR(${_formatWheelR(fr)}) RL(${_formatWheelR(rl)}) RR(${_formatWheelR(rr)})');
       lines.add('[READY] Godot 4 VehicleBody3D calibrated.');
     } else if (isScanning) {
@@ -1632,6 +1648,55 @@ class _InspectorPanelState extends State<InspectorPanel> {
         ),
 
         const SizedBox(height: 18),
+        const _SectionHeader('EXPORT OUTPUT'),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _Palette.activeCardFill,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _Palette.borderDefault),
+          ),
+          child: Column(
+            children: [
+              _ArchitectureRadioOption(
+                title: 'Organized Model (.glb)',
+                subtitle: 'Body plus four named wheel nodes, ready for any engine.',
+                selected: widget.exportTarget == 'glb',
+                onTap: () => widget.onExportTargetChanged?.call('glb'),
+              ),
+              const Divider(color: _Palette.borderDefault, height: 14),
+              _ArchitectureRadioOption(
+                title: 'Rigged Scene (.tscn + script)',
+                subtitle: 'Scene, vehicle script, config and the organized model wired together.',
+                selected: widget.exportTarget == 'scene',
+                onTap: () => widget.onExportTargetChanged?.call('scene'),
+              ),
+              const Divider(color: _Palette.borderDefault, height: 14),
+              _ArchitectureRadioOption(
+                title: 'Full Godot 4 Project (.zip)',
+                subtitle: 'Adds project.godot so the bundle opens and drives immediately.',
+                selected: widget.exportTarget == 'project',
+                onTap: () => widget.onExportTargetChanged?.call('project'),
+              ),
+              if (widget.exportTarget == 'project') ...[
+                const Divider(color: _Palette.borderDefault, height: 14),
+                _ExportToggle(
+                  title: 'Include audio tracks',
+                  value: widget.includeAudio,
+                  onChanged: widget.onIncludeAudioChanged,
+                ),
+                _ExportToggle(
+                  title: 'Include original source file',
+                  value: widget.includeSourceModel,
+                  onChanged: widget.onIncludeSourceModelChanged,
+                ),
+              ],
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 18),
         const _SectionHeader('GODOT 4 ARCHITECTURE'),
         const SizedBox(height: 8),
         Container(
@@ -1665,9 +1730,13 @@ class _InspectorPanelState extends State<InspectorPanel> {
         FilledButton.icon(
           onPressed: widget.canExport ? widget.onExport : null,
           icon: const Icon(Icons.file_download_outlined, size: 18),
-          label: const Text(
-            'Export Godot 4 Rig (.glb / .tscn)',
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+          label: Text(
+            switch (widget.exportTarget) {
+              'glb' => 'Export Organized Model (.glb)',
+              'scene' => 'Export Rigged Scene (.tscn)',
+              _ => 'Export Godot 4 Project (.zip)',
+            },
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
           ),
           style: FilledButton.styleFrom(
             backgroundColor: _Palette.accentEmerald,
@@ -1718,6 +1787,44 @@ class _SectionHeader extends StatelessWidget {
         fontSize: 9.5,
         fontWeight: FontWeight.w800,
         letterSpacing: 0.9,
+      ),
+    );
+  }
+}
+
+class _ExportToggle extends StatelessWidget {
+  const _ExportToggle({required this.title, required this.value, this.onChanged});
+
+  final String title;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onChanged == null ? null : () => onChanged!(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(
+              value ? Icons.check_box : Icons.check_box_outline_blank,
+              size: 16,
+              color: value ? _Palette.accentEmerald : _Palette.textSecondary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: _Palette.textPrimary,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
