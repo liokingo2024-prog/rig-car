@@ -469,10 +469,45 @@ void main() {
             0xFF;
     expect(glowAlpha, lessThanOrEqualTo(120));
   });
+
+  test('async import reports staged progress for the loading overlay', () async {
+    final stages = <String>[];
+    final progress = <double>[];
+    final model = await GlbParser.parse(
+      'glass.glb',
+      _singleTriangleGlb({
+        'name': 'Paint',
+        'pbrMetallicRoughness': {
+          'baseColorFactor': [0.8, 0.1, 0.1, 1.0],
+        },
+      }),
+      onProgress: (stage, value) {
+        stages.add(stage);
+        progress.add(value);
+      },
+    );
+
+    expect(model.instances.single.triangles.length, 1);
+    expect(stages, isNotEmpty);
+    expect(stages.first, contains('Unpacking GLB'));
+    expect(stages.last, contains('Finalizing'));
+    // Progress must move forwards and stay inside 0-1 for the overlay bar.
+    for (var i = 0; i < progress.length; i++) {
+      expect(progress[i], inInclusiveRange(0.0, 1.0));
+      // Tolerate double rounding in the stage maths (0.3 vs 0.30000000000000004)
+      // while still failing on a bar that visibly jumps backwards.
+      if (i > 0) {
+        expect(progress[i], greaterThanOrEqualTo(progress[i - 1] - 1e-6));
+      }
+    }
+  });
 }
 
 /// Minimal one-triangle binary glTF carrying the supplied material.
-ParsedModel _singleTriangleModel(Map<String, dynamic> material) {
+ParsedModel _singleTriangleModel(Map<String, dynamic> material) =>
+    GlbParser.parseSync('glass.glb', _singleTriangleGlb(material));
+
+Uint8List _singleTriangleGlb(Map<String, dynamic> material) {
   final verts = Float32List.fromList([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   final indices = Int32List.fromList([0, 1, 2]);
   final bin = BytesBuilder()
@@ -534,5 +569,5 @@ ParsedModel _singleTriangleModel(Map<String, dynamic> material) {
     ..add(List<int>.filled(jsonPad, 0x20))
     ..add(binChunk.buffer.asUint8List())
     ..add(binBytes);
-  return GlbParser.parseSync('glass.glb', glb.takeBytes());
+  return glb.takeBytes();
 }
