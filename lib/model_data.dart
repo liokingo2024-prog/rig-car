@@ -295,6 +295,8 @@ class Triangle {
   const Triangle(this.a, this.b, this.c, [this.color]);
 }
 
+/// A base-colour image kept from the source file so the rigged GLB can embed
+/// the real texture instead of a flat per-vertex colour approximation.
 // ── Picked File ─────────────────────────────────────────────────────────────
 
 class PickedFile {
@@ -325,6 +327,42 @@ class SceneNode {
   }) : worldTransform = worldTransform ?? Mat4.identity();
 }
 
+/// A raw encoded texture image preserved from an imported glTF/GLB/ZIP asset
+/// so rigged `.glb` exports embed the original textures losslessly.
+class GltfImageAsset {
+  final Uint8List bytes;
+  final String mimeType;
+  final String? name;
+
+  const GltfImageAsset({
+    required this.bytes,
+    required this.mimeType,
+    this.name,
+  });
+}
+
+/// Original glTF material, texture, sampler, and image definitions preserved
+/// from import so [ParsedModel.toRiggedGlb] exports full PBR textures and UVs.
+class GltfMaterialAssets {
+  final List<Map<String, dynamic>> materials;
+  final List<Map<String, dynamic>> textures;
+  final List<Map<String, dynamic>> samplers;
+  final List<GltfImageAsset?> images;
+  final List<String> extensionsUsed;
+  final List<String> extensionsRequired;
+
+  const GltfMaterialAssets({
+    this.materials = const [],
+    this.textures = const [],
+    this.samplers = const [],
+    this.images = const [],
+    this.extensionsUsed = const [],
+    this.extensionsRequired = const [],
+  });
+
+  bool get isEmpty => materials.isEmpty && textures.isEmpty && images.isEmpty;
+}
+
 class MeshData {
   final int index;
   final String name;
@@ -333,6 +371,18 @@ class MeshData {
   final List<Triangle> triangles;
   final BBox bbox;
 
+  /// `TEXCOORD_0` per vertex, preserved so rigged exports keep their textures.
+  final List<Offset>? uvs;
+
+  /// `TEXCOORD_1` per vertex (lightmaps / detail maps), when authored.
+  final List<Offset>? uvs1;
+
+  /// Source `COLOR_0` per vertex, when authored.
+  final List<Color>? vertexColors;
+
+  /// Index into [GltfMaterialAssets.materials], when the primitive had one.
+  final int? materialIndex;
+
   const MeshData({
     required this.index,
     required this.name,
@@ -340,6 +390,10 @@ class MeshData {
     required this.edges,
     this.triangles = const [],
     required this.bbox,
+    this.uvs,
+    this.uvs1,
+    this.vertexColors,
+    this.materialIndex,
   });
 }
 
@@ -352,6 +406,18 @@ class MeshInstance {
   final List<Triangle> triangles;
   BBox worldBBox;
 
+  /// `TEXCOORD_0` for [worldVertices], carried through so exports keep textures.
+  final List<Offset>? uvs;
+
+  /// `TEXCOORD_1` for [worldVertices], when authored.
+  final List<Offset>? uvs1;
+
+  /// Source `COLOR_0` for [worldVertices], when authored.
+  final List<Color>? vertexColors;
+
+  /// Index into [GltfMaterialAssets.materials], when the part had one.
+  final int? materialIndex;
+
   MeshInstance({
     required this.nodeIndex,
     required this.meshIndex,
@@ -359,6 +425,10 @@ class MeshInstance {
     required this.edges,
     this.triangles = const [],
     required this.worldBBox,
+    this.uvs,
+    this.uvs1,
+    this.vertexColors,
+    this.materialIndex,
   });
 }
 
@@ -370,6 +440,10 @@ class ParsedModel {
   final List<int> rootNodeIndices;
   BBox worldBBox;
 
+  /// Materials, textures, samplers, images and extensions preserved from the
+  /// imported glTF asset; `null` for procedural or non-glTF imports.
+  final GltfMaterialAssets? gltfAssets;
+
   ParsedModel({
     required this.fileName,
     required this.nodes,
@@ -377,6 +451,7 @@ class ParsedModel {
     required this.instances,
     required this.rootNodeIndices,
     required this.worldBBox,
+    this.gltfAssets,
   });
 
   /// Splits triangles that belong to the four detected wheels out of the main
@@ -520,6 +595,10 @@ class ParsedModel {
           edges: edgesFor(tris),
           triangles: tris,
           worldBBox: boundsFor(tris),
+          uvs: shared.uvs,
+          uvs1: shared.uvs1,
+          vertexColors: shared.vertexColors,
+          materialIndex: shared.materialIndex,
         ),
       );
     }
@@ -544,6 +623,10 @@ class ParsedModel {
           edges: edgesFor(remaining),
           triangles: remaining,
           worldBBox: boundsFor(remaining),
+          uvs: shared.uvs,
+          uvs1: shared.uvs1,
+          vertexColors: shared.vertexColors,
+          materialIndex: shared.materialIndex,
         ),
       );
     }
@@ -556,6 +639,7 @@ class ParsedModel {
         instances: updatedInstances,
         rootNodeIndices: rootNodeIndices,
         worldBBox: worldBBox,
+        gltfAssets: gltfAssets,
       ),
       wheelNodeIndices: wheelNodeIndices,
     );
@@ -640,10 +724,14 @@ class ParsedModel {
   /// each wheel's geometry is rebased onto its hub from [wheelPivots] so
   /// rotating the node spins that wheel instead of orbiting the car.
   ///
-  /// Normals are averaged per vertex, and the colours the importer sampled from
-  /// the source material and base-colour textures are baked into a `COLOR_0`
-  /// attribute, so paint, glass, tyres and lights keep their colours. Every part
-  /// shares one PBR material whose white base colour multiplies those colours.
+  /// Materials, textures, samplers, images and extensions imported from the
+  /// source glTF are reproduced with remapped indices, so `baseColorTexture`,
+  /// `metallicRoughnessTexture`, `normalTexture` and multi-layer materials keep
+  /// working. `TEXCOORD_0` and `TEXCOORD_1` are written whenever authored, and
+  /// embedded images keep their original encoded bytes (PNG, JPEG, WebP, KTX2).
+  /// Parts without a preserved material fall back to the `CarPaint` material
+  /// plus baked `COLOR_0` vertex colours; textured parts omit that synthetic
+  /// attribute so the texture is not multiplied by a sampled tint.
   Uint8List toRiggedGlb({Map<String, Vec3> wheelPivots = const {}}) {
     final bin = BytesBuilder(copy: false);
     final bufferViews = <Map<String, Object>>[];
@@ -651,7 +739,21 @@ class ParsedModel {
     final meshes = <Map<String, Object>>[];
     final nodes = <Map<String, Object>>[];
 
-    int addBufferView(List<int> bytes, int target) {
+    final outMaterials = <Map<String, dynamic>>[];
+    final outTextures = <Map<String, dynamic>>[];
+    final outSamplers = <Map<String, dynamic>>[];
+    final outImages = <Map<String, dynamic>>[];
+
+    final materialIndexMap = <int, int>{};
+    final textureIndexMap = <int, int>{};
+    final samplerIndexMap = <int, int>{};
+    final imageIndexMap = <int, int>{};
+    final usedExtensions = <String>{};
+
+    final assets = gltfAssets;
+    int? fallbackMaterialIndex;
+
+    int addBufferView(List<int> bytes, {int? target}) {
       while (bin.length % 4 != 0) {
         bin.addByte(0);
       }
@@ -661,48 +763,258 @@ class ParsedModel {
         'buffer': 0,
         'byteOffset': offset,
         'byteLength': bytes.length,
-        'target': target,
+        if (target != null) 'target': target,
       });
       return bufferViews.length - 1;
     }
 
+    int ensureFallbackMaterial() {
+      if (fallbackMaterialIndex != null) return fallbackMaterialIndex!;
+      fallbackMaterialIndex = outMaterials.length;
+      outMaterials.add(<String, dynamic>{
+        'name': 'CarPaint',
+        'pbrMetallicRoughness': <String, dynamic>{
+          'baseColorFactor': <double>[1.0, 1.0, 1.0, 1.0],
+          'metallicFactor': 0.15,
+          'roughnessFactor': 0.55,
+        },
+        'doubleSided': true,
+      });
+      return fallbackMaterialIndex!;
+    }
+
+    int? embedImage(int srcImageIndex) {
+      if (assets == null ||
+          srcImageIndex < 0 ||
+          srcImageIndex >= assets.images.length) {
+        return null;
+      }
+      final cached = imageIndexMap[srcImageIndex];
+      if (cached != null) return cached;
+      final img = assets.images[srcImageIndex];
+      if (img == null || img.bytes.isEmpty) return null;
+      // No `target`: image bufferViews must not declare a vertex/index usage.
+      final bv = addBufferView(img.bytes);
+      final outIdx = outImages.length;
+      outImages.add(<String, dynamic>{
+        'bufferView': bv,
+        'mimeType': img.mimeType,
+        if (img.name != null && img.name!.isNotEmpty) 'name': img.name!,
+      });
+      imageIndexMap[srcImageIndex] = outIdx;
+      return outIdx;
+    }
+
+    int? embedSampler(int srcSamplerIndex) {
+      if (assets == null ||
+          srcSamplerIndex < 0 ||
+          srcSamplerIndex >= assets.samplers.length) {
+        return null;
+      }
+      final cached = samplerIndexMap[srcSamplerIndex];
+      if (cached != null) return cached;
+      final copy = _deepCloneJsonMap(assets.samplers[srcSamplerIndex]);
+      final outIdx = outSamplers.length;
+      outSamplers.add(copy);
+      samplerIndexMap[srcSamplerIndex] = outIdx;
+      return outIdx;
+    }
+
+    int? embedTexture(int srcTexIndex) {
+      if (assets == null ||
+          srcTexIndex < 0 ||
+          srcTexIndex >= assets.textures.length) {
+        return null;
+      }
+      final cached = textureIndexMap[srcTexIndex];
+      if (cached != null) return cached;
+
+      final copy = _deepCloneJsonMap(assets.textures[srcTexIndex]);
+      var hasValidSource = false;
+
+      final srcIdx = copy['source'];
+      if (srcIdx is int) {
+        final mapped = embedImage(srcIdx);
+        if (mapped != null) {
+          copy['source'] = mapped;
+          hasValidSource = true;
+        } else {
+          copy.remove('source');
+        }
+      }
+
+      final exts = copy['extensions'];
+      if (exts is Map<String, dynamic>) {
+        final removeExts = <String>[];
+        for (final entry in exts.entries) {
+          final extVal = entry.value;
+          if (extVal is Map<String, dynamic> && extVal['source'] is int) {
+            final mapped = embedImage(extVal['source'] as int);
+            if (mapped != null) {
+              extVal['source'] = mapped;
+              hasValidSource = true;
+              usedExtensions.add(entry.key);
+            } else {
+              removeExts.add(entry.key);
+            }
+          } else {
+            usedExtensions.add(entry.key);
+          }
+        }
+        for (final k in removeExts) {
+          exts.remove(k);
+        }
+        if (exts.isEmpty) copy.remove('extensions');
+      }
+
+      if (!hasValidSource) return null;
+
+      final samplerIdx = copy['sampler'];
+      if (samplerIdx is int) {
+        final mapped = embedSampler(samplerIdx);
+        if (mapped != null) {
+          copy['sampler'] = mapped;
+        } else {
+          copy.remove('sampler');
+        }
+      }
+
+      final outIdx = outTextures.length;
+      outTextures.add(copy);
+      textureIndexMap[srcTexIndex] = outIdx;
+      return outIdx;
+    }
+
+    void remapMaterialTextures(Map<String, dynamic> map) {
+      final keysToRemove = <String>[];
+      for (final entry in map.entries) {
+        final key = entry.key;
+        final val = entry.value;
+        if (key == 'extensions' && val is Map<String, dynamic>) {
+          for (final extEntry in val.entries) {
+            usedExtensions.add(extEntry.key);
+            if (extEntry.value is Map<String, dynamic>) {
+              remapMaterialTextures(extEntry.value as Map<String, dynamic>);
+            }
+          }
+        } else if (val is Map<String, dynamic>) {
+          if (key.endsWith('Texture') && val['index'] is int) {
+            final mappedTex = embedTexture(val['index'] as int);
+            if (mappedTex != null) {
+              val['index'] = mappedTex;
+              final texExts = val['extensions'];
+              if (texExts is Map<String, dynamic>) {
+                for (final extName in texExts.keys) {
+                  usedExtensions.add(extName);
+                }
+              }
+            } else {
+              keysToRemove.add(key);
+            }
+          } else {
+            remapMaterialTextures(val);
+          }
+        }
+      }
+      for (final k in keysToRemove) {
+        map.remove(k);
+      }
+    }
+
+    int? embedMaterial(int srcMatIndex) {
+      if (assets == null ||
+          srcMatIndex < 0 ||
+          srcMatIndex >= assets.materials.length) {
+        return null;
+      }
+      final cached = materialIndexMap[srcMatIndex];
+      if (cached != null) return cached;
+      final copy = _deepCloneJsonMap(assets.materials[srcMatIndex]);
+      remapMaterialTextures(copy);
+      final outIdx = outMaterials.length;
+      outMaterials.add(copy);
+      materialIndexMap[srcMatIndex] = outIdx;
+      return outIdx;
+    }
+
+    Offset uvAt(List<Offset>? list, int i) =>
+        list != null && i < list.length ? list[i] : Offset.zero;
+    Color colorAt(List<Color>? list, int i) =>
+        list != null && i < list.length ? list[i] : const Color(0xFFFFFFFF);
+
     for (final part in riggedParts()) {
-      final verts = part.instance.worldVertices;
+      final inst = part.instance;
+      final verts = inst.worldVertices;
       if (verts.isEmpty) continue;
       final tris = [
-        for (final t in part.instance.triangles)
+        for (final t in inst.triangles)
           if (t.a < verts.length && t.b < verts.length && t.c < verts.length)
             t,
       ];
       if (tris.isEmpty) continue;
 
+      // Compact the part's vertices in triangle-encounter order so the export
+      // carries only the attributes it actually uses.
+      final oldToNew = <int, int>{};
+      final compactVerts = <Vec3>[];
+      final compactUvs = <Offset>[];
+      final compactUvs1 = inst.uvs1 == null ? null : <Offset>[];
+      final compactVertColors = inst.vertexColors == null ? null : <Color>[];
+      final compactIndices = Uint32List(tris.length * 3);
+
+      int mapVertex(int oldIdx) {
+        final existing = oldToNew[oldIdx];
+        if (existing != null) return existing;
+        final next = compactVerts.length;
+        oldToNew[oldIdx] = next;
+        compactVerts.add(verts[oldIdx]);
+        compactUvs.add(uvAt(inst.uvs, oldIdx));
+        compactUvs1?.add(uvAt(inst.uvs1, oldIdx));
+        compactVertColors?.add(colorAt(inst.vertexColors, oldIdx));
+        return next;
+      }
+
+      for (var i = 0; i < tris.length; i++) {
+        compactIndices[i * 3] = mapVertex(tris[i].a);
+        compactIndices[i * 3 + 1] = mapVertex(tris[i].b);
+        compactIndices[i * 3 + 2] = mapVertex(tris[i].c);
+      }
+
+      final vCount = compactVerts.length;
       final pivot = wheelPivots[part.name] ?? Vec3.zero;
-      final positions = Float32List(verts.length * 3);
-      final normals = Float32List(verts.length * 3);
-      for (var i = 0; i < verts.length; i++) {
-        final v = verts[i];
+      final positions = Float32List(vCount * 3);
+      final normals = Float32List(vCount * 3);
+      for (var i = 0; i < vCount; i++) {
+        final v = compactVerts[i];
         positions[i * 3] = v.x - pivot.x;
         positions[i * 3 + 1] = v.y - pivot.y;
         positions[i * 3 + 2] = v.z - pivot.z;
       }
 
-      // Area-weighted vertex normals: unnormalised face normals accumulate so
-      // larger faces dominate, then each vertex normal is normalised.
-      for (final t in tris) {
-        final v0 = verts[t.a], v1 = verts[t.b], v2 = verts[t.c];
-        final nx = (v1.y - v0.y) * (v2.z - v0.z) -
-            (v1.z - v0.z) * (v2.y - v0.y);
-        final ny = (v1.z - v0.z) * (v2.x - v0.x) -
-            (v1.x - v0.x) * (v2.z - v0.z);
-        final nz = (v1.x - v0.x) * (v2.y - v0.y) -
-            (v1.y - v0.y) * (v2.x - v0.x);
-        for (final idx in [t.a, t.b, t.c]) {
+      // Area-weighted vertex normals: larger faces dominate the average.
+      for (var i = 0; i < tris.length; i++) {
+        final ia = compactIndices[i * 3];
+        final ib = compactIndices[i * 3 + 1];
+        final ic = compactIndices[i * 3 + 2];
+        final v0x = compactVerts[ia].x;
+        final v0y = compactVerts[ia].y;
+        final v0z = compactVerts[ia].z;
+        final v1x = compactVerts[ib].x;
+        final v1y = compactVerts[ib].y;
+        final v1z = compactVerts[ib].z;
+        final v2x = compactVerts[ic].x;
+        final v2y = compactVerts[ic].y;
+        final v2z = compactVerts[ic].z;
+        final nx = (v1y - v0y) * (v2z - v0z) - (v1z - v0z) * (v2y - v0y);
+        final ny = (v1z - v0z) * (v2x - v0x) - (v1x - v0x) * (v2z - v0z);
+        final nz = (v1x - v0x) * (v2y - v0y) - (v1y - v0y) * (v2x - v0x);
+        for (final idx in [ia, ib, ic]) {
           normals[idx * 3] += nx;
           normals[idx * 3 + 1] += ny;
           normals[idx * 3 + 2] += nz;
         }
       }
-      for (var i = 0; i < verts.length; i++) {
+      for (var i = 0; i < vCount; i++) {
         final x = normals[i * 3], y = normals[i * 3 + 1], z = normals[i * 3 + 2];
         final len = sqrt(x * x + y * y + z * z);
         if (len > 1e-9) {
@@ -716,89 +1028,149 @@ class ParsedModel {
         }
       }
 
-      // Bake the per-triangle colours sampled at import time (vertex colours,
-      // material factors and base-colour texels) into one colour per vertex, so
-      // the exported car is not a single flat grey surface.
-      final colorSums = Float64List(verts.length * 4);
-      final colorCounts = Int32List(verts.length);
-      for (final t in tris) {
-        final c = t.color;
-        if (c == null) continue;
-        for (final idx in [t.a, t.b, t.c]) {
-          colorSums[idx * 4] += c.r;
-          colorSums[idx * 4 + 1] += c.g;
-          colorSums[idx * 4 + 2] += c.b;
-          colorSums[idx * 4 + 3] += c.a;
-          colorCounts[idx]++;
-        }
-      }
-      int channel(double sum, int count, double fallback) =>
-          (count == 0 ? fallback * 255 : sum / count * 255)
-              .round()
-              .clamp(0, 255)
-              .toInt();
-      final colors = Uint8List(verts.length * 4);
-      for (var i = 0; i < verts.length; i++) {
-        final n = colorCounts[i];
-        colors[i * 4] = channel(colorSums[i * 4], n, 0.78);
-        colors[i * 4 + 1] = channel(colorSums[i * 4 + 1], n, 0.80);
-        colors[i * 4 + 2] = channel(colorSums[i * 4 + 2], n, 0.83);
-        colors[i * 4 + 3] = channel(colorSums[i * 4 + 3], n, 1.0);
-      }
+      // Keep the source material (and its whole texture graph) when possible.
+      final preservedMatIdx = inst.materialIndex != null
+          ? embedMaterial(inst.materialIndex!)
+          : null;
+      final materialIdx = preservedMatIdx ?? ensureFallbackMaterial();
 
-      final indices = Uint32List(tris.length * 3);
-      for (var i = 0; i < tris.length; i++) {
-        indices[i * 3] = tris[i].a;
-        indices[i * 3 + 1] = tris[i].b;
-        indices[i * 3 + 2] = tris[i].c;
-      }
-
-      final min = <double>[double.infinity, double.infinity, double.infinity];
-      final max = <double>[
+      final minPos = <double>[
+        double.infinity,
+        double.infinity,
+        double.infinity,
+      ];
+      final maxPos = <double>[
         -double.infinity,
         -double.infinity,
         -double.infinity,
       ];
       for (var i = 0; i < positions.length; i++) {
         final axis = i % 3;
-        if (positions[i] < min[axis]) min[axis] = positions[i];
-        if (positions[i] > max[axis]) max[axis] = positions[i];
+        if (positions[i] < minPos[axis]) minPos[axis] = positions[i];
+        if (positions[i] > maxPos[axis]) maxPos[axis] = positions[i];
       }
 
-      final posView = addBufferView(positions.buffer.asUint8List(), 34962);
-      final nrmView = addBufferView(normals.buffer.asUint8List(), 34962);
-      final colView = addBufferView(colors, 34962);
-      final idxView = addBufferView(indices.buffer.asUint8List(), 34963);
+      final posView = addBufferView(
+        positions.buffer.asUint8List(),
+        target: 34962,
+      );
+      final nrmView = addBufferView(
+        normals.buffer.asUint8List(),
+        target: 34962,
+      );
+      final idxView = addBufferView(
+        compactIndices.buffer.asUint8List(),
+        target: 34963,
+      );
 
       final posAccessor = accessors.length;
       accessors.add(<String, Object>{
         'bufferView': posView,
         'componentType': 5126,
-        'count': verts.length,
+        'count': vCount,
         'type': 'VEC3',
-        'min': min,
-        'max': max,
+        'min': minPos,
+        'max': maxPos,
       });
       final nrmAccessor = accessors.length;
       accessors.add(<String, Object>{
         'bufferView': nrmView,
         'componentType': 5126,
-        'count': verts.length,
+        'count': vCount,
         'type': 'VEC3',
       });
-      final colAccessor = accessors.length;
-      accessors.add(<String, Object>{
-        'bufferView': colView,
-        'componentType': 5121,
-        'normalized': true,
-        'count': verts.length,
-        'type': 'VEC4',
-      });
+
+      final attributes = <String, Object>{
+        'POSITION': posAccessor,
+        'NORMAL': nrmAccessor,
+      };
+
+      void addUvSet(String name, List<Offset> uvs) {
+        final data = Float32List(vCount * 2);
+        for (var i = 0; i < vCount; i++) {
+          data[i * 2] = uvs[i].dx;
+          data[i * 2 + 1] = uvs[i].dy;
+        }
+        final view = addBufferView(data.buffer.asUint8List(), target: 34962);
+        final accessor = accessors.length;
+        accessors.add(<String, Object>{
+          'bufferView': view,
+          'componentType': 5126,
+          'count': vCount,
+          'type': 'VEC2',
+        });
+        attributes[name] = accessor;
+      }
+
+      final hasUvs = inst.uvs != null && inst.uvs!.isNotEmpty;
+      if (hasUvs) addUvSet('TEXCOORD_0', compactUvs);
+      if (compactUvs1 != null) addUvSet('TEXCOORD_1', compactUvs1);
+
+      void writeColours(List<Color> colours) {
+        final colors = Uint8List(vCount * 4);
+        for (var i = 0; i < vCount; i++) {
+          final c = colours[i];
+          colors[i * 4] = (c.r * 255).round().clamp(0, 255).toInt();
+          colors[i * 4 + 1] = (c.g * 255).round().clamp(0, 255).toInt();
+          colors[i * 4 + 2] = (c.b * 255).round().clamp(0, 255).toInt();
+          colors[i * 4 + 3] = (c.a * 255).round().clamp(0, 255).toInt();
+        }
+        final view = addBufferView(colors, target: 34962);
+        final accessor = accessors.length;
+        accessors.add(<String, Object>{
+          'bufferView': view,
+          'componentType': 5121,
+          'normalized': true,
+          'count': vCount,
+          'type': 'VEC4',
+        });
+        attributes['COLOR_0'] = accessor;
+      }
+
+      if (preservedMatIdx == null) {
+        // Procedural part: bake the colours the importer sampled per triangle.
+        final sums = Float64List(vCount * 4);
+        final hits = Int32List(vCount);
+        for (var i = 0; i < tris.length; i++) {
+          final c = tris[i].color;
+          if (c == null) continue;
+          for (final idx in [
+            compactIndices[i * 3],
+            compactIndices[i * 3 + 1],
+            compactIndices[i * 3 + 2],
+          ]) {
+            sums[idx * 4] += c.r;
+            sums[idx * 4 + 1] += c.g;
+            sums[idx * 4 + 2] += c.b;
+            sums[idx * 4 + 3] += c.a;
+            hits[idx]++;
+          }
+        }
+        int channel(double sum, int hitCount, double fallback) =>
+            (hitCount == 0 ? fallback * 255 : sum / hitCount * 255)
+                .round()
+                .clamp(0, 255)
+                .toInt();
+        final baked = <Color>[
+          for (var i = 0; i < vCount; i++)
+            Color.fromARGB(
+              channel(sums[i * 4 + 3], hits[i], 1.0),
+              channel(sums[i * 4], hits[i], 0.78),
+              channel(sums[i * 4 + 1], hits[i], 0.80),
+              channel(sums[i * 4 + 2], hits[i], 0.83),
+            ),
+        ];
+        writeColours(baked);
+      } else if (compactVertColors != null) {
+        // Textured: keep the authored COLOR_0 untouched so the texture shows.
+        writeColours(compactVertColors);
+      }
+
       final idxAccessor = accessors.length;
       accessors.add(<String, Object>{
         'bufferView': idxView,
         'componentType': 5125,
-        'count': indices.length,
+        'count': compactIndices.length,
         'type': 'SCALAR',
       });
 
@@ -807,13 +1179,9 @@ class ParsedModel {
         'name': part.name,
         'primitives': [
           <String, Object>{
-            'attributes': <String, Object>{
-              'POSITION': posAccessor,
-              'NORMAL': nrmAccessor,
-              'COLOR_0': colAccessor,
-            },
+            'attributes': attributes,
             'indices': idxAccessor,
-            'material': 0,
+            'material': materialIdx,
           },
         ],
       });
@@ -833,6 +1201,16 @@ class ParsedModel {
     });
 
     final binBytes = bin.takeBytes();
+    if (outMaterials.isEmpty) {
+      ensureFallbackMaterial();
+    }
+
+    final extensionsRequired = <String>[
+      if (assets != null)
+        for (final ext in assets.extensionsRequired)
+          if (usedExtensions.contains(ext)) ext,
+    ];
+
     final jsonBytes = utf8.encode(
       jsonEncode(<String, Object>{
         'asset': <String, Object>{'version': '2.0', 'generator': 'RIG-CAR'},
@@ -845,17 +1223,14 @@ class ParsedModel {
         ],
         'nodes': nodes,
         'meshes': meshes,
-        'materials': [
-          <String, Object>{
-            'name': 'CarPaint',
-            'pbrMetallicRoughness': <String, Object>{
-              'baseColorFactor': <double>[1.0, 1.0, 1.0, 1.0],
-              'metallicFactor': 0.15,
-              'roughnessFactor': 0.55,
-            },
-            'doubleSided': true,
-          },
-        ],
+        'materials': outMaterials,
+        if (outTextures.isNotEmpty) 'textures': outTextures,
+        if (outSamplers.isNotEmpty) 'samplers': outSamplers,
+        if (outImages.isNotEmpty) 'images': outImages,
+        if (usedExtensions.isNotEmpty)
+          'extensionsUsed': usedExtensions.toList(growable: false),
+        if (extensionsRequired.isNotEmpty)
+          'extensionsRequired': extensionsRequired,
         'accessors': accessors,
         'bufferViews': bufferViews,
         'buffers': [
@@ -898,6 +1273,10 @@ class ParsedModel {
     out.add(binBytes);
     out.add(List<int>.filled(binPad, 0));
     return out.takeBytes();
+  }
+
+  static Map<String, dynamic> _deepCloneJsonMap(Map<String, dynamic> src) {
+    return jsonDecode(jsonEncode(src)) as Map<String, dynamic>;
   }
 
   /// Returns a normalized copy for rigging and viewport display.
@@ -951,6 +1330,10 @@ class ParsedModel {
         edges: instance.edges,
         triangles: instance.triangles,
         worldBBox: bounds,
+        uvs: instance.uvs,
+        uvs1: instance.uvs1,
+        vertexColors: instance.vertexColors,
+        materialIndex: instance.materialIndex,
       );
     }).toList();
 
@@ -963,6 +1346,7 @@ class ParsedModel {
       worldBBox: BBox.union(
         normalizedInstances.map((instance) => instance.worldBBox).toList(),
       ),
+      gltfAssets: gltfAssets,
     );
   }
 

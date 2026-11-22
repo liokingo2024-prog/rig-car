@@ -512,11 +512,17 @@ class GlbParser {
       String? bestModelName;
       Uint8List? bestModelBytes;
       var bestScore = -1;
+      final fileMap = <String, Uint8List>{};
 
       for (final file in archive) {
         if (!file.isFile) continue;
         final entryName = file.name;
         final low = entryName.toLowerCase();
+        final Uint8List entryBytes = file.content;
+        if (entryBytes.isNotEmpty) {
+          fileMap[low] = entryBytes;
+          fileMap[low.split('/').last] = entryBytes;
+        }
         var score = 0;
         if (low.endsWith('.glb')) {
           score = 10;
@@ -531,7 +537,6 @@ class GlbParser {
         }
 
         if (score > bestScore) {
-          final Uint8List entryBytes = file.content;
           if (entryBytes.isNotEmpty) {
             bestScore = score;
             bestModelName = entryName.split('/').last;
@@ -541,6 +546,25 @@ class GlbParser {
       }
 
       if (bestModelBytes != null && bestModelName != null) {
+        if (bestModelName.toLowerCase().endsWith('.gltf')) {
+          final json =
+              jsonDecode(utf8.decode(bestModelBytes)) as Map<String, dynamic>;
+          Uint8List? bin = _extractEmbeddedGltfBin(json);
+          if (bin == null) {
+            final buffers = json['buffers'] as List<dynamic>?;
+            if (buffers != null && buffers.isNotEmpty) {
+              final uri =
+                  (buffers.first as Map)['uri']?.toString().toLowerCase() ?? '';
+              bin = fileMap[uri] ?? fileMap[uri.split('/').last];
+            }
+          }
+          return _build(
+            bestModelName,
+            json,
+            bin,
+            externalFiles: fileMap,
+          );
+        }
         return parseSync(bestModelName, bestModelBytes);
       }
     } catch (_) {}
@@ -915,6 +939,7 @@ class GlbParser {
       bin,
       textureColors: colors,
       decodedTextures: decoded,
+      externalFiles: externalFiles,
     );
   }
 
@@ -924,6 +949,7 @@ class GlbParser {
     Uint8List? bin, {
     Map<int, Color>? textureColors,
     Map<int, _DecodedTexture>? decodedTextures,
+    Map<String, Uint8List>? externalFiles,
   }) {
     final jsonNodes = gltf['nodes'] as List<dynamic>? ?? [];
     final jsonMeshes = gltf['meshes'] as List<dynamic>? ?? [];
@@ -983,6 +1009,58 @@ class GlbParser {
     //    gets its own MeshData/SceneNode, matching Three.js GLTFLoader) ─────
     final jsonMaterials = gltf['materials'] as List<dynamic>? ?? [];
     final jsonTextures = gltf['textures'] as List<dynamic>? ?? [];
+
+    // Preserve the original material/texture/sampler/image graph and the raw
+    // encoded image bytes so the rigged GLB can emit real PBR textures instead
+    // of flat vertex colours.
+    final jsonSamplers = gltf['samplers'] as List<dynamic>? ?? [];
+    final jsonImages = gltf['images'] as List<dynamic>? ?? [];
+    final rawImages = _extractRawImages(
+      jsonImages,
+      jsonBufferViews,
+      bin,
+      externalFiles: externalFiles,
+    );
+    final gltfAssets =
+        (jsonMaterials.isNotEmpty ||
+            jsonTextures.isNotEmpty ||
+            rawImages.any((img) => img != null))
+        ? GltfMaterialAssets(
+            materials: [
+              for (final m in jsonMaterials)
+                if (m is Map<String, dynamic>)
+                  jsonDecode(jsonEncode(m)) as Map<String, dynamic>
+                else
+                  <String, dynamic>{},
+            ],
+            textures: [
+              for (final t in jsonTextures)
+                if (t is Map<String, dynamic>)
+                  jsonDecode(jsonEncode(t)) as Map<String, dynamic>
+                else
+                  <String, dynamic>{},
+            ],
+            samplers: [
+              for (final s in jsonSamplers)
+                if (s is Map<String, dynamic>)
+                  jsonDecode(jsonEncode(s)) as Map<String, dynamic>
+                else
+                  <String, dynamic>{},
+            ],
+            images: rawImages,
+            extensionsUsed: [
+              for (final e
+                  in (gltf['extensionsUsed'] as List<dynamic>? ?? const []))
+                if (e is String) e,
+            ],
+            extensionsRequired: [
+              for (final e
+                  in (gltf['extensionsRequired'] as List<dynamic>? ?? const []))
+                if (e is String) e,
+            ],
+          )
+        : null;
+
     final meshes = <MeshData>[];
     final gltfMeshToMeshDataIndices = <int, List<int>>{};
     for (var mi = 0; mi < jsonMeshes.length; mi++) {
@@ -1049,6 +1127,18 @@ class GlbParser {
           );
         }
 
+        List<Offset>? uvs1;
+        final uv1Idx = attrs['TEXCOORD_1'] as int?;
+        if (uv1Idx != null &&
+            uv1Idx >= 0 &&
+            uv1Idx < jsonAccessors.length) {
+          uvs1 = _readVec2Accessor(
+            jsonAccessors[uv1Idx] as Map<String, dynamic>,
+            jsonBufferViews,
+            bin,
+          );
+        }
+
         final primVerts = _readVec3Accessor(
           jsonAccessors[posIdx] as Map<String, dynamic>,
           jsonBufferViews,
@@ -1105,6 +1195,15 @@ class GlbParser {
             edges: primEdges.toList(),
             triangles: primTriangles,
             bbox: BBox.fromPoints(primVerts),
+            uvs: uvs,
+            uvs1: uvs1,
+            vertexColors: vertexColors,
+            materialIndex:
+                (matIdx != null &&
+                    matIdx >= 0 &&
+                    matIdx < jsonMaterials.length)
+                ? matIdx
+                : null,
           ),
         );
         primIndices.add(newMeshIdx);
@@ -1179,6 +1278,10 @@ class GlbParser {
             edges: mesh.edges,
             triangles: worldTriangles,
             worldBBox: BBox.fromPoints(worldVerts),
+            uvs: mesh.uvs,
+            uvs1: mesh.uvs1,
+            vertexColors: mesh.vertexColors,
+            materialIndex: mesh.materialIndex,
           ),
         );
       }
@@ -1214,6 +1317,7 @@ class GlbParser {
       instances: instances,
       rootNodeIndices: roots,
       worldBBox: worldBBox,
+      gltfAssets: gltfAssets,
     );
   }
 
@@ -1396,6 +1500,122 @@ class GlbParser {
     if (texIdx == null) return null;
     final imgIdx = _textureImageIndex(jsonTextures, texIdx);
     return decodedTextures[imgIdx];
+  }
+
+  /// Best-effort MIME type for raw image bytes taken from a glTF asset.
+  static String _inferImageMimeType(
+    Uint8List bytes, {
+    String? declaredMimeType,
+    String? uri,
+  }) {
+    if (declaredMimeType != null && declaredMimeType.trim().isNotEmpty) {
+      return declaredMimeType.trim();
+    }
+    if (bytes.length >= 4) {
+      if (bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4E &&
+          bytes[3] == 0x47) {
+        return 'image/png';
+      }
+      if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+        return 'image/jpeg';
+      }
+      if (bytes.length >= 12 &&
+          bytes[0] == 0x52 &&
+          bytes[1] == 0x49 &&
+          bytes[2] == 0x46 &&
+          bytes[3] == 0x46 &&
+          bytes[8] == 0x57 &&
+          bytes[9] == 0x45 &&
+          bytes[10] == 0x42 &&
+          bytes[11] == 0x50) {
+        return 'image/webp';
+      }
+      if (bytes.length >= 6 &&
+          bytes[0] == 0xAB &&
+          bytes[1] == 0x4B &&
+          bytes[2] == 0x54 &&
+          bytes[3] == 0x58 &&
+          bytes[4] == 0x20 &&
+          bytes[5] == 0x32) {
+        return 'image/ktx2';
+      }
+    }
+    if (uri != null) {
+      final low = uri.toLowerCase();
+      if (low.startsWith('data:')) {
+        final semi = low.indexOf(';');
+        final comma = low.indexOf(',');
+        final end = semi != -1 && (comma == -1 || semi < comma) ? semi : comma;
+        if (end > 5) return low.substring(5, end).trim();
+      }
+      if (low.endsWith('.jpg') || low.endsWith('.jpeg')) return 'image/jpeg';
+      if (low.endsWith('.webp')) return 'image/webp';
+      if (low.endsWith('.ktx2')) return 'image/ktx2';
+      if (low.endsWith('.png')) return 'image/png';
+    }
+    return 'image/png';
+  }
+
+  /// Collects the untouched encoded bytes of every glTF image, from the GLB
+  /// binary chunk, a `data:` URI or a file inside the imported archive.
+  static List<GltfImageAsset?> _extractRawImages(
+    List<dynamic> jsonImages,
+    List<dynamic> jsonBufferViews,
+    Uint8List? bin, {
+    Map<String, Uint8List>? externalFiles,
+  }) {
+    final result = <GltfImageAsset?>[];
+    for (var i = 0; i < jsonImages.length; i++) {
+      GltfImageAsset? asset;
+      try {
+        final img = jsonImages[i] as Map<String, dynamic>;
+        Uint8List? imageBytes;
+        String? uri;
+        final bvIdx = img['bufferView'] as int?;
+        if (bvIdx != null &&
+            bvIdx >= 0 &&
+            bvIdx < jsonBufferViews.length &&
+            bin != null) {
+          final bv = jsonBufferViews[bvIdx] as Map<String, dynamic>;
+          final byteOffset = bv['byteOffset'] as int? ?? 0;
+          final byteLength = bv['byteLength'] as int? ?? 0;
+          if (byteLength > 0 && byteOffset + byteLength <= bin.length) {
+            imageBytes = bin.sublist(byteOffset, byteOffset + byteLength);
+          }
+        } else if (img['uri'] is String) {
+          uri = img['uri'] as String;
+          if (uri.startsWith('data:')) {
+            final comma = uri.indexOf(',');
+            if (comma != -1) {
+              imageBytes = base64Decode(uri.substring(comma + 1).trim());
+            }
+          } else if (externalFiles != null) {
+            final key = uri.toLowerCase();
+            final decodedKey = Uri.decodeFull(uri).toLowerCase();
+            imageBytes = externalFiles[key] ??
+                externalFiles[key.split('/').last] ??
+                externalFiles[decodedKey] ??
+                externalFiles[decodedKey.split('/').last];
+          }
+        }
+
+        if (imageBytes != null && imageBytes.isNotEmpty) {
+          asset = GltfImageAsset(
+            bytes: imageBytes,
+            mimeType: _inferImageMimeType(
+              imageBytes,
+              declaredMimeType: img['mimeType'] as String?,
+              uri: uri,
+            ),
+            name: img['name'] as String?,
+          );
+        }
+      } catch (_) {}
+      result.add(asset);
+    }
+    return result;
   }
 
   /// Picks a flat viewport colour for a glTF material. When textured materials
