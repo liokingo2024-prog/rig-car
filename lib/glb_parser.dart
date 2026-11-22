@@ -66,42 +66,72 @@ class GlbParser {
 
   /// Parse any 3D model format (.glb, .gltf, .obj, .stl, .fbx, .zip) asynchronously,
   /// extracting authentic meshes, nodes, and materials for auto-rigging and Godot export.
-  static Future<ParsedModel> parse(String fileName, Uint8List bytes) async {
+  ///
+  /// [onProgress] receives a human readable stage and a 0-1 estimate so the
+  /// import overlay can show what is still running; the work yields to the
+  /// event loop between stages so the overlay keeps painting.
+  static Future<ParsedModel> parse(
+    String fileName,
+    Uint8List bytes, {
+    void Function(String stage, double progress)? onProgress,
+  }) async {
     final lower = fileName.toLowerCase();
 
     // 1. Standard GLB binary
     if (_isGlb(bytes) || lower.endsWith('.glb')) {
       try {
+        onProgress?.call('Unpacking GLB container…', 0.12);
+        await Future<void>.delayed(Duration.zero);
         final (json, bin) = _unpackGlb(bytes);
-        return await _buildGltfWithTextures(fileName, json, bin);
+        return await _buildGltfWithTextures(
+          fileName,
+          json,
+          bin,
+          onProgress: onProgress,
+        );
       } catch (_) {}
     }
 
     // 2. ZIP package (e.g. Sketchfab zip archive)
     if (_isZip(bytes) || lower.endsWith('.zip')) {
-      return _parseZip(fileName, bytes);
+      onProgress?.call('Extracting archive…', 0.12);
+      await Future<void>.delayed(Duration.zero);
+      return _parseZip(fileName, bytes, onProgress: onProgress);
     }
 
     // 3. Wavefront OBJ
     if (lower.endsWith('.obj') || _isObj(bytes)) {
+      onProgress?.call('Parsing OBJ geometry…', 0.4);
+      await Future<void>.delayed(Duration.zero);
       return _parseObj(fileName, bytes);
     }
 
     // 4. Stereolithography STL
     if (lower.endsWith('.stl') || _isStl(bytes)) {
+      onProgress?.call('Parsing STL geometry…', 0.4);
+      await Future<void>.delayed(Duration.zero);
       return _parseStl(fileName, bytes);
     }
 
     // 5. glTF JSON
     if (lower.endsWith('.gltf') || _isGltfJson(bytes)) {
       try {
+        onProgress?.call('Reading glTF JSON…', 0.12);
+        await Future<void>.delayed(Duration.zero);
         final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
         final bin = _extractEmbeddedGltfBin(json);
-        return await _buildGltfWithTextures(fileName, json, bin);
+        return await _buildGltfWithTextures(
+          fileName,
+          json,
+          bin,
+          onProgress: onProgress,
+        );
       } catch (_) {}
     }
 
     // 6. Generic/FBX fallback
+    onProgress?.call('Building fallback vehicle…', 0.7);
+    await Future<void>.delayed(Duration.zero);
     return _createFallbackVehicle(fileName, bytes: bytes);
   }
 
@@ -441,7 +471,11 @@ class GlbParser {
     );
   }
 
-  static Future<ParsedModel> _parseZip(String fileName, Uint8List bytes) async {
+  static Future<ParsedModel> _parseZip(
+    String fileName,
+    Uint8List bytes, {
+    void Function(String stage, double progress)? onProgress,
+  }) async {
     try {
       final archive = ZipDecoder().decodeBytes(bytes);
       String? bestModelName;
@@ -498,9 +532,14 @@ class GlbParser {
             json,
             bin,
             externalFiles: fileMap,
+            onProgress: onProgress,
           );
         }
-        return await parse(bestModelName, bestModelBytes);
+        return await parse(
+          bestModelName,
+          bestModelBytes,
+          onProgress: onProgress,
+        );
       }
     } catch (_) {}
     return _parseZipSync(fileName, bytes);
@@ -790,17 +829,33 @@ class GlbParser {
 
   // ── Internal ────────────────────────────────────────────────────────────
 
-  /// Decodes every embedded/external glTF image once at 128x128, keeping both
-  /// the full bitmap (for UV sampling) and its average colour (for fallbacks).
+  /// Decodes embedded/external glTF images once at 128x128, keeping both the
+  /// bitmap (for UV sampling) and its average colour (for fallbacks).
+  ///
+  /// [onlyImageIndices] limits decoding to the images the viewport actually
+  /// samples (base colour); normal/roughness/metallic/AO/emissive maps are kept
+  /// as raw encoded bytes for export and never decoded.
   static Future<Map<int, _DecodedTexture>> _extractTextures(
     List<dynamic> jsonImages,
     List<dynamic> jsonBufferViews,
     Uint8List? bin, {
     Map<String, Uint8List>? externalFiles,
+    Set<int>? onlyImageIndices,
+    void Function(int completed, int total)? onProgress,
   }) async {
     final textures = <int, _DecodedTexture>{};
+    final targets = [
+      for (var i = 0; i < jsonImages.length; i++)
+        if (onlyImageIndices == null || onlyImageIndices.contains(i)) i,
+    ];
 
-    for (var i = 0; i < jsonImages.length; i++) {
+    for (var t = 0; t < targets.length; t++) {
+      final i = targets[t];
+      if (t % 2 == 0) {
+        // Yield between images so a stack of 2K/4K maps cannot freeze the tab.
+        await Future<void>.delayed(Duration.zero);
+        onProgress?.call(t, targets.length);
+      }
       try {
         final img = jsonImages[i] as Map<String, dynamic>;
         Uint8List? imageBytes;
@@ -909,7 +964,49 @@ class GlbParser {
         // Continue if any image cannot be decoded
       }
     }
+    onProgress?.call(targets.length, targets.length);
     return textures;
+  }
+
+  /// Image indices referenced by `baseColorTexture` (or a spec/gloss diffuse
+  /// texture): the only pixels the viewport samples for triangle colours.
+  static Set<int> _baseColorImageIndices(Map<String, dynamic> gltf) {
+    final jsonTextures = gltf['textures'] as List<dynamic>? ?? [];
+    final indices = <int>{};
+
+    void addFromTexture(Object? textureRef) {
+      if (textureRef is! Map<String, dynamic>) return;
+      final texIdx = textureRef['index'] as int?;
+      if (texIdx == null || texIdx < 0 || texIdx >= jsonTextures.length) {
+        return;
+      }
+      final tex = jsonTextures[texIdx];
+      if (tex is! Map<String, dynamic>) return;
+      final source = tex['source'] as int?;
+      if (source != null) indices.add(source);
+      // KTX2/DDS style texture sources live inside texture extensions.
+      final texExts = tex['extensions'];
+      if (texExts is Map<String, dynamic>) {
+        for (final ext in texExts.values) {
+          if (ext is Map<String, dynamic>) {
+            final extSource = ext['source'] as int?;
+            if (extSource != null) indices.add(extSource);
+          }
+        }
+      }
+    }
+
+    for (final material in gltf['materials'] as List<dynamic>? ?? const []) {
+      if (material is! Map<String, dynamic>) continue;
+      final pbr = material['pbrMetallicRoughness'];
+      if (pbr is Map<String, dynamic>) addFromTexture(pbr['baseColorTexture']);
+      final exts = material['extensions'];
+      if (exts is Map<String, dynamic>) {
+        final sg = exts['KHR_materials_pbrSpecularGlossiness'];
+        if (sg is Map<String, dynamic>) addFromTexture(sg['diffuseTexture']);
+      }
+    }
+    return indices;
   }
 
   static Future<ParsedModel> _buildGltfWithTextures(
@@ -917,32 +1014,45 @@ class GlbParser {
     Map<String, dynamic> json,
     Uint8List? bin, {
     Map<String, Uint8List>? externalFiles,
+    void Function(String stage, double progress)? onProgress,
   }) async {
-    // Yield between the heavy stages so the import spinner keeps animating at
-    // 60 FPS while large GLB/GLTF archives are decoded.
+    // Yield between the heavy stages so the import overlay keeps animating and
+    // the browser tab stays responsive while large archives are parsed.
     await Future<void>.delayed(Duration.zero);
     final images = json['images'] as List<dynamic>? ?? [];
     final bufferViews = json['bufferViews'] as List<dynamic>? ?? [];
+
+    onProgress?.call('Decoding material colours…', 0.20);
     final decoded = await _extractTextures(
       images,
       bufferViews,
       bin,
       externalFiles: externalFiles,
+      onlyImageIndices: _baseColorImageIndices(json),
+      onProgress: (completed, total) {
+        final fraction = total == 0 ? 1.0 : completed / total;
+        onProgress?.call(
+          'Decoding material colours ($completed/$total)…',
+          0.20 + 0.10 * fraction,
+        );
+      },
     );
     await Future<void>.delayed(Duration.zero);
     final colors = <int, Color>{
       for (final entry in decoded.entries) entry.key: entry.value.averageColor,
     };
-    return _build(
+    return _buildAsync(
       fileName,
       json,
       bin,
       textureColors: colors,
       decodedTextures: decoded,
       externalFiles: externalFiles,
+      onProgress: onProgress,
     );
   }
 
+  /// Synchronous glTF build used by [parseSync] and by tests.
   static ParsedModel _build(
     String fileName,
     Map<String, dynamic> gltf,
@@ -951,12 +1061,94 @@ class GlbParser {
     Map<int, _DecodedTexture>? decodedTextures,
     Map<String, Uint8List>? externalFiles,
   }) {
+    final state = _GltfBuildState(
+      fileName,
+      gltf,
+      bin,
+      textureColors,
+      decodedTextures,
+      externalFiles,
+    );
+    _prepareGltfBuild(state);
+    for (var mi = 0; mi < state.jsonMeshes.length; mi++) {
+      _parseGltfMesh(state, mi);
+    }
+    for (var ni = 0; ni < state.origNodeCount; ni++) {
+      _addGltfNodeInstances(state, ni);
+    }
+    return _finishGltfBuild(state);
+  }
+
+  /// Builds the same model as [_build] but hands the main thread back to the
+  /// browser whenever a pass has been running for a frame, so importing a
+  /// detailed car cannot lock up the tab or stall the progress overlay.
+  static Future<ParsedModel> _buildAsync(
+    String fileName,
+    Map<String, dynamic> gltf,
+    Uint8List? bin, {
+    Map<int, Color>? textureColors,
+    Map<int, _DecodedTexture>? decodedTextures,
+    Map<String, Uint8List>? externalFiles,
+    void Function(String stage, double progress)? onProgress,
+  }) async {
+    final state = _GltfBuildState(
+      fileName,
+      gltf,
+      bin,
+      textureColors,
+      decodedTextures,
+      externalFiles,
+    );
+
+    onProgress?.call('Reading scene graph…', 0.30);
+    await Future<void>.delayed(Duration.zero);
+    _prepareGltfBuild(state);
+
+    final slice = Stopwatch()..start();
+    Future<void> yieldIfNeeded(String stage, double progress) async {
+      if (slice.elapsedMilliseconds < 12) return;
+      onProgress?.call(stage, progress);
+      await Future<void>.delayed(Duration.zero);
+      slice.reset();
+    }
+
+    final meshCount = state.jsonMeshes.length;
+    for (var mi = 0; mi < meshCount; mi++) {
+      _parseGltfMesh(state, mi);
+      await yieldIfNeeded(
+        'Parsing meshes (${mi + 1}/$meshCount)…',
+        0.30 + 0.40 * ((mi + 1) / (meshCount == 0 ? 1 : meshCount)),
+      );
+    }
+
+    final nodeCount = state.origNodeCount;
+    for (var ni = 0; ni < nodeCount; ni++) {
+      _addGltfNodeInstances(state, ni);
+      await yieldIfNeeded(
+        'Building scene graph (${ni + 1}/$nodeCount)…',
+        0.70 + 0.20 * ((ni + 1) / (nodeCount == 0 ? 1 : nodeCount)),
+      );
+    }
+
+    onProgress?.call('Finalizing import…', 0.95);
+    await Future<void>.delayed(Duration.zero);
+    return _finishGltfBuild(state);
+  }
+
+  /// Nodes, world transforms and the preserved material/texture graph.
+  static void _prepareGltfBuild(_GltfBuildState s) {
+    final gltf = s.gltf;
     final jsonNodes = gltf['nodes'] as List<dynamic>? ?? [];
     final jsonMeshes = gltf['meshes'] as List<dynamic>? ?? [];
     final jsonAccessors = gltf['accessors'] as List<dynamic>? ?? [];
     final jsonBufferViews = gltf['bufferViews'] as List<dynamic>? ?? [];
+    s.jsonNodes = jsonNodes;
+    s.jsonMeshes = jsonMeshes;
+    s.jsonAccessors = jsonAccessors;
+    s.jsonBufferViews = jsonBufferViews;
 
     // ── Build parent map ────────────────────────────────────────────────
+
     final parentMap = <int, int>{};
     for (var i = 0; i < jsonNodes.length; i++) {
       final children = jsonNodes[i]['children'] as List<dynamic>?;
@@ -968,7 +1160,7 @@ class GlbParser {
     }
 
     // ── Parse scene nodes ───────────────────────────────────────────────
-    final nodes = <SceneNode>[];
+    final nodes = s.nodes;
     for (var i = 0; i < jsonNodes.length; i++) {
       final n = jsonNodes[i] as Map<String, dynamic>;
 
@@ -982,8 +1174,8 @@ class GlbParser {
       } else {
         final t = _toVec3(n['translation'], Vec3.zero);
         final r = _toQuat(n['rotation'], Quat.identity);
-        final s = _toVec3(n['scale'], Vec3.one);
-        local = Mat4.fromTRS(t, r, s);
+        final scl = _toVec3(n['scale'], Vec3.one);
+        local = Mat4.fromTRS(t, r, scl);
       }
 
       nodes.add(
@@ -1001,14 +1193,15 @@ class GlbParser {
         ),
       );
     }
+    s.origNodeCount = nodes.length;
 
     // ── Compute world transforms ────────────────────────────────────────
     _computeWorldTransforms(nodes);
 
-    // ── Parse meshes (splitting multi-primitive glTF meshes so each primitive
-    //    gets its own MeshData/SceneNode, matching Three.js GLTFLoader) ─────
     final jsonMaterials = gltf['materials'] as List<dynamic>? ?? [];
     final jsonTextures = gltf['textures'] as List<dynamic>? ?? [];
+    s.jsonMaterials = jsonMaterials;
+    s.jsonTextures = jsonTextures;
 
     // Preserve the original material/texture/sampler/image graph and the raw
     // encoded image bytes so the rigged GLB can emit real PBR textures instead
@@ -1018,10 +1211,10 @@ class GlbParser {
     final rawImages = _extractRawImages(
       jsonImages,
       jsonBufferViews,
-      bin,
-      externalFiles: externalFiles,
+      s.bin,
+      externalFiles: s.externalFiles,
     );
-    final gltfAssets =
+    s.gltfAssets =
         (jsonMaterials.isNotEmpty ||
             jsonTextures.isNotEmpty ||
             rawImages.any((img) => img != null))
@@ -1041,9 +1234,9 @@ class GlbParser {
                   <String, dynamic>{},
             ],
             samplers: [
-              for (final s in jsonSamplers)
-                if (s is Map<String, dynamic>)
-                  jsonDecode(jsonEncode(s)) as Map<String, dynamic>
+              for (final smp in jsonSamplers)
+                if (smp is Map<String, dynamic>)
+                  jsonDecode(jsonEncode(smp)) as Map<String, dynamic>
                 else
                   <String, dynamic>{},
             ],
@@ -1060,240 +1253,252 @@ class GlbParser {
             ],
           )
         : null;
+  }
 
-    final meshes = <MeshData>[];
-    final gltfMeshToMeshDataIndices = <int, List<int>>{};
-    for (var mi = 0; mi < jsonMeshes.length; mi++) {
-      final m = jsonMeshes[mi] as Map<String, dynamic>;
-      final baseMeshName = m['name'] as String? ?? 'Mesh_$mi';
-      final prims = m['primitives'] as List<dynamic>? ?? [];
-      final primIndices = <int>[];
+  /// Parses one glTF mesh (splitting multi-primitive meshes so each primitive
+  /// gets its own MeshData/SceneNode, matching Three.js GLTFLoader).
+  static void _parseGltfMesh(_GltfBuildState s, int mi) {
+    final jsonMeshes = s.jsonMeshes;
+    final jsonMaterials = s.jsonMaterials;
+    final jsonAccessors = s.jsonAccessors;
+    final jsonBufferViews = s.jsonBufferViews;
+    final bin = s.bin;
+    final jsonTextures = s.jsonTextures;
+    final meshes = s.meshes;
 
-      for (var pi = 0; pi < prims.length; pi++) {
-        final prim = prims[pi] as Map<String, dynamic>;
-        final attrs = prim['attributes'] as Map<String, dynamic>?;
-        if (attrs == null) continue;
-        final posIdx = attrs['POSITION'] as int?;
-        if (posIdx == null) continue;
+    final m = jsonMeshes[mi] as Map<String, dynamic>;
+    final baseMeshName = m['name'] as String? ?? 'Mesh_$mi';
+    final prims = m['primitives'] as List<dynamic>? ?? [];
+    final primIndices = <int>[];
 
-        // Resolve a viewport colour from the primitive's material.
-        Map<String, dynamic>? matMap;
-        String? matName;
-        final matIdx = prim['material'] as int?;
-        if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
-          matMap = jsonMaterials[matIdx] as Map<String, dynamic>?;
-          matName = matMap?['name'] as String?;
-        }
-        final primName = prims.length > 1
-            ? (matName != null && matName.isNotEmpty
-                ? '${baseMeshName}_$matName'
-                : '${baseMeshName}_prim_$pi')
-            : baseMeshName;
+    for (var pi = 0; pi < prims.length; pi++) {
+      final prim = prims[pi] as Map<String, dynamic>;
+      final attrs = prim['attributes'] as Map<String, dynamic>?;
+      if (attrs == null) continue;
+      final posIdx = attrs['POSITION'] as int?;
+      if (posIdx == null) continue;
 
-        final materialColor = _resolveMaterialColor(
-          matMap,
-          meshName: primName,
-          textureColors: textureColors,
-          jsonTextures: jsonTextures,
-        );
-        // Windows are routinely authored almost fully transparent
-        // (baseColorFactor alpha 0.02-0.15, or KHR_materials_transmission),
-        // so their triangles need the tinted-glass band applied later.
-        final isGlass = _isGlassSurface(matName, primName);
-        final decodedTex = _resolveDecodedTexture(
-          matMap,
-          decodedTextures: decodedTextures,
-          jsonTextures: jsonTextures,
-        );
-        final baseColorFactor = _readBaseColorFactor(matMap);
+      // Resolve a viewport colour from the primitive's material.
+      Map<String, dynamic>? matMap;
+      String? matName;
+      final matIdx = prim['material'] as int?;
+      if (matIdx != null && matIdx >= 0 && matIdx < jsonMaterials.length) {
+        matMap = jsonMaterials[matIdx] as Map<String, dynamic>?;
+        matName = matMap?['name'] as String?;
+      }
+      final primName = prims.length > 1
+          ? (matName != null && matName.isNotEmpty
+              ? '${baseMeshName}_$matName'
+              : '${baseMeshName}_prim_$pi')
+          : baseMeshName;
 
-        List<Color>? vertexColors;
-        final colorIdx = attrs['COLOR_0'] as int?;
-        if (colorIdx != null &&
-            colorIdx >= 0 &&
-            colorIdx < jsonAccessors.length) {
-          vertexColors = _readColorAccessor(
-            jsonAccessors[colorIdx] as Map<String, dynamic>,
-            jsonBufferViews,
-            bin,
-          );
-        }
+      final materialColor = _resolveMaterialColor(
+        matMap,
+        meshName: primName,
+        textureColors: s.textureColors,
+        jsonTextures: jsonTextures,
+      );
+      // Windows are routinely authored almost fully transparent
+      // (baseColorFactor alpha 0.02-0.15, or KHR_materials_transmission),
+      // so their triangles need the tinted-glass band applied later.
+      final isGlass = _isGlassSurface(matName, primName);
+      final decodedTex = _resolveDecodedTexture(
+        matMap,
+        decodedTextures: s.decodedTextures,
+        jsonTextures: jsonTextures,
+      );
+      final baseColorFactor = _readBaseColorFactor(matMap);
 
-        List<Offset>? uvs;
-        final uvIdx = attrs['TEXCOORD_0'] as int?;
-        if (uvIdx != null &&
-            uvIdx >= 0 &&
-            uvIdx < jsonAccessors.length) {
-          uvs = _readVec2Accessor(
-            jsonAccessors[uvIdx] as Map<String, dynamic>,
-            jsonBufferViews,
-            bin,
-          );
-        }
-
-        List<Offset>? uvs1;
-        final uv1Idx = attrs['TEXCOORD_1'] as int?;
-        if (uv1Idx != null &&
-            uv1Idx >= 0 &&
-            uv1Idx < jsonAccessors.length) {
-          uvs1 = _readVec2Accessor(
-            jsonAccessors[uv1Idx] as Map<String, dynamic>,
-            jsonBufferViews,
-            bin,
-          );
-        }
-
-        final primVerts = _readVec3Accessor(
-          jsonAccessors[posIdx] as Map<String, dynamic>,
+      List<Color>? vertexColors;
+      final colorIdx = attrs['COLOR_0'] as int?;
+      if (colorIdx != null &&
+          colorIdx >= 0 &&
+          colorIdx < jsonAccessors.length) {
+        vertexColors = _readColorAccessor(
+          jsonAccessors[colorIdx] as Map<String, dynamic>,
           jsonBufferViews,
           bin,
         );
-        if (primVerts.isEmpty) continue;
-
-        final primEdges = <Edge>{};
-        final primTriangles = <Triangle>[];
-        final idxIdx = prim['indices'] as int?;
-        final mode = prim['mode'] as int? ?? 4;
-
-        if (idxIdx != null) {
-          final indices = _readScalarAccessor(
-            jsonAccessors[idxIdx] as Map<String, dynamic>,
-            jsonBufferViews,
-            bin,
-          );
-          _appendTriangles(
-            indices,
-            0,
-            mode,
-            primTriangles,
-            primEdges,
-            materialColor: materialColor,
-            vertexColors: vertexColors,
-            uvs: uvs,
-            decodedTexture: decodedTex,
-            baseColorFactor: baseColorFactor,
-            isGlass: isGlass,
-          );
-        } else {
-          // glTF's default primitive mode is TRIANGLES.
-          _appendTriangles(
-            List<int>.generate(primVerts.length, (index) => index),
-            0,
-            mode,
-            primTriangles,
-            primEdges,
-            materialColor: materialColor,
-            vertexColors: vertexColors,
-            uvs: uvs,
-            decodedTexture: decodedTex,
-            baseColorFactor: baseColorFactor,
-            isGlass: isGlass,
-          );
-        }
-
-        if (primTriangles.isEmpty) continue;
-        final newMeshIdx = meshes.length;
-        meshes.add(
-          MeshData(
-            index: newMeshIdx,
-            name: primName,
-            vertices: primVerts,
-            edges: primEdges.toList(),
-            triangles: primTriangles,
-            bbox: BBox.fromPoints(primVerts),
-            uvs: uvs,
-            uvs1: uvs1,
-            vertexColors: vertexColors,
-            materialIndex:
-                (matIdx != null &&
-                    matIdx >= 0 &&
-                    matIdx < jsonMaterials.length)
-                ? matIdx
-                : null,
-          ),
-        );
-        primIndices.add(newMeshIdx);
       }
-      gltfMeshToMeshDataIndices[mi] = primIndices;
-    }
 
-    // ── Build mesh instances (world-space), creating synthetic child nodes
-    //    when a glTF node's mesh had multiple primitives ───────────────────
-    final instances = <MeshInstance>[];
-    final origNodeCount = nodes.length;
-    for (var ni = 0; ni < origNodeCount; ni++) {
-      final node = nodes[ni];
-      final origMi = node.meshIndex;
-      if (origMi == null) continue;
-      final mappedMeshes = gltfMeshToMeshDataIndices[origMi];
-      if (mappedMeshes == null || mappedMeshes.isEmpty) continue;
-
-      final wt = node.worldTransform;
-      final isInverted = wt.determinant3x3 < 0;
-
-      for (var p = 0; p < mappedMeshes.length; p++) {
-        final mIdx = mappedMeshes[p];
-        final mesh = meshes[mIdx];
-        final worldVerts = mesh.vertices
-            .map((v) => wt.transformPoint(v))
-            .toList();
-        final worldTriangles = isInverted
-            ? mesh.triangles
-                .map((t) => Triangle(t.a, t.c, t.b, t.color))
-                .toList()
-            : mesh.triangles;
-
-        int targetNodeIdx = node.index;
-        if (p == 0) {
-          // Register the synthetic primitive nodes as children so childIndices
-          // stays consistent with parentIndex for downstream tree traversal.
-          final updatedChildren = <int>[
-            ...node.childIndices,
-            for (var extra = 1; extra < mappedMeshes.length; extra++)
-              nodes.length + extra - 1,
-          ];
-          nodes[ni] = SceneNode(
-            index: node.index,
-            name: mappedMeshes.length > 1
-                ? '${node.name}_${mesh.name}'
-                : node.name,
-            localTransform: node.localTransform,
-            meshIndex: mIdx,
-            childIndices: updatedChildren,
-            parentIndex: node.parentIndex,
-          )..worldTransform = wt;
-        } else {
-          targetNodeIdx = nodes.length;
-          nodes.add(
-            SceneNode(
-              index: targetNodeIdx,
-              name: '${node.name}_${mesh.name}',
-              localTransform: Mat4.identity(),
-              meshIndex: mIdx,
-              childIndices: const [],
-              parentIndex: node.index,
-            )..worldTransform = wt,
-          );
-        }
-
-        instances.add(
-          MeshInstance(
-            nodeIndex: targetNodeIdx,
-            meshIndex: mIdx,
-            worldVertices: worldVerts,
-            edges: mesh.edges,
-            triangles: worldTriangles,
-            worldBBox: BBox.fromPoints(worldVerts),
-            uvs: mesh.uvs,
-            uvs1: mesh.uvs1,
-            vertexColors: mesh.vertexColors,
-            materialIndex: mesh.materialIndex,
-          ),
+      List<Offset>? uvs;
+      final uvIdx = attrs['TEXCOORD_0'] as int?;
+      if (uvIdx != null && uvIdx >= 0 && uvIdx < jsonAccessors.length) {
+        uvs = _readVec2Accessor(
+          jsonAccessors[uvIdx] as Map<String, dynamic>,
+          jsonBufferViews,
+          bin,
         );
       }
-    }
 
-    // ── Root nodes ──────────────────────────────────────────────────────
+      List<Offset>? uvs1;
+      final uv1Idx = attrs['TEXCOORD_1'] as int?;
+      if (uv1Idx != null && uv1Idx >= 0 && uv1Idx < jsonAccessors.length) {
+        uvs1 = _readVec2Accessor(
+          jsonAccessors[uv1Idx] as Map<String, dynamic>,
+          jsonBufferViews,
+          bin,
+        );
+      }
+
+      final primVerts = _readVec3Accessor(
+        jsonAccessors[posIdx] as Map<String, dynamic>,
+        jsonBufferViews,
+        bin,
+      );
+      if (primVerts.isEmpty) continue;
+
+      final primEdges = <Edge>{};
+      final primTriangles = <Triangle>[];
+      final idxIdx = prim['indices'] as int?;
+      final mode = prim['mode'] as int? ?? 4;
+
+      if (idxIdx != null) {
+        final indices = _readScalarAccessor(
+          jsonAccessors[idxIdx] as Map<String, dynamic>,
+          jsonBufferViews,
+          bin,
+        );
+        _appendTriangles(
+          indices,
+          0,
+          mode,
+          primTriangles,
+          primEdges,
+          materialColor: materialColor,
+          vertexColors: vertexColors,
+          uvs: uvs,
+          decodedTexture: decodedTex,
+          baseColorFactor: baseColorFactor,
+          isGlass: isGlass,
+        );
+      } else {
+        // glTF's default primitive mode is TRIANGLES.
+        _appendTriangles(
+          List<int>.generate(primVerts.length, (index) => index),
+          0,
+          mode,
+          primTriangles,
+          primEdges,
+          materialColor: materialColor,
+          vertexColors: vertexColors,
+          uvs: uvs,
+          decodedTexture: decodedTex,
+          baseColorFactor: baseColorFactor,
+          isGlass: isGlass,
+        );
+      }
+
+      if (primTriangles.isEmpty) continue;
+      final newMeshIdx = meshes.length;
+      meshes.add(
+        MeshData(
+          index: newMeshIdx,
+          name: primName,
+          vertices: primVerts,
+          edges: primEdges.toList(),
+          triangles: primTriangles,
+          bbox: BBox.fromPoints(primVerts),
+          uvs: uvs,
+          uvs1: uvs1,
+          vertexColors: vertexColors,
+          materialIndex:
+              (matIdx != null &&
+                  matIdx >= 0 &&
+                  matIdx < jsonMaterials.length)
+              ? matIdx
+              : null,
+        ),
+      );
+      primIndices.add(newMeshIdx);
+    }
+    s.gltfMeshToMeshDataIndices[mi] = primIndices;
+  }
+
+  /// World-space instances for one glTF node, creating synthetic child nodes
+  /// when the node's mesh had multiple primitives.
+  static void _addGltfNodeInstances(_GltfBuildState s, int ni) {
+    final nodes = s.nodes;
+    final meshes = s.meshes;
+    final instances = s.instances;
+
+    final node = nodes[ni];
+    final origMi = node.meshIndex;
+    if (origMi == null) return;
+    final mappedMeshes = s.gltfMeshToMeshDataIndices[origMi];
+    if (mappedMeshes == null || mappedMeshes.isEmpty) return;
+
+    final wt = node.worldTransform;
+    final isInverted = wt.determinant3x3 < 0;
+
+    for (var p = 0; p < mappedMeshes.length; p++) {
+      final mIdx = mappedMeshes[p];
+      final mesh = meshes[mIdx];
+      final worldVerts = mesh.vertices
+          .map((v) => wt.transformPoint(v))
+          .toList();
+      final worldTriangles = isInverted
+          ? mesh.triangles
+              .map((t) => Triangle(t.a, t.c, t.b, t.color))
+              .toList()
+          : mesh.triangles;
+
+      int targetNodeIdx = node.index;
+      if (p == 0) {
+        // Register the synthetic primitive nodes as children so childIndices
+        // stays consistent with parentIndex for downstream tree traversal.
+        final updatedChildren = <int>[
+          ...node.childIndices,
+          for (var extra = 1; extra < mappedMeshes.length; extra++)
+            nodes.length + extra - 1,
+        ];
+        nodes[ni] = SceneNode(
+          index: node.index,
+          name: mappedMeshes.length > 1
+              ? '${node.name}_${mesh.name}'
+              : node.name,
+          localTransform: node.localTransform,
+          meshIndex: mIdx,
+          childIndices: updatedChildren,
+          parentIndex: node.parentIndex,
+        )..worldTransform = wt;
+      } else {
+        targetNodeIdx = nodes.length;
+        nodes.add(
+          SceneNode(
+            index: targetNodeIdx,
+            name: '${node.name}_${mesh.name}',
+            localTransform: Mat4.identity(),
+            meshIndex: mIdx,
+            childIndices: const [],
+            parentIndex: node.index,
+          )..worldTransform = wt,
+        );
+      }
+
+      instances.add(
+        MeshInstance(
+          nodeIndex: targetNodeIdx,
+          meshIndex: mIdx,
+          worldVertices: worldVerts,
+          edges: mesh.edges,
+          triangles: worldTriangles,
+          worldBBox: BBox.fromPoints(worldVerts),
+          uvs: mesh.uvs,
+          uvs1: mesh.uvs1,
+          vertexColors: mesh.vertexColors,
+          materialIndex: mesh.materialIndex,
+        ),
+      );
+    }
+  }
+
+  /// Collects roots, the overall bounding box and the parsed model.
+  static ParsedModel _finishGltfBuild(_GltfBuildState s) {
+    final gltf = s.gltf;
+    final nodes = s.nodes;
+    final instances = s.instances;
+
     final sceneIdx = gltf['scene'] as int? ?? 0;
     final scenes = gltf['scenes'] as List<dynamic>?;
     List<int> roots;
@@ -1311,19 +1516,18 @@ class GlbParser {
       ];
     }
 
-    // ── Overall bounding box ────────────────────────────────────────────
     final worldBBox = instances.isEmpty
         ? const BBox(Vec3.zero, Vec3.one)
         : BBox.union(instances.map((i) => i.worldBBox).toList());
 
     return ParsedModel(
-      fileName: fileName,
+      fileName: s.fileName,
       nodes: nodes,
-      meshes: meshes,
+      meshes: s.meshes,
       instances: instances,
       rootNodeIndices: roots,
       worldBBox: worldBBox,
-      gltfAssets: gltfAssets,
+      gltfAssets: s.gltfAssets,
     );
   }
 
@@ -2057,4 +2261,41 @@ class GlbParser {
       visit(i);
     }
   }
+}
+
+/// Mutable state threaded through the glTF build so the same mesh and instance
+/// passes can run either synchronously ([GlbParser._build]) or sliced across
+/// event-loop turns ([GlbParser._buildAsync]).
+class _GltfBuildState {
+  _GltfBuildState(
+    this.fileName,
+    this.gltf,
+    this.bin,
+    this.textureColors,
+    this.decodedTextures,
+    this.externalFiles,
+  );
+
+  final String fileName;
+  final Map<String, dynamic> gltf;
+  final Uint8List? bin;
+  final Map<int, Color>? textureColors;
+  final Map<int, _DecodedTexture>? decodedTextures;
+  final Map<String, Uint8List>? externalFiles;
+
+  late List<dynamic> jsonNodes;
+  late List<dynamic> jsonMeshes;
+  late List<dynamic> jsonAccessors;
+  late List<dynamic> jsonBufferViews;
+  late List<dynamic> jsonMaterials;
+  late List<dynamic> jsonTextures;
+
+  final nodes = <SceneNode>[];
+  final meshes = <MeshData>[];
+  final instances = <MeshInstance>[];
+  final gltfMeshToMeshDataIndices = <int, List<int>>{};
+  GltfMaterialAssets? gltfAssets;
+
+  /// Node count before synthetic per-primitive children are appended.
+  int origNodeCount = 0;
 }

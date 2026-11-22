@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -33,6 +34,14 @@ class RigCarApp extends StatelessWidget {
     return MaterialApp(
       title: 'RIG-CAR Fleet & Auto-Rigger',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const MaterialScrollBehavior().copyWith(
+        dragDevices: {
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.touch,
+          PointerDeviceKind.trackpad,
+          PointerDeviceKind.stylus,
+        },
+      ),
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF0A110E),
@@ -144,10 +153,17 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
   bool _isDriveFullscreen = false;
   bool _showLeftPanel = true;
   bool _showRightPanel = true;
+  bool _mobileShowInspector = false;
   final RigPreset _preset = presets.first;
   String _modelName = 'No model loaded';
   ParsedModel? _parsedModel;
   Uint8List? _modelBytes;
+
+  // Import progress. Parsing a detailed car takes long enough that the app
+  // needs to show it is working instead of looking frozen.
+  bool _isLoadingModel = false;
+  String _loadingStage = '';
+  double _loadingProgress = 0.0;
   DetectionResult? _detection;
   int? _selectedBodyNodeIndex;
   int? _selectedNodeIndex;
@@ -274,19 +290,44 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       final picked = await pickModelFile();
       if (!mounted || picked == null) return;
 
-      // Discard current rigging process completely and start clear
       setState(() {
+        // Discard current rigging process completely and start clear.
         _resetRiggingProcess();
         _modelName = picked.name;
+        _isLoadingModel = true;
+        _loadingStage = 'Loading ${picked.name}…';
+        _loadingProgress = 0.08;
       });
 
       if (picked.bytes.isNotEmpty) {
+        // Let the frame paint the overlay before parsing starts, otherwise the
+        // first frames are spent inside the parser and the UI looks frozen.
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+
+        final parsed = await GlbParser.parse(
+          picked.name,
+          picked.bytes,
+          onProgress: (stage, progress) {
+            if (!mounted) return;
+            setState(() {
+              _loadingStage = stage;
+              _loadingProgress = progress;
+            });
+          },
+        );
+        if (!mounted) return;
+
         // Normalize imported authoring units before detection and rendering.
         // This gives the viewport and exported Godot rig one stable vehicle
         // coordinate system regardless of whether the source used mm, cm, or
         // arbitrary units.
-        final parsed = await GlbParser.parse(picked.name, picked.bytes);
+        setState(() {
+          _loadingStage = 'Normalizing scale…';
+          _loadingProgress = 0.96;
+        });
+        await Future<void>.delayed(Duration.zero);
         parsed.normalizeForRiggingInPlace();
+        if (!mounted) return;
 
         setState(() {
           _parsedModel = parsed;
@@ -300,6 +341,8 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           );
           _mass = (vol * 140.0).clamp(600.0, 2800.0).roundToDouble();
           _activeStep = 1;
+          _isLoadingModel = false;
+          _loadingProgress = 1.0;
         });
 
         _showMessage(
@@ -310,11 +353,19 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
           _parsedModel = ParsedModel.createProceduralDefault(name: picked.name);
           _modelBytes = null;
           _activeStep = 1;
+          _isLoadingModel = false;
         });
         _showMessage('Loaded ${picked.name} (procedural fallback)');
       }
     } catch (e) {
-      _showMessage('Error parsing model: $e');
+      if (mounted) {
+        _showMessage('Error parsing model: $e');
+      }
+    } finally {
+      // Never leave the overlay stuck on screen, even if parsing threw.
+      if (mounted && _isLoadingModel) {
+        setState(() => _isLoadingModel = false);
+      }
     }
   }
 
@@ -1116,6 +1167,7 @@ handle_brake=${action(key(32))}
     setState(() {
       _activeStep = step;
       _showRightPanel = true;
+      _mobileShowInspector = true;
       _isTestDriveMode = false;
       _isDriveFullscreen = false;
     });
@@ -2083,7 +2135,6 @@ handle_brake=${action(key(32))}
       body: LayoutBuilder(
         builder: (context, constraints) {
           final desktop = constraints.maxWidth >= 1120;
-          final tablet = constraints.maxWidth >= 760;
           return Column(
             children: [
               if (!desktop)
@@ -2096,6 +2147,10 @@ handle_brake=${action(key(32))}
                     } else {
                       _enterTestDrive();
                     }
+                  },
+                  isInspector: _mobileShowInspector,
+                  onToggleInspector: () {
+                    setState(() => _mobileShowInspector = !_mobileShowInspector);
                   },
                 ),
               Expanded(
@@ -2172,7 +2227,7 @@ handle_brake=${action(key(32))}
                                     padding: const EdgeInsets.all(8.0),
                                     child: _buildTestDriveViewport(),
                                   )
-                                : (tablet && desktop
+                                : (desktop
                                       ? Padding(
                                           padding: const EdgeInsets.fromLTRB(
                                             24,
@@ -2229,35 +2284,101 @@ handle_brake=${action(key(32))}
                                             ],
                                           ),
                                         )
-                                      : Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            16,
-                                            16,
-                                            16,
-                                            16,
-                                          ),
-                                          child: WireframeViewer(
-                                            model: _parsedModel,
-                                            modelBytes: _modelBytes,
-                                            detection: _detection,
-                                            bodyNodeIndex:
-                                                _selectedBodyNodeIndex,
-                                            selectedNodeIndex:
-                                                _selectedNodeIndex,
-                                            hoveredNodeIndex:
-                                                _hoveredNodeIndex,
-                                            onNodeSelected: _onNodeSelected,
-                                            accentColor: _preset.accent,
-                                            bodyColor: widget.initialCar?.accentColor ??
-                                                const Color(0xFFD6DBDF),
-                                            centerOfMassY: _centerOfMass,
-                                            updateEpoch: _viewportUpdateEpoch,
-                                            highlightWheels: _highlightFoundWheels,
-                                            turntableRequest: _turntableRequest,
-                                            cameraResetRequest: _cameraResetRequest,
-                                            onTestDrive: _enterTestDrive,
-                                          ),
-                                        )),
+                                      : (_mobileShowInspector
+                                          ? Padding(
+                                              padding: const EdgeInsets.all(12),
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF111C18),
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  border: Border.all(
+                                                    color: const Color(0xFF1E352C),
+                                                  ),
+                                                ),
+                                                clipBehavior: Clip.antiAlias,
+                                                child: Column(
+                                                  children: [
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                                      color: const Color(0xFF16231E),
+                                                      child: Row(
+                                                        children: [
+                                                          const Icon(Icons.tune_rounded, size: 16, color: Color(0xFF10B981)),
+                                                          const SizedBox(width: 8),
+                                                          const Text(
+                                                            'Rigging Tools & Inspector',
+                                                            style: TextStyle(
+                                                              color: Color(0xFFF0FDF4),
+                                                              fontSize: 12,
+                                                              fontWeight: FontWeight.w700,
+                                                            ),
+                                                          ),
+                                                          const Spacer(),
+                                                          TextButton.icon(
+                                                            onPressed: () => setState(() => _mobileShowInspector = false),
+                                                            icon: const Icon(Icons.view_in_ar_rounded, size: 15),
+                                                            label: const Text('View 3D', style: TextStyle(fontSize: 12)),
+                                                            style: TextButton.styleFrom(
+                                                              foregroundColor: const Color(0xFF34D399),
+                                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    Expanded(child: _buildInspector()),
+                                                  ],
+                                                ),
+                                              ),
+                                            )
+                                          : Padding(
+                                              padding: const EdgeInsets.all(12),
+                                              child: Stack(
+                                                children: [
+                                                  Positioned.fill(
+                                                    child: WireframeViewer(
+                                                      model: _parsedModel,
+                                                      modelBytes: _modelBytes,
+                                                      detection: _detection,
+                                                      bodyNodeIndex:
+                                                          _selectedBodyNodeIndex,
+                                                      selectedNodeIndex:
+                                                          _selectedNodeIndex,
+                                                      hoveredNodeIndex:
+                                                          _hoveredNodeIndex,
+                                                      onNodeSelected: _onNodeSelected,
+                                                      accentColor: _preset.accent,
+                                                      bodyColor: widget.initialCar?.accentColor ??
+                                                          const Color(0xFFD6DBDF),
+                                                      centerOfMassY: _centerOfMass,
+                                                      updateEpoch: _viewportUpdateEpoch,
+                                                      highlightWheels: _highlightFoundWheels,
+                                                      turntableRequest: _turntableRequest,
+                                                      cameraResetRequest: _cameraResetRequest,
+                                                      onTestDrive: _enterTestDrive,
+                                                    ),
+                                                  ),
+                                                  Positioned(
+                                                    right: 14,
+                                                    bottom: 56,
+                                                    child: FloatingActionButton.extended(
+                                                      heroTag: 'mobile_inspector_btn',
+                                                      onPressed: () => setState(() => _mobileShowInspector = true),
+                                                      backgroundColor: const Color(0xFF10B981),
+                                                      foregroundColor: const Color(0xFF041D14),
+                                                      icon: const Icon(Icons.tune_rounded, size: 17),
+                                                      label: const Text(
+                                                        'Rigging Tools',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          fontWeight: FontWeight.w800,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ))),
                           ),
                         ],
                       ),
@@ -2272,6 +2393,13 @@ handle_brake=${action(key(32))}
     );
 
     if (_isTestDriveMode) return workbench;
+
+    final page = _isLoadingModel
+        ? Stack(
+            fit: StackFit.expand,
+            children: [workbench, _buildImportOverlay()],
+          )
+        : workbench;
 
     return CallbackShortcuts(
       bindings: {
@@ -2302,7 +2430,79 @@ handle_brake=${action(key(32))}
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): () =>
             _handleShortcut(_undoLastRigEdit),
       },
-      child: Focus(autofocus: true, child: workbench),
+      child: Focus(autofocus: true, child: page),
+    );
+  }
+
+  /// Blocks the workbench while a picked file is parsed and shows which stage
+  /// the import has reached, so a heavy car never looks like a dead tab.
+  Widget _buildImportOverlay() {
+    return Material(
+      type: MaterialType.transparency,
+      child: ColoredBox(
+        color: const Color(0xCC0A110E),
+        child: Center(
+          child: Container(
+            width: 340,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF111C18),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0x3810B981)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x80000000),
+                  blurRadius: 32,
+                  offset: Offset(0, 14),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.8,
+                    color: Color(0xFF10B981),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _modelName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFF3F4F6),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: _loadingProgress > 0 ? _loadingProgress : null,
+                    minHeight: 5,
+                    backgroundColor: const Color(0x1AFFFFFF),
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFF10B981)),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _loadingStage.isEmpty ? 'Importing vehicle…' : _loadingStage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF86978C),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -2960,10 +3160,14 @@ class _MobileHeader extends StatelessWidget {
     required this.onExport,
     required this.isTestDrive,
     required this.onToggleTestDrive,
+    this.isInspector = false,
+    this.onToggleInspector,
   });
   final ValueChanged<String> onExport;
   final bool isTestDrive;
   final VoidCallback onToggleTestDrive;
+  final bool isInspector;
+  final VoidCallback? onToggleInspector;
 
   @override
   Widget build(BuildContext context) {
@@ -2995,6 +3199,15 @@ class _MobileHeader extends StatelessWidget {
           const SizedBox(width: 6),
           const _Brand(),
           const Spacer(),
+          if (!isTestDrive && onToggleInspector != null)
+            IconButton(
+              tooltip: isInspector ? 'Switch to 3D Viewport' : 'Open Rigging Tools',
+              icon: Icon(
+                isInspector ? Icons.view_in_ar_rounded : Icons.tune_rounded,
+                color: isInspector ? const Color(0xFF10B981) : const Color(0xFF86978C),
+              ),
+              onPressed: onToggleInspector,
+            ),
           IconButton(
             onPressed: onToggleTestDrive,
             tooltip: isTestDrive ? 'Return to Workbench' : 'Test Drive Mode',

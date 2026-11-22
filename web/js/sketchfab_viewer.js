@@ -350,34 +350,39 @@
 
     console.log('SketchfabViewer: loadModel for file:', fileName, 'byteLength:', arrayBuffer.byteLength);
 
-    if (isZip || name.endsWith('.zip')) {
-      loadZip(arrayBuffer, callback);
-    } else if (isGlb || name.endsWith('.glb')) {
-      loadGlb(arrayBuffer, callback);
-    } else if (name.endsWith('.gltf') || (u8[0] === 0x7B /* '{' */)) {
-      loadGltf(arrayBuffer, callback);
-    } else if (name.endsWith('.obj')) {
-      loadObj(arrayBuffer, callback);
-    } else if (name.endsWith('.stl')) {
-      loadStl(arrayBuffer, callback);
-    } else if (isFbx || name.endsWith('.fbx')) {
-      loadFbx(arrayBuffer, callback);
-    } else {
-      // Auto-detect: GLB/GLTF -> OBJ -> STL -> FBX
-      loadGlb(arrayBuffer, function(res) {
-        if (res && res.success) {
-          if (callback) callback(res);
-        } else {
-          loadObj(arrayBuffer, function(resObj) {
-            if (resObj && resObj.success) {
-              if (callback) callback(resObj);
-            } else {
-              loadStl(arrayBuffer, callback);
-            }
-          });
-        }
-      });
-    }
+    // Defer by one frame: Three.js parses the whole buffer and uploads every
+    // texture synchronously, so the browser must first paint the import
+    // progress Flutter just sent, otherwise the overlay never appears.
+    requestAnimationFrame(function() {
+      if (isZip || name.endsWith('.zip')) {
+        loadZip(arrayBuffer, callback);
+      } else if (isGlb || name.endsWith('.glb')) {
+        loadGlb(arrayBuffer, callback);
+      } else if (name.endsWith('.gltf') || (u8[0] === 0x7B /* '{' */)) {
+        loadGltf(arrayBuffer, callback);
+      } else if (name.endsWith('.obj')) {
+        loadObj(arrayBuffer, callback);
+      } else if (name.endsWith('.stl')) {
+        loadStl(arrayBuffer, callback);
+      } else if (isFbx || name.endsWith('.fbx')) {
+        loadFbx(arrayBuffer, callback);
+      } else {
+        // Auto-detect: GLB/GLTF -> OBJ -> STL -> FBX
+        loadGlb(arrayBuffer, function(res) {
+          if (res && res.success) {
+            if (callback) callback(res);
+          } else {
+            loadObj(arrayBuffer, function(resObj) {
+              if (resObj && resObj.success) {
+                if (callback) callback(resObj);
+              } else {
+                loadStl(arrayBuffer, callback);
+              }
+            });
+          }
+        });
+      }
+    });
   }
 
   function loadGlb(arrayBuffer, callback) {

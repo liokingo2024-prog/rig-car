@@ -4,19 +4,29 @@
 (async () => {
   const fallback = document.getElementById('app-fallback');
   const fallbackMessage = document.getElementById('fallback-message');
+  const fallbackBar = document.getElementById('fallback-bar');
+
+  const setProgress = (pct, text) => {
+    if (fallbackBar) fallbackBar.style.width = pct + '%';
+    if (fallbackMessage && text) fallbackMessage.textContent = text;
+  };
 
   const showFallbackError = () => {
-    if (fallbackMessage) {
-      fallbackMessage.textContent =
-          'The dashboard could not start. Refresh this page to try again.';
-    }
-    document.querySelector('.fallback-spinner')?.remove();
+    setProgress(100, 'Could not start RIG-CAR. Refresh this page to try again.');
+    if (fallbackBar) fallbackBar.style.background = '#ef4444';
   };
+
+  // Wait for two frames so Flutter's first painted frame lands before the
+  // splash disappears, otherwise the canvas flashes empty for a moment.
+  const nextFrames = () => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+
+  setProgress(28, 'Preparing workspace…');
 
   // Remove service workers left by older deployments so stale Flutter assets
   // cannot keep the app on a blank screen after a GitHub Pages update.
   const hadController = Boolean(navigator.serviceWorker?.controller);
-
   try {
     if ('serviceWorker' in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
@@ -37,7 +47,7 @@
     return;
   }
 
-  // Force-bust main.dart.js caching so the browser never serves stale JS
+  // Force-bust main.dart.js caching so the browser never serves stale JS.
   const buildTag = 'build_' + Date.now();
   if (window._flutter?.buildConfig?.builds) {
     for (const build of window._flutter.buildConfig.builds) {
@@ -48,14 +58,22 @@
   }
 
   try {
+    setProgress(52, 'Loading Flutter engine…');
     await _flutter.loader.load({
       config: {
         entrypointUrl: 'main.dart.js?v=' + buildTag,
       },
       onEntrypointLoaded: async (engineInitializer) => {
+        setProgress(78, 'Initializing 3D studio…');
         const appRunner = await engineInitializer.initializeEngine();
+        setProgress(96, 'Launching RIG-CAR…');
         await appRunner.runApp();
-        fallback?.remove();
+        await nextFrames();
+        setProgress(100, 'Ready');
+        if (fallback) {
+          fallback.classList.add('fade-out');
+          setTimeout(() => fallback.remove(), 280);
+        }
       },
     });
   } catch (_) {
