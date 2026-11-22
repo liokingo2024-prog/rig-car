@@ -1417,6 +1417,25 @@ class _InspectorPanelState extends State<InspectorPanel> {
     );
   }
 
+  /// Advance CTA plus an escape hatch: physics and sound are optional tuning,
+  /// so a user who only wants the rigged model can jump straight to export.
+  Widget _stepFooter({required String nextLabel, required int nextStep}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _NextStepButton(
+          label: nextLabel,
+          onPressed: () => widget.onStepSelect(nextStep),
+        ),
+        const SizedBox(height: 8),
+        _SkipStepButton(
+          label: 'Skip to Export Rig',
+          onPressed: () => widget.onStepSelect(5),
+        ),
+      ],
+    );
+  }
+
   // ── STEP 3: ADD PHYSICS ───────────────────────────────────────────────────
 
   Widget _buildStep3Auto() {
@@ -1457,10 +1476,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           ),
         ),
         const SizedBox(height: 18),
-        _NextStepButton(
-          label: 'Next: Add Sound',
-          onPressed: () => widget.onStepSelect(4),
-        ),
+        _stepFooter(nextLabel: 'Next: Add Sound', nextStep: 4),
       ],
     );
   }
@@ -1535,10 +1551,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           onReset: () => widget.onResetPhysicsProperty('steerAngle'),
         ),
         const SizedBox(height: 18),
-        _NextStepButton(
-          label: 'Next: Add Sound',
-          onPressed: () => widget.onStepSelect(4),
-        ),
+        _stepFooter(nextLabel: 'Next: Add Sound', nextStep: 4),
       ],
     );
   }
@@ -1587,10 +1600,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           ),
         ),
         const SizedBox(height: 18),
-        _NextStepButton(
-          label: 'Next: Export Rig',
-          onPressed: () => widget.onStepSelect(5),
-        ),
+        _stepFooter(nextLabel: 'Next: Export Rig', nextStep: 5),
       ],
     );
   }
@@ -1610,10 +1620,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           const SizedBox(height: 8),
         ],
         const SizedBox(height: 18),
-        _NextStepButton(
-          label: 'Next: Export Rig',
-          onPressed: () => widget.onStepSelect(5),
-        ),
+        _stepFooter(nextLabel: 'Next: Export Rig', nextStep: 5),
       ],
     );
   }
@@ -2737,6 +2744,48 @@ class _ArchitectureRadioOption extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkipStepButton extends StatelessWidget {
+  const _SkipStepButton({
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _Palette.textSecondary,
+        side: const BorderSide(color: _Palette.borderDefault),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 0,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.keyboard_double_arrow_right_rounded, size: 15),
         ],
       ),
     );
