@@ -427,4 +427,112 @@ void main() {
     expect(attrs.containsKey('TEXCOORD_0'), isTrue);
     expect(attrs.containsKey('COLOR_0'), isFalse);
   });
+
+  test('glass materials are lifted out of near-invisibility on import', () {
+    // Exports routinely author windows at 2-6% opacity, which used to paint
+    // them as holes in the body instead of tinted glass.
+    final glass = _singleTriangleModel({
+      'name': 'Glass',
+      'alphaMode': 'BLEND',
+      'pbrMetallicRoughness': {
+        'baseColorFactor': [0.1, 0.15, 0.2, 0.02],
+      },
+    });
+    final glassColor = glass.instances.single.triangles.single.color!;
+    final glassAlpha = (glassColor.toARGB32() >> 24) & 0xFF;
+    expect(glassAlpha, greaterThanOrEqualTo(160));
+    expect(glassAlpha, lessThanOrEqualTo(215));
+    expect((glassColor.toARGB32() >> 16) & 0xFF, lessThan(60));
+
+    // A colourless pane picks up the cockpit tint rather than staying white.
+    final clear = _singleTriangleModel({
+      'name': 'window_glass',
+      'alphaMode': 'BLEND',
+      'pbrMetallicRoughness': {
+        'baseColorFactor': [1.0, 1.0, 1.0, 0.05],
+      },
+    });
+    final clearArgb = clear.instances.single.triangles.single.color!.toARGB32();
+    expect((clearArgb >> 16) & 0xFF, lessThan(80));
+    expect((clearArgb >> 24) & 0xFF, greaterThanOrEqualTo(160));
+
+    // Non-glass blended surfaces (light cones, glow planes) stay subtle.
+    final glow = _singleTriangleModel({
+      'name': 'Glow',
+      'alphaMode': 'BLEND',
+      'pbrMetallicRoughness': {
+        'baseColorFactor': [1.0, 0.4, 0.2, 1.0],
+      },
+    });
+    final glowAlpha =
+        (glow.instances.single.triangles.single.color!.toARGB32() >> 24) &
+            0xFF;
+    expect(glowAlpha, lessThanOrEqualTo(120));
+  });
+}
+
+/// Minimal one-triangle binary glTF carrying the supplied material.
+ParsedModel _singleTriangleModel(Map<String, dynamic> material) {
+  final verts = Float32List.fromList([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  final indices = Int32List.fromList([0, 1, 2]);
+  final bin = BytesBuilder()
+    ..add(verts.buffer.asUint8List())
+    ..add(indices.buffer.asUint8List());
+  final json = {
+    'asset': {'version': '2.0'},
+    'scene': 0,
+    'scenes': [
+      {
+        'nodes': [0],
+      },
+    ],
+    'nodes': [
+      {'mesh': 0, 'name': 'Body'},
+    ],
+    'materials': [material],
+    'meshes': [
+      {
+        'primitives': [
+          {
+            'attributes': {'POSITION': 0},
+            'indices': 1,
+            'material': 0,
+          },
+        ],
+      },
+    ],
+    'accessors': [
+      {'bufferView': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3'},
+      {'bufferView': 1, 'componentType': 5125, 'count': 3, 'type': 'SCALAR'},
+    ],
+    'bufferViews': [
+      {'buffer': 0, 'byteOffset': 0, 'byteLength': 36},
+      {'buffer': 0, 'byteOffset': 36, 'byteLength': 12},
+    ],
+    'buffers': [
+      {'byteLength': 48},
+    ],
+  };
+  final jsonBytes = utf8.encode(jsonEncode(json));
+  final jsonPad = (4 - jsonBytes.length % 4) % 4;
+  final binBytes = bin.takeBytes();
+  final total = 12 + 8 + jsonBytes.length + jsonPad + 8 + binBytes.length;
+  final header = ByteData(12)
+    ..setUint32(0, 0x46546C67, Endian.little)
+    ..setUint32(4, 2, Endian.little)
+    ..setUint32(8, total, Endian.little);
+  final jsonChunk = ByteData(8)
+    ..setUint32(0, jsonBytes.length + jsonPad, Endian.little)
+    ..setUint32(4, 0x4E4F534A, Endian.little);
+  final binChunk = ByteData(8)
+    ..setUint32(0, binBytes.length, Endian.little)
+    ..setUint32(4, 0x004E4942, Endian.little);
+  final glb = BytesBuilder()
+    ..add(header.buffer.asUint8List())
+    ..add(jsonChunk.buffer.asUint8List())
+    ..add(jsonBytes)
+    ..add(List<int>.filled(jsonPad, 0x20))
+    ..add(binChunk.buffer.asUint8List())
+    ..add(binBytes);
+  return GlbParser.parseSync('glass.glb', glb.takeBytes());
 }

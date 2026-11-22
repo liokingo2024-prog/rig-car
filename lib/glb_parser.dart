@@ -1096,6 +1096,10 @@ class GlbParser {
           textureColors: textureColors,
           jsonTextures: jsonTextures,
         );
+        // Windows are routinely authored almost fully transparent
+        // (baseColorFactor alpha 0.02-0.15, or KHR_materials_transmission),
+        // so their triangles need the tinted-glass band applied later.
+        final isGlass = _isGlassSurface(matName, primName);
         final decodedTex = _resolveDecodedTexture(
           matMap,
           decodedTextures: decodedTextures,
@@ -1168,6 +1172,7 @@ class GlbParser {
             uvs: uvs,
             decodedTexture: decodedTex,
             baseColorFactor: baseColorFactor,
+            isGlass: isGlass,
           );
         } else {
           // glTF's default primitive mode is TRIANGLES.
@@ -1182,6 +1187,7 @@ class GlbParser {
             uvs: uvs,
             decodedTexture: decodedTex,
             baseColorFactor: baseColorFactor,
+            isGlass: isGlass,
           );
         }
 
@@ -1358,6 +1364,42 @@ class GlbParser {
     caseSensitive: false,
   );
 
+  /// True for window/roof glazing. Headlight and taillight lenses share the
+  /// "glass" wording but must stay bright, so they are excluded.
+  static bool _isGlassSurface(String? materialName, String? meshName) {
+    final combined =
+        '${(materialName ?? '').toLowerCase()} '
+        '${(meshName ?? '').toLowerCase()}';
+    if (!_glassMaterial.hasMatch(combined)) return false;
+    return !_headlightMaterial.hasMatch(combined) &&
+        !_taillightMaterial.hasMatch(combined);
+  }
+
+  /// Transparency band every glass pane is drawn inside. Authored glass is
+  /// frequently 2-15% opaque, which reads as a hole in the body, while fully
+  /// opaque glass hides the cabin; 67-82% covered in a tint is what tinted
+  /// automotive glass actually looks like.
+  static const int _glassAlphaMin = 170;
+  static const int _glassAlphaMax = 210;
+
+  /// Lifts a glass triangle's colour into that band and tints colourless panes
+  /// (clear-coat and transmission glass) to the usual cockpit tint.
+  static Color _glassViewportColor(Color base) {
+    final argb = base.toARGB32();
+    var a = (argb >> 24) & 0xFF;
+    var r = (argb >> 16) & 0xFF;
+    var g = (argb >> 8) & 0xFF;
+    var b = argb & 0xFF;
+    if (r > 200 && g > 200 && b > 200) {
+      r = 0x16;
+      g = 0x28;
+      b = 0x32;
+    }
+    if (a < _glassAlphaMin) a = _glassAlphaMin;
+    if (a > _glassAlphaMax) a = _glassAlphaMax;
+    return Color.fromARGB(a, r, g, b);
+  }
+
   /// Reads `pbrMetallicRoughness.baseColorFactor` as RGB multipliers for
   /// per-triangle texel sampling.
   static List<double>? _readBaseColorFactor(Map<String, dynamic>? material) {
@@ -1445,20 +1487,7 @@ class GlbParser {
       }
     }
 
-    if (resolved == null) {
-      resolved = _materialColor(material, meshName: meshName);
-    } else {
-      final matName = (material?['name'] as String? ?? '').toLowerCase();
-      final mName = (meshName ?? '').toLowerCase();
-      final combined = '$matName $mName';
-      // If the material is glass and was authored opaque, give it realistic windshield tint
-      if (_glassMaterial.hasMatch(combined)) {
-        final a = (resolved.toARGB32() >> 24) & 0xFF;
-        if (a > 190) {
-          resolved = resolved.withAlpha(180);
-        }
-      }
-    }
+    resolved ??= _materialColor(material, meshName: meshName);
 
     if (material != null && (material['alphaMode'] as String?) == 'BLEND') {
       final base = resolved ?? const Color(0xFF162A32);
@@ -1680,6 +1709,7 @@ class GlbParser {
     List<Offset>? uvs,
     _DecodedTexture? decodedTexture,
     List<double>? baseColorFactor,
+    bool isGlass = false,
   }) {
     Color? vertexColorFor(int idx) {
       if (vertexColors != null && idx >= 0 && idx < vertexColors.length) {
@@ -1721,11 +1751,14 @@ class GlbParser {
       final i0 = a + vertexOffset;
       final i1 = b + vertexOffset;
       final i2 = c + vertexOffset;
-      final triCol = vertexColorFor(a) ??
+      var triCol = vertexColorFor(a) ??
           vertexColorFor(b) ??
           vertexColorFor(c) ??
           sampledColorFor(a, b, c) ??
           materialColor;
+      if (isGlass && triCol != null) {
+        triCol = _glassViewportColor(triCol);
+      }
       triangles.add(Triangle(i0, i1, i2, triCol));
     }
 
