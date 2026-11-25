@@ -376,15 +376,44 @@ class _InspectorPanelState extends State<InspectorPanel> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  _getStepTitle(),
-                  style: const TextStyle(
-                    color: _Palette.textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _getStepTitle(),
+                        style: const TextStyle(
+                          color: _Palette.textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.3,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (kPipelineSteps.any(
+                        (s) => s.number == widget.activeStep && s.isOptional)) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF17231E),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFF22332C)),
+                        ),
+                        child: const Text(
+                          'Optional',
+                          style: TextStyle(
+                            color: _Palette.textSecondary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 3),
                 _buildStatusBadge(),

@@ -2668,6 +2668,7 @@ class _DesktopSidebar extends StatelessWidget {
                     number: step.number,
                     title: step.title,
                     subtitle: step.subtitle,
+                    isOptional: step.isOptional,
                     status: getStepStatus(step.number),
                     isActive: activeStep == step.number,
                     isEnabled: isStepEnabled(step.number),
@@ -2730,6 +2731,7 @@ class _SidebarStepCard extends StatelessWidget {
     required this.number,
     required this.title,
     required this.subtitle,
+    this.isOptional = false,
     required this.status,
     required this.isActive,
     required this.isEnabled,
@@ -2739,6 +2741,7 @@ class _SidebarStepCard extends StatelessWidget {
   final int number;
   final String title;
   final String subtitle;
+  final bool isOptional;
   final StepStatus status;
   final bool isActive;
   final bool isEnabled;
@@ -2875,15 +2878,55 @@ class _SidebarStepCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: !isEnabled
-                        ? const Color(0xFF4B5563)
-                        : (isActive ? const Color(0xFFF3F4F6) : const Color(0xFFD1D5DB)),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: !isEnabled
+                              ? const Color(0xFF4B5563)
+                              : (isActive
+                                  ? const Color(0xFFF3F4F6)
+                                  : const Color(0xFFD1D5DB)),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (isOptional) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: !isEnabled
+                              ? const Color(0xFF101915)
+                              : const Color(0xFF17231E),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: !isEnabled
+                                ? const Color(0xFF18251F)
+                                : const Color(0xFF22332C),
+                          ),
+                        ),
+                        child: Text(
+                          'Optional',
+                          style: TextStyle(
+                            color: !isEnabled
+                                ? const Color(0xFF4B5563)
+                                : const Color(0xFF86978C),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -3268,7 +3311,27 @@ class _StepStrip extends StatelessWidget {
                 final enabled = isStepEnabled(step.number);
                 final selected = activeStep == step.number;
                 final chip = ChoiceChip(
-                  label: Text('${step.number}  ${step.title}'),
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('${step.number}  ${step.title}'),
+                      if (step.isOptional) ...[
+                        const SizedBox(width: 5),
+                        Text(
+                          'Optional',
+                          style: TextStyle(
+                            color: !enabled
+                                ? const Color(0xFF4B5563)
+                                : (selected
+                                    ? const Color(0xFF064E3B)
+                                    : const Color(0xFF6B7280)),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                   selected: selected,
                   onSelected: (_) => onStepSelected(step.number),
                   showCheckmark: false,

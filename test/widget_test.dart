@@ -1007,6 +1007,8 @@ void main() {
       expect(find.text('Add Physics'), findsWidgets);
       expect(find.text('Add Sound'), findsWidgets);
       expect(find.text('Export Rig'), findsWidgets);
+      // Add Physics and Add Sound are marked Optional in the pipeline
+      expect(find.text('Optional'), findsNWidgets(2));
 
       // Subtitles
       expect(find.text('Import 3D model (.glb, .gltf)'), findsWidgets);

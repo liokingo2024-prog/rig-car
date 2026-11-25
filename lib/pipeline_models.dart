@@ -15,11 +15,13 @@ class PipelineStepInfo {
     required this.number,
     required this.title,
     required this.subtitle,
+    this.isOptional = false,
   });
 
   final int number;
   final String title;
   final String subtitle;
+  final bool isOptional;
 }
 
 const List<PipelineStepInfo> kPipelineSteps = [
@@ -37,11 +39,13 @@ const List<PipelineStepInfo> kPipelineSteps = [
     number: 3,
     title: 'Add Physics',
     subtitle: 'Mass, suspension & tire grip',
+    isOptional: true,
   ),
   PipelineStepInfo(
     number: 4,
     title: 'Add Sound',
     subtitle: 'Engine RPM, skid & siren audio',
+    isOptional: true,
   ),
   PipelineStepInfo(
     number: 5,
