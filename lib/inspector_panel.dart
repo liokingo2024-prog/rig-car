@@ -1623,8 +1623,8 @@ class _InspectorPanelState extends State<InspectorPanel> {
               ),
               const Divider(color: _Palette.borderDefault, height: 14),
               _ArchitectureRadioOption(
-                title: 'Rigged Scene (.tscn + script)',
-                subtitle: 'Scene, vehicle script, config and the organized model wired together.',
+                title: 'Rigged Scene (.zip)',
+                subtitle: 'Scene (.tscn), vehicle script, config and the rigged .glb bundled in a zip.',
                 selected: widget.exportTarget == 'scene',
                 onTap: () => widget.onExportTargetChanged?.call('scene'),
               ),
@@ -1676,7 +1676,7 @@ class _InspectorPanelState extends State<InspectorPanel> {
           label: Text(
             switch (widget.exportTarget) {
               'glb' => 'Export Organized Model (.glb)',
-              'scene' => 'Export Rigged Scene (.tscn)',
+              'scene' => 'Export Rigged Scene (.zip)',
               _ => 'Export Godot 4 Project (.zip)',
             },
             style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),

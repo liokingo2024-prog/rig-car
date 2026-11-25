@@ -2406,11 +2406,10 @@ const WHEEL_NODE_NAMES := {
 }
 
 var visual_wheels: Dictionary = {}
-var _wheel_rest_offsets: Dictionary = {}
 
 func _ready() -> void:
-    # Bind the model's own wheel nodes to the physics wheels so the exported car
-    # visibly steers and spins instead of rolling on frozen geometry.
+    # Reparent the model's wheel nodes under each VehicleWheel3D so Godot 4
+    # natively steers and spins the visual geometry with the physics wheels.
     for corner in WHEEL_NODE_NAMES.keys():
         var target_name: String = WHEEL_NODE_NAMES[corner]
         if target_name.is_empty() or visual_model == null:
@@ -2418,20 +2417,10 @@ func _ready() -> void:
         var found := visual_model.find_child(target_name, true, false)
         var physics_wheel := physics_wheels.get(corner) as Node3D
         if found is Node3D and physics_wheel != null:
+            found.reparent(physics_wheel, true)
             visual_wheels[corner] = found
-            # Preserve the authored mesh offset relative to its wheel origin.
-            _wheel_rest_offsets[corner] = physics_wheel.global_transform.affine_inverse() * (found as Node3D).global_transform
-
-func _sync_visual_wheels() -> void:
-    for corner in visual_wheels.keys():
-        var visual_wheel := visual_wheels[corner] as Node3D
-        var physics_wheel := physics_wheels.get(corner) as Node3D
-        if visual_wheel != null and physics_wheel != null:
-            var rest: Transform3D = _wheel_rest_offsets[corner]
-            visual_wheel.global_transform = physics_wheel.global_transform * rest
 
 func _physics_process(_delta: float) -> void:
-    _sync_visual_wheels()
     var throttle := Input.get_axis("brake", "accelerate")
     var steer := Input.get_axis("steer_right", "steer_left")
     engine_force = throttle * max_engine_force
@@ -2455,19 +2444,25 @@ func _physics_process(_delta: float) -> void:
         'Vector3(${v.x.toStringAsFixed(3)}, ${v.y.toStringAsFixed(3)}, '
         '${v.z.toStringAsFixed(3)})';
 
-    final hasCustomModel = modelName.isNotEmpty &&
-        modelName != 'No model loaded' &&
-        !modelName.contains('Template');
-    // Callers can point the scene at the rigged .glb they ship instead of the
-    // authored source, which Godot cannot always instance.
-    final modelRef = modelPath ?? modelName;
+    final rawModelRef = (modelPath != null && modelPath.isNotEmpty)
+        ? modelPath
+        : modelName;
+    final hasCustomModel = (modelPath != null && modelPath.isNotEmpty) ||
+        (modelName.isNotEmpty &&
+            modelName != 'No model loaded' &&
+            !modelName.contains('Template'));
+    // Normalize res:// prefix so callers can pass either a filename or a
+    // full res:// path without producing "res://res://...".
+    final resolvedModelPath = rawModelRef.startsWith('res://')
+        ? rawModelRef
+        : 'res://$rawModelRef';
     final extResourceIndex = hasCustomModel ? 3 : 2;
 
     if (godotArchitecture == 'raycast') {
       return '''[gd_scene load_steps=$extResourceIndex format=3]
 
 [ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelRef" id="2_model"]\n' : ''}
+${hasCustomModel ? '[ext_resource type="PackedScene" path="$resolvedModelPath" id="2_model"]\n' : ''}
 [sub_resource type="BoxShape3D" id="BoxShape3D_body"]
 size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
 
@@ -2545,7 +2540,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, ${p.x.toStringAsFixed(3)}, ${
     return '''[gd_scene load_steps=$extResourceIndex format=3]
 
 [ext_resource type="Script" path="res://rig_car.gd" id="1_rig"]
-${hasCustomModel ? '[ext_resource type="PackedScene" path="res://$modelRef" id="2_model"]\n' : ''}
+${hasCustomModel ? '[ext_resource type="PackedScene" path="$resolvedModelPath" id="2_model"]\n' : ''}
 [sub_resource type="BoxShape3D" id="BoxShape3D_body"]
 size = Vector3(${cs.x.toStringAsFixed(3)}, ${cs.y.toStringAsFixed(3)}, ${cs.z.toStringAsFixed(3)})
 

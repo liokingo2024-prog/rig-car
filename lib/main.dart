@@ -931,8 +931,6 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       return;
     }
 
-    // Bundle every asset into a single zip: browsers block chained multi-file
-    // downloads, and Godot needs the project file next to the scene.
     final archive = Archive();
     void addText(String name, String contents) {
       final bytes = utf8.encode(contents);
@@ -950,18 +948,19 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
     if (_exportTarget == 'project') {
       addText('project.godot', _godotProjectFile());
       for (final slot in _audioSlots) {
-        final bytes = slot.bytes;
-        if (bytes == null || bytes.isEmpty) continue;
-        final safeName =
-            slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-        archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
+        if (slot.bytes != null) {
+          archive.addFile(
+            ArchiveFile(slot.fileName, slot.bytes!.length, slot.bytes!),
+          );
+        }
       }
     }
+
+    final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
     final bundleName = _exportTarget == 'project'
         ? '${baseName}_godot4_bundle'
         : '${baseName}_rigged_scene';
-    final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive));
     await downloadBytesFile(
       '$bundleName.zip',
       zipBytes,
@@ -3123,7 +3122,7 @@ class _DesktopTopbar extends StatelessWidget {
               ),
               PopupMenuItem(
                 value: 'scene',
-                child: Text('Rigged scene (.tscn + script)', style: TextStyle(fontSize: 12)),
+                child: Text('Rigged scene (.zip)', style: TextStyle(fontSize: 12)),
               ),
               PopupMenuItem(
                 value: 'project',
@@ -3247,7 +3246,7 @@ class _MobileHeader extends StatelessWidget {
               ),
               PopupMenuItem(
                 value: 'scene',
-                child: Text('Rigged scene (.tscn + script)', style: TextStyle(fontSize: 12)),
+                child: Text('Rigged scene (.zip)', style: TextStyle(fontSize: 12)),
               ),
               PopupMenuItem(
                 value: 'project',
