@@ -51,12 +51,8 @@ class InspectorPanel extends StatefulWidget {
     required this.godotArchitecture,
     required this.canExport,
     required this.exportBlockReason,
-    this.exportTarget = 'project',
-    this.includeAudio = true,
-    this.includeSourceModel = false,
+    this.exportTarget = 'glb',
     this.onExportTargetChanged,
-    this.onIncludeAudioChanged,
-    this.onIncludeSourceModelChanged,
     required this.onStepSelect,
     required this.onPickModel,
     required this.onRotateYaw,
@@ -124,11 +120,7 @@ class InspectorPanel extends StatefulWidget {
   /// Export output: 'glb' (organized model), 'scene' (tscn + script + model)
   /// or 'project' (full Godot 4 bundle).
   final String exportTarget;
-  final bool includeAudio;
-  final bool includeSourceModel;
   final ValueChanged<String>? onExportTargetChanged;
-  final ValueChanged<bool>? onIncludeAudioChanged;
-  final ValueChanged<bool>? onIncludeSourceModelChanged;
 
   // Event hooks
   final ValueChanged<int> onStepSelect;
@@ -1580,32 +1572,6 @@ class _InspectorPanelState extends State<InspectorPanel> {
           const SizedBox(height: 6),
         ],
 
-        const SizedBox(height: 16),
-        const _SectionHeader('ACCESSORY AUDIO LAYERS'),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _Palette.activeCardFill,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _Palette.borderDefault),
-          ),
-          child: Column(
-            children: [
-              _AudioCheckboxRow(
-                title: 'Enable Police Siren / Horn Layer',
-                value: widget.sirenAudioEnabled,
-                onChanged: widget.onToggleSirenAudio,
-              ),
-              const Divider(color: _Palette.borderDefault, height: 14),
-              _AudioCheckboxRow(
-                title: 'Tire Skid Audio',
-                value: widget.tireSkidAudioEnabled,
-                onChanged: widget.onToggleTireSkidAudio,
-              ),
-            ],
-          ),
-        ),
         const SizedBox(height: 18),
         _stepFooter(nextLabel: 'Next: Export Rig', nextStep: 5),
       ],
@@ -1669,19 +1635,6 @@ class _InspectorPanelState extends State<InspectorPanel> {
                 selected: widget.exportTarget == 'project',
                 onTap: () => widget.onExportTargetChanged?.call('project'),
               ),
-              if (widget.exportTarget == 'project') ...[
-                const Divider(color: _Palette.borderDefault, height: 14),
-                _ExportToggle(
-                  title: 'Include audio tracks',
-                  value: widget.includeAudio,
-                  onChanged: widget.onIncludeAudioChanged,
-                ),
-                _ExportToggle(
-                  title: 'Include original source file',
-                  value: widget.includeSourceModel,
-                  onChanged: widget.onIncludeSourceModelChanged,
-                ),
-              ],
             ],
           ),
         ),
@@ -1777,44 +1730,6 @@ class _SectionHeader extends StatelessWidget {
         fontSize: 9.5,
         fontWeight: FontWeight.w800,
         letterSpacing: 0.9,
-      ),
-    );
-  }
-}
-
-class _ExportToggle extends StatelessWidget {
-  const _ExportToggle({required this.title, required this.value, this.onChanged});
-
-  final String title;
-  final bool value;
-  final ValueChanged<bool>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onChanged == null ? null : () => onChanged!(!value),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(
-              value ? Icons.check_box : Icons.check_box_outline_blank,
-              size: 16,
-              color: value ? _Palette.accentEmerald : _Palette.textSecondary,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: _Palette.textPrimary,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -2505,44 +2420,6 @@ class _AcousticProfileRadioRow extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _AudioCheckboxRow extends StatelessWidget {
-  const _AudioCheckboxRow({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 18,
-          height: 18,
-          child: Checkbox(
-            value: value,
-            activeColor: _Palette.accentEmerald,
-            checkColor: const Color(0xFF041D14),
-            onChanged: (v) => onChanged(v ?? false),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(color: _Palette.textPrimary, fontSize: 11, fontWeight: FontWeight.w600),
-          ),
-        ),
-      ],
     );
   }
 }

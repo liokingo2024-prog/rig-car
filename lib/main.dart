@@ -199,9 +199,7 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
 
   /// What the export button produces: 'glb' (organized model only), 'scene'
   /// (rigged tscn + script + model) or 'project' (full Godot 4 bundle).
-  String _exportTarget = 'project';
-  bool _exportIncludeAudio = true;
-  bool _exportIncludeSourceModel = false;
+  String _exportTarget = 'glb';
   bool _excludeRoofAntenna = false;
   String? _activePickingCorner;
   late List<DetectedMeshGroup> _detectedGroups;
@@ -941,42 +939,22 @@ class _RigWorkbenchPageState extends State<RigWorkbenchPage> {
       archive.addFile(ArchiveFile(name, bytes.length, bytes));
     }
 
-    final sourceEntry = _modelName.contains('/')
-        ? _modelName.split('/').last
-        : _modelName;
-    final sourceInstanceable =
-        RegExp(r'\.(glb|gltf)$', caseSensitive: false).hasMatch(sourceEntry);
-    final shipSource = _exportTarget == 'project' &&
-        _exportIncludeSourceModel &&
-        sourceInstanceable &&
-        (_modelBytes?.isNotEmpty ?? false);
-    // A merged-mesh car only exposes its wheels through the split export, and a
-    // source Godot cannot import as a scene must never be referenced.
-    final instanceName = shipSource && !rig.wheelSplit ? sourceEntry : glbName;
-
     addText('rig_car.gd', config.toGdScript());
-    addText('rig_car.tscn', config.toTscn(modelPath: 'res://$instanceName'));
+    addText('rig_car.tscn', config.toTscn(modelPath: 'res://$glbName'));
     addText(
       'rig_car_config.json',
       const JsonEncoder.withIndent('  ').convert(config.toJson()),
     );
     archive.addFile(ArchiveFile(glbName, glbBytes.length, glbBytes));
 
-    if (shipSource) {
-      final modelBytes = _modelBytes!;
-      archive.addFile(ArchiveFile(sourceEntry, modelBytes.length, modelBytes));
-    }
-
     if (_exportTarget == 'project') {
       addText('project.godot', _godotProjectFile());
-      if (_exportIncludeAudio) {
-        for (final slot in _audioSlots) {
-          final bytes = slot.bytes;
-          if (bytes == null || bytes.isEmpty) continue;
-          final safeName =
-              slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-          archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
-        }
+      for (final slot in _audioSlots) {
+        final bytes = slot.bytes;
+        if (bytes == null || bytes.isEmpty) continue;
+        final safeName =
+            slot.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+        archive.addFile(ArchiveFile('audio/$safeName', bytes.length, bytes));
       }
     }
 
@@ -2535,12 +2513,7 @@ handle_brake=${action(key(32))}
       canExport: _exportBlockReason == null,
       exportBlockReason: _exportBlockReason,
       exportTarget: _exportTarget,
-      includeAudio: _exportIncludeAudio,
-      includeSourceModel: _exportIncludeSourceModel,
       onExportTargetChanged: (target) => setState(() => _exportTarget = target),
-      onIncludeAudioChanged: (v) => setState(() => _exportIncludeAudio = v),
-      onIncludeSourceModelChanged: (v) =>
-          setState(() => _exportIncludeSourceModel = v),
       onStepSelect: _selectStep,
       onPickModel: _pickModel,
       onRotateYaw: _onRotateYaw,

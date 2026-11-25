@@ -1093,7 +1093,7 @@ void main() {
       expect(find.text('ACOUSTIC PROFILES'), findsOneWidget);
       expect(find.text('V10 Supercar'), findsOneWidget);
       expect(find.text('V8 Muscle'), findsOneWidget);
-      expect(find.text('ACCESSORY AUDIO LAYERS'), findsOneWidget);
+      expect(find.text('ACCESSORY AUDIO LAYERS'), findsNothing);
 
       // Tap Step 5: Export Rig
       await tester.tap(find.text('Export Rig').first);
@@ -1103,7 +1103,13 @@ void main() {
       expect(find.text('Scale & Axis Valid'), findsNothing);
       expect(find.text('GODOT 4 ARCHITECTURE'), findsOneWidget);
       expect(find.text('EXPORT OUTPUT'), findsOneWidget);
+      expect(find.text('Export Organized Model (.glb)'), findsOneWidget);
+
+      await tester.tap(find.text('Full Godot 4 Project (.zip)'));
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
+      expect(find.text('Include audio tracks'), findsNothing);
+      expect(find.text('Include original source file'), findsNothing);
     });
 
     testWidgets('interacts with all 5 inspector steps, toggles auto and manual modes, and verifies controls', (tester) async {
@@ -2017,7 +2023,7 @@ endsolid sports_car''';
 
       // Step 5: Export Rig
       expect(find.text('PRE-FLIGHT READINESS CHECKLIST'), findsNothing);
-      expect(find.text('Export Godot 4 Project (.zip)'), findsOneWidget);
+      expect(find.text('Export Organized Model (.glb)'), findsOneWidget);
       expect(find.text('Launch Test Drive'), findsOneWidget);
     });
 
