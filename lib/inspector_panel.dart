@@ -1482,28 +1482,6 @@ class _InspectorPanelState extends State<InspectorPanel> {
           const SizedBox(height: 6),
         ],
 
-        const SizedBox(height: 16),
-        const _SectionHeader('CALCULATED SUMMARY'),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _Palette.activeCardFill,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _Palette.borderDefault),
-          ),
-          child: Column(
-            children: [
-              _MetricRow(label: 'Mass', value: '${widget.mass.round()} kg'),
-              const Divider(color: _Palette.borderDefault, height: 14),
-              _MetricRow(label: 'Center of Mass Y', value: '${widget.centerOfMassY.toStringAsFixed(2)}m'),
-              const Divider(color: _Palette.borderDefault, height: 14),
-              _MetricRow(label: 'Spring Rest Length', value: '${widget.springRestLength.toStringAsFixed(2)}m'),
-              const Divider(color: _Palette.borderDefault, height: 14),
-              _MetricRow(label: 'Tire Friction', value: widget.grip.toStringAsFixed(1)),
-            ],
-          ),
-        ),
         const SizedBox(height: 18),
         _stepFooter(nextLabel: 'Next: Add Sound', nextStep: 4),
       ],
@@ -2383,23 +2361,6 @@ class _PresetRadioCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: const TextStyle(color: _Palette.textSecondary, fontSize: 11)),
-        Text(value, style: const TextStyle(color: _Palette.textMetrics, fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.w700)),
-      ],
     );
   }
 }

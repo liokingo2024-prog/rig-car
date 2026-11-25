@@ -1084,7 +1084,7 @@ void main() {
       expect(find.text('Arcade Drift'), findsOneWidget);
       expect(find.text('Off-Road SUV'), findsOneWidget);
       expect(find.text('Heavy Utility'), findsOneWidget);
-      expect(find.text('CALCULATED SUMMARY'), findsOneWidget);
+      expect(find.text('CALCULATED SUMMARY'), findsNothing);
 
       // Tap Step 4: Add Sound
       await tester.tap(find.text('Add Sound').first);
