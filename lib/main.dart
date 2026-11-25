@@ -2900,28 +2900,28 @@ class _SidebarStepCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
+                          horizontal: 6,
+                          vertical: 1.5,
                         ),
                         decoration: BoxDecoration(
                           color: !isEnabled
-                              ? const Color(0xFF101915)
-                              : const Color(0xFF17231E),
+                              ? const Color(0xFF16221D)
+                              : const Color(0xFF172E25),
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(
                             color: !isEnabled
-                                ? const Color(0xFF18251F)
-                                : const Color(0xFF22332C),
+                                ? const Color(0xFF283D34)
+                                : const Color(0xFF2B5242),
                           ),
                         ),
                         child: Text(
                           'Optional',
                           style: TextStyle(
                             color: !isEnabled
-                                ? const Color(0xFF4B5563)
-                                : const Color(0xFF86978C),
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
+                                ? const Color(0xFF9CA3AF)
+                                : const Color(0xFF6EE7B7),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
@@ -3321,12 +3321,12 @@ class _StepStrip extends StatelessWidget {
                           'Optional',
                           style: TextStyle(
                             color: !enabled
-                                ? const Color(0xFF4B5563)
+                                ? const Color(0xFF9CA3AF)
                                 : (selected
-                                    ? const Color(0xFF064E3B)
-                                    : const Color(0xFF6B7280)),
+                                    ? const Color(0xFF042F2E)
+                                    : const Color(0xFF6EE7B7)),
                             fontSize: 9.5,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],

@@ -395,20 +395,20 @@ class _InspectorPanelState extends State<InspectorPanel> {
                       const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
+                          horizontal: 6,
+                          vertical: 1.5,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF17231E),
+                          color: const Color(0xFF172E25),
                           borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: const Color(0xFF22332C)),
+                          border: Border.all(color: const Color(0xFF2B5242)),
                         ),
                         child: const Text(
                           'Optional',
                           style: TextStyle(
-                            color: _Palette.textSecondary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
+                            color: _Palette.textMetrics,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),

@@ -3072,6 +3072,11 @@ f 4 5 6
       await tester.tap(find.text('Add Physics').first);
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('HANDLING PRESETS'), findsOneWidget);
+      expect(find.text('Optional'), findsNWidgets(3));
+
+      await tester.tap(find.text('Add Sound').first);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Optional'), findsNWidgets(3));
 
       // Flaw 11: Step 1 transform tools sync wheels
       await tester.tap(find.text('Upload Vehicle').first);
